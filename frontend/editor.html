@@ -44,6 +44,17 @@
 const canvas = new fabric.Canvas('c', { backgroundColor: '#ffffff' });
 const setStatus = (t) => document.querySelector('#status small').textContent = t;
 
+async function ensureToken() {
+  let tok = localStorage.getItem('pod_token');
+  if (tok) return tok;
+  const email = 'guest_' + Math.random().toString(36).slice(2, 10) + '@guest.local';
+  const r = await fetch('/api/auth/register', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: 'guest-' + email }),
+  });
+  const tk = (await r.json()).token; localStorage.setItem('pod_token', tk); return tk;
+}
+
 function loadImage(file, cb) {
   const r = new FileReader();
   r.onload = () => fabric.Image.fromURL(r.result, cb);
@@ -76,7 +87,8 @@ document.getElementById('send').onclick = async () => {
   fd.append('file', await exportBlob(), 'design.png');
   fd.append('template', 'tshirt'); fd.append('upscale', '1');
   try {
-    const r = await fetch('/api/process', { method: 'POST', body: fd });
+    const r = await fetch('/api/process', { method: 'POST', body: fd,
+      headers: { Authorization: 'Bearer ' + (await ensureToken()) } });
     const d = await r.json();
     setStatus(r.ok ? '完成 ✓ 作业 ' + d.job_id : '失败: ' + d.detail);
   } catch (e) { setStatus('出错: ' + e.message); }

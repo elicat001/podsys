@@ -1,0 +1,95 @@
+"""Pytest fixtures + test isolation.
+
+测试隔离的关键:`app.db` 在 import 时就根据 `settings.data_dir` 建 engine,
+而 `settings` 又在 `app.config` import 时实例化。因此必须在任何 `from app...`
+import 之前,把环境变量 `POD_DATA_DIR`(Settings 用 env_prefix=POD_,字段 data_dir)
+指向一个临时目录,这样开发库 backend/data/podstudio.db 永远不会被测试触碰。
+
+这里在模块顶层(任何 app import 之前)就设置好 POD_DATA_DIR,指向一个进程级临时目录。
+"""
+from __future__ import annotations
+
+import io
+import os
+import tempfile
+import uuid
+from pathlib import Path
+
+# --- 测试隔离:必须在 import app 之前设置 ---------------------------------
+_TMP_DATA_DIR = Path(tempfile.gettempdir()) / f"podstudio_test_{uuid.uuid4().hex[:8]}"
+_TMP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+os.environ["POD_DATA_DIR"] = str(_TMP_DATA_DIR)
+# 关键:确保即使存在 .env 也不会覆盖临时目录(env 变量优先级高于 .env 默认值)
+# -------------------------------------------------------------------------
+
+import pytest
+from fastapi.testclient import TestClient
+from PIL import Image, ImageDraw
+
+# 现在再 import app —— 此时 settings.data_dir 已指向临时目录
+from app.config import settings  # noqa: E402
+from app.main import app  # noqa: E402
+
+
+def make_png(
+    *,
+    size: tuple[int, int] = (256, 256),
+    bg: tuple[int, int, int] = (255, 255, 255),
+    shape: str = "circle",
+    fill: tuple[int, int, int] = (200, 30, 30),
+    seed: int | None = None,
+) -> io.BytesIO:
+    """在内存里造一张 PNG。
+
+    shape: circle | rect | noise
+    返回一个定位到 0 的 BytesIO,可直接喂给 TestClient 的 files=。
+    """
+    img = Image.new("RGB", size, bg)
+    d = ImageDraw.Draw(img)
+    w, h = size
+    if shape == "circle":
+        # 居中圆
+        r = min(w, h) // 4
+        cx, cy = w // 2, h // 2
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=fill)
+    elif shape == "rect":
+        d.rectangle([w // 4, h // 4, w * 3 // 4, h * 3 // 4], fill=fill)
+    elif shape == "noise":
+        # 用 seed 造一张结构完全不同的图(棋盘/条纹),保证 dhash 差异大
+        s = (seed or 0) % 7 + 3
+        for y in range(0, h, s):
+            for x in range(0, w, s):
+                if ((x // s) + (y // s) + (seed or 0)) % 2 == 0:
+                    d.rectangle([x, y, x + s, y + s], fill=fill)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
+@pytest.fixture(scope="session")
+def client() -> TestClient:
+    with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture()
+def auth_headers(client: TestClient) -> dict:
+    """注册一个随机邮箱用户,返回 Bearer 头。"""
+    email = f"user_{uuid.uuid4().hex[:10]}@test.local"
+    resp = client.post("/api/auth/register", json={"email": email, "password": "pw123456"})
+    assert resp.status_code == 200, resp.text
+    token = resp.json()["token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture()
+def png():
+    """暴露造图工厂给测试。"""
+    return make_png
+
+
+def test__isolation_uses_tmp_dir():
+    """sanity:确认测试库确实在临时目录,而非开发库 backend/data。"""
+    assert str(settings.data_dir) == str(_TMP_DATA_DIR)
+    assert "podstudio_test_" in str(settings.data_dir)

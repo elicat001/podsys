@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     # auth
     jwt_secret: str = "dev-secret-change-me-please-set-POD_JWT_SECRET-in-prod"
 
+    # 计费:dev 模式允许自助充值(topup)。生产务必置 false(POD_DEV_BILLING=false)
+    dev_billing: bool = True
+
     # AI providers — swap implementation without touching call sites
     matting_provider: str = "pillow"        # pillow | rembg | api | gptimage
     upscale_provider: str = "pillow"         # pillow | realesrgan  (gpt-image 不做超分,见 README)
