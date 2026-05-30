@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "PODStudio 采集助手",
+  "version": "0.1.0",
+  "description": "从 Temu/Amazon/Etsy/TikTok 商品页采集高清图，一键发送到 PODStudio 工作站。",
+  "permissions": ["activeTab", "scripting", "storage", "downloads"],
+  "host_permissions": [
+    "*://*.temu.com/*",
+    "*://*.amazon.com/*",
+    "*://*.etsy.com/*",
+    "*://*.tiktok.com/*"
+  ],
+  "action": { "default_popup": "popup.html", "default_title": "PODStudio 采集助手" },
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["*://*.temu.com/*", "*://*.amazon.com/*", "*://*.etsy.com/*", "*://*.tiktok.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

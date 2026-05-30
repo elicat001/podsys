@@ -1,0 +1,12 @@
+# python
+backend/.venv/
+__pycache__/
+*.pyc
+.env
+
+# data / generated outputs
+backend/data/
+
+# os
+Thumbs.db
+.DS_Store

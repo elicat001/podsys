@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PODStudio · DIY 编辑器</title>
+<script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
+<style>
+  body{margin:0;font-family:system-ui,"Microsoft YaHei",sans-serif;background:#0f1115;color:#e6e8ec}
+  header{padding:16px 24px;border-bottom:1px solid #2a2f3a}
+  header a{color:#4f8cff;font-size:13px;float:right}
+  main{display:flex;gap:20px;padding:20px;max-width:1100px;margin:0 auto}
+  .tools{width:240px}
+  .tools button,.tools input,.tools select{width:100%;margin:6px 0;padding:8px;border-radius:7px;
+    border:1px solid #2a2f3a;background:#181b22;color:#e6e8ec;cursor:pointer}
+  .tools button{background:#4f8cff;border:0;color:#fff}
+  .tools .sub{background:#222733;color:#e6e8ec;border:1px solid #2a2f3a}
+  .canvas-wrap{border:1px solid #2a2f3a;border-radius:10px;background:#0e1015;padding:10px}
+  small{color:#9aa3b2}
+</style>
+</head>
+<body>
+<header><b>PODStudio · DIY 编辑器</b> <a href="/">← 返回工作站</a></header>
+<main>
+  <div class="tools">
+    <small>① 加载底图</small>
+    <input type="file" id="bg" accept="image/*" />
+    <small>② 添加印花图片</small>
+    <input type="file" id="art" accept="image/*" />
+    <small>③ 文字</small>
+    <input type="text" id="txt" placeholder="输入文字" />
+    <button class="sub" id="addtxt">添加文字</button>
+    <button class="sub" id="del">删除选中</button>
+    <hr style="border-color:#2a2f3a" />
+    <button id="export">导出 PNG</button>
+    <button id="send">导出并送去抠图+套图</button>
+    <div id="status"><small></small></div>
+  </div>
+  <div class="canvas-wrap">
+    <canvas id="c" width="600" height="600"></canvas>
+  </div>
+</main>
+<script>
+const canvas = new fabric.Canvas('c', { backgroundColor: '#ffffff' });
+const setStatus = (t) => document.querySelector('#status small').textContent = t;
+
+function loadImage(file, cb) {
+  const r = new FileReader();
+  r.onload = () => fabric.Image.fromURL(r.result, cb);
+  r.readAsDataURL(file);
+}
+document.getElementById('bg').onchange = (e) => loadImage(e.target.files[0], (img) => {
+  img.scaleToWidth(canvas.width); img.selectable = false;
+  canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas));
+});
+document.getElementById('art').onchange = (e) => loadImage(e.target.files[0], (img) => {
+  img.scaleToWidth(220); img.set({ left: 180, top: 180 }); canvas.add(img).setActiveObject(img);
+});
+document.getElementById('addtxt').onclick = () => {
+  const t = document.getElementById('txt').value || 'TEXT';
+  canvas.add(new fabric.IText(t, { left: 200, top: 280, fill: '#222', fontSize: 48 }));
+};
+document.getElementById('del').onclick = () => {
+  const o = canvas.getActiveObject(); if (o) canvas.remove(o);
+};
+function exportBlob() {
+  return new Promise((res) => canvas.getElement().toBlob(res, 'image/png'));
+}
+document.getElementById('export').onclick = async () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(await exportBlob()); a.download = 'design.png'; a.click();
+};
+document.getElementById('send').onclick = async () => {
+  setStatus('上传处理中…');
+  const fd = new FormData();
+  fd.append('file', await exportBlob(), 'design.png');
+  fd.append('template', 'tshirt'); fd.append('upscale', '1');
+  try {
+    const r = await fetch('/api/process', { method: 'POST', body: fd });
+    const d = await r.json();
+    setStatus(r.ok ? '完成 ✓ 作业 ' + d.job_id : '失败: ' + d.detail);
+  } catch (e) { setStatus('出错: ' + e.message); }
+};
+</script>
+</body>
+</html>

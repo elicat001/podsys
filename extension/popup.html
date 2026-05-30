@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8" />
+<style>
+  body{width:320px;font-family:system-ui,"Microsoft YaHei",sans-serif;margin:0;padding:12px;background:#181b22;color:#e6e8ec}
+  h3{margin:0 0 8px;font-size:14px}
+  button{width:100%;padding:8px;margin-top:8px;border:0;border-radius:6px;background:#4f8cff;color:#fff;cursor:pointer}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
+  .grid img{width:100%;border:1px solid #2a2f3a;border-radius:4px;cursor:pointer}
+  .grid img.sel{outline:2px solid #4f8cff}
+  small{color:#9aa3b2}
+</style></head>
+<body>
+  <h3>PODStudio 采集助手</h3>
+  <small>在 Temu/Amazon/Etsy/TikTok 商品页采集高清图</small>
+  <button id="scan">扫描本页图片</button>
+  <div class="grid" id="grid"></div>
+  <button id="send" disabled>发送选中图到工作站</button>
+  <div id="status"><small></small></div>
+  <script src="popup.js"></script>
+</body>
+</html>
