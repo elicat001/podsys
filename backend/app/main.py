@@ -2,7 +2,8 @@
 from __future__ import annotations
 import io
 from pathlib import Path
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
+from pydantic import BaseModel
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -13,13 +14,20 @@ from .services.extract import extract_print
 from .services.mockup import render_mockup, list_templates
 from .services.export import export_production
 from .services.generate import text_to_image, image_to_image
-from .db import init_db
+from .services.collectors import detect_platform, upgrade_to_hires
+from .services.billing import charge_for, refund
+from .auth import current_user
+from .models_db import User
+from .db import init_db, get_db
+from sqlalchemy.orm import Session
 from .routers import auth as auth_router
 from .routers import assets as assets_router
 from .routers import design as design_router
 from .routers import products as products_router
+from .routers import jobs as jobs_router
+from .routers import billing as billing_router
 
-app = FastAPI(title="PODStudio API", version="0.2.0")
+app = FastAPI(title="PODStudio API", version="0.3.0")
 settings.ensure_dirs()
 init_db()
 
@@ -27,6 +35,8 @@ app.include_router(auth_router.router)
 app.include_router(assets_router.router)
 app.include_router(design_router.router)
 app.include_router(products_router.router)
+app.include_router(jobs_router.router)
+app.include_router(billing_router.router)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
 
@@ -53,12 +63,15 @@ async def process(
     width_cm: float = Form(30.0),
     height_cm: float = Form(40.0),
     dpi: int = Form(300),
+    user: User = Depends(charge_for("process")),
+    db: Session = Depends(get_db),
 ):
     raw = await file.read()
     try:
         src = Image.open(io.BytesIO(raw))
         src.load()
     except Exception as exc:  # noqa: BLE001
+        refund(db, user, "process")  # P0-2: 预扣后失败要退点
         raise HTTPException(status_code=400, detail=f"无法读取图片: {exc}") from exc
 
     job_id = storage.new_job_id()
@@ -88,12 +101,15 @@ async def process(
 
 
 @app.post("/api/generate")
-async def generate(prompt: str = Form(...), size: str = Form("1024x1024")):
+async def generate(prompt: str = Form(...), size: str = Form("1024x1024"),
+                   user: User = Depends(charge_for("generate")),
+                   db: Session = Depends(get_db)):
     """文生图(gpt-image / image2)。"""
     try:
         img = text_to_image(prompt, size=size)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"生成失败: {exc}") from exc
+        refund(db, user, "generate")  # P0-2: 调用失败退点
+        raise HTTPException(status_code=502, detail="生成失败,请稍后重试") from exc
     job_id = storage.new_job_id()
     out = storage.output_path(job_id, "generated.png")
     img.save(out, format="PNG")
@@ -106,6 +122,8 @@ async def edit(
     prompt: str = Form(...),
     mask: UploadFile | None = File(None),
     size: str = Form("auto"),
+    user: User = Depends(charge_for("edit")),
+    db: Session = Depends(get_db),
 ):
     """图生图 / 改图 / 换装 / 换背景(gpt-image / image2 edit)。"""
     try:
@@ -117,11 +135,28 @@ async def edit(
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"改图失败: {exc}") from exc
+        refund(db, user, "edit")  # P0-2: 调用失败退点
+        raise HTTPException(status_code=502, detail="改图失败,请稍后重试") from exc
     job_id = storage.new_job_id()
     out = storage.output_path(job_id, "edited.png")
     out_img.save(out, format="PNG")
     return JSONResponse({"job_id": job_id, "image_url": storage.output_url(job_id, "edited.png")})
+
+
+class CollectIn(BaseModel):
+    url: str
+    platform: str | None = None
+
+
+@app.post("/api/collect")
+def collect(body: CollectIn, user: User = Depends(current_user)):
+    """采集辅助:把平台缩略图 URL 升级为原图 URL(规则收敛在后端,纯字符串变换)。
+
+    需登录(P0-3:避免被当作公开 URL 变换/探测代理)。
+    合规:仅做 URL 变换,不代抓图片内容;复用图片的授权判断由调用方负责。
+    """
+    platform = body.platform or detect_platform(body.url)
+    return {"platform": platform, "hires_url": upgrade_to_hires(body.url, platform)}
 
 
 @app.get("/files/{job_id}/{name}")
