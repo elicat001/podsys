@@ -17,19 +17,14 @@ from ..models_db import User
 from ..auth import current_user
 from ..services.billing import charge_for, charge, refund, InsufficientCredits
 from ..services import design_tools
+from ..services import seamless as seamless_svc
+from ..web_utils import read_image_or_refund
 
 router = APIRouter(prefix="/api/design-tools", tags=["design-tools"])
 
 
 def _read_or_refund(raw: bytes, db: Session, user: User) -> Image.Image:
-    """读图失败 -> 退点 + 400。"""
-    try:
-        im = Image.open(io.BytesIO(raw))
-        im.load()
-        return im
-    except Exception as exc:  # noqa: BLE001
-        refund(db, user, "edit")
-        raise HTTPException(status_code=400, detail=f"无法读取图片: {exc}") from exc
+    return read_image_or_refund(raw, db, user, "edit")
 
 
 @router.post("/variants")
@@ -79,6 +74,25 @@ async def variants(
         im.save(storage.output_path(job_id, name), format="PNG")
         urls.append(storage.output_url(job_id, name))
     return {"job_id": job_id, "images": urls}
+
+
+@router.post("/seamless")
+async def seamless(
+    file: UploadFile = File(...),
+    repeat: int = Form(2),
+    user: User = Depends(charge_for("process")),
+    db: Session = Depends(get_db),
+):
+    """四方连续图(离线 Pillow,op=process 扣 2):镜像无缝基块 + 平铺。"""
+    src = read_image_or_refund(await file.read(), db, user, "process")
+    try:
+        out = seamless_svc.seamless_pattern(src, repeat=repeat)
+    except ValueError as exc:
+        refund(db, user, "process")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    job_id = storage.new_job_id()
+    out.save(storage.output_path(job_id, "seamless.png"), format="PNG")
+    return {"job_id": job_id, "image_url": storage.output_url(job_id, "seamless.png")}
 
 
 @router.post("/fuse")

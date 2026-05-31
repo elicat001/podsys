@@ -17,6 +17,7 @@ from ..db import get_db
 from ..models_db import User
 from ..services.billing import charge_for, refund
 from ..services.image_tools import compress_image
+from ..web_utils import read_image_or_refund as _read_image
 
 router = APIRouter(prefix="/api/image-tools", tags=["image-tools"])
 
@@ -31,17 +32,6 @@ _DEWATERMARK_PROMPT = (
     "Cleanly reconstruct the underlying content so the result looks natural and "
     "watermark-free, keeping the main subject and style intact."
 )
-
-
-def _read_image(raw: bytes, db: Session, user: User, op: str) -> Image.Image:
-    """读图;失败则退点 + 400(范式同 main.py)。"""
-    try:
-        im = Image.open(io.BytesIO(raw))
-        im.load()
-        return im
-    except Exception as exc:  # noqa: BLE001
-        refund(db, user, op)
-        raise HTTPException(status_code=400, detail=f"无法读取图片: {exc}") from exc
 
 
 def _edit_endpoint(raw: bytes, prompt: str, size: str, db: Session, user: User) -> str:

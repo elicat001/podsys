@@ -21,19 +21,9 @@ from ..db import get_db
 from ..models_db import User
 from ..services import studio_tools
 from ..services.billing import InsufficientCredits, charge, charge_for, refund
+from ..web_utils import read_image_or_refund as _read
 
 router = APIRouter(prefix="/api/studio", tags=["studio"])
-
-
-def _read(raw: bytes, db: Session, user: User, op: str = "edit") -> Image.Image:
-    """读图;失败时退回已预扣的点数(P1-4:坏图也不能扣点)+ 400。"""
-    try:
-        im = Image.open(io.BytesIO(raw))
-        im.load()
-        return im
-    except Exception as exc:  # noqa: BLE001
-        refund(db, user, op)
-        raise HTTPException(status_code=400, detail=f"无法读取图片: {exc}") from exc
 
 
 def _save(img: Image.Image, name: str = "studio.png") -> dict:
@@ -77,7 +67,7 @@ async def tryon(
     db: Session = Depends(get_db),
 ):
     """模特试衣:服饰印花图 -> 模特上身图。无 key -> 502 + 退点。"""
-    garment = _read(await file.read(), db, user)
+    garment = _read(await file.read(), db, user, "edit")
     try:
         out = studio_tools.model_tryon(garment, size=size)
     except HTTPException:
@@ -97,7 +87,7 @@ async def pet_costume_endpoint(
     db: Session = Depends(get_db),
 ):
     """宠物换装。无 key -> 502 + 退点。"""
-    pet = _read(await file.read(), db, user)
+    pet = _read(await file.read(), db, user, "edit")
     try:
         out = studio_tools.pet_costume(pet, costume=costume, size=size)
     except HTTPException:
@@ -117,7 +107,7 @@ async def group_photo_endpoint(
     db: Session = Depends(get_db),
 ):
     """合照。无 key -> 502 + 退点。"""
-    base = _read(await file.read(), db, user)
+    base = _read(await file.read(), db, user, "edit")
     try:
         out = studio_tools.group_photo(base, prompt, size=size)
     except HTTPException:

@@ -6,17 +6,15 @@
 """
 from __future__ import annotations
 
-import io
-
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from PIL import Image
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
 from ..auth import current_user
 from ..db import get_db
 from ..models_db import User
 from ..services import ip_guard
-from ..services.billing import charge_for, refund
+from ..services.billing import charge_for
+from ..web_utils import read_image_or_refund
 from .. import storage
 
 router = APIRouter(prefix="/api/ip-guard", tags=["ip-guard"])
@@ -26,19 +24,24 @@ router = APIRouter(prefix="/api/ip-guard", tags=["ip-guard"])
 async def scan(
     file: UploadFile = File(...),
     title: str = Form(""),
+    verbose: bool = Form(False),
     user: User = Depends(charge_for("process")),
     db: Session = Depends(get_db),
 ):
-    """深度侵权检索:返回 scan() 报告 + job_id。"""
-    raw = await file.read()
-    try:
-        img = Image.open(io.BytesIO(raw))
-        img.load()
-    except Exception as exc:  # noqa: BLE001
-        refund(db, user, "process")
-        raise HTTPException(status_code=400, detail=f"无法读取图片: {exc}") from exc
+    """深度侵权检索:返回 scan() 报告 + job_id。
 
+    P2-2:默认只回 risk/advice/命中条数;`verbose=true` 才回命中条目明细
+    (品牌/距离/命中关键词),避免向终端用户泄露侵权库结构与判定阈值。
+    """
+    img = read_image_or_refund(await file.read(), db, user, "process")
     report = ip_guard.scan(img, title=title or None)
+    if not verbose:
+        report = {
+            "risk": report.get("risk"),
+            "advice": report.get("advice"),
+            "match_count": len(report.get("matches", [])),
+            "checked": report.get("checked"),
+        }
     report["job_id"] = storage.new_job_id()
     return report
 
