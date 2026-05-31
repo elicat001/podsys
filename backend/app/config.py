@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = ""                 # 留空走官方;可填代理/Azure 兼容网关
     openai_image_model: str = "gpt-image-1"
+    openai_timeout: float = 60.0              # P1-2:OpenAI 调用超时(秒),防线程池被慢请求吃满
 
     # print extraction
     autocrop_padding: int = 8                # px padding around detected content

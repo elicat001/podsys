@@ -95,6 +95,18 @@ def _variants(ctx: dict) -> None:
         _save(ctx, f"variant_{i+1}.png", im)
 
 
+@step("seamless")  # 四方连续图(离线,服饰家纺连续印花)
+def _seamless(ctx: dict) -> None:
+    from .seamless import seamless_pattern
+    try:
+        out = seamless_pattern(ctx["image"], repeat=int(ctx["params"].get("repeat", 2)))
+    except ValueError as exc:
+        ctx["meta"].setdefault("skipped", []).append(f"seamless({exc})")
+        return
+    ctx["image"] = out
+    _save(ctx, "seamless.png", out)
+
+
 @step("compress")  # 裁剪压缩(离线,导出前归一化尺寸/体积/格式)
 def _compress(ctx: dict) -> None:
     from .image_tools import compress_image

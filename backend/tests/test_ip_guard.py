@@ -175,7 +175,9 @@ def test_scan_charges_two_credits(client, auth_headers):
     body = resp.json()
     assert body["risk"] in ("safe", "review", "high")
     assert "job_id" in body
-    assert "matches" in body and "checked" in body and "advice" in body
+    # P2-2:默认(非 verbose)只回 match_count/checked/advice,不泄露 matches 明细
+    assert "match_count" in body and "checked" in body and "advice" in body
+    assert "matches" not in body
     bal1 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     assert bal1 == bal0 - 2
 

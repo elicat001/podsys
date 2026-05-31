@@ -31,15 +31,27 @@ def _file_tuple(img: Image.Image, name: str = "image.png"):
     return (name, _png_bytes(img), "image/png")
 
 
+_SDK_CACHE: dict = {}
+
+
+def _get_sdk_client(api_key: str, base_url: str | None, timeout: float):
+    """复用 SDK 客户端(P1-2:避免每次调用重建 httpx 连接池;按凭证缓存)。"""
+    key = (api_key, base_url, timeout)
+    client = _SDK_CACHE.get(key)
+    if client is None:
+        from openai import OpenAI  # lazy import
+        client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+        _SDK_CACHE[key] = client
+    return client
+
+
 class OpenAIImageClient:
     def __init__(self) -> None:
         if not settings.openai_api_key:
             raise RuntimeError("POD_OPENAI_API_KEY 未配置,无法调用 gpt-image")
-        from openai import OpenAI  # lazy import
         self.model = settings.openai_image_model
-        self.client = OpenAI(
-            api_key=settings.openai_api_key,
-            base_url=settings.openai_base_url or None,
+        self.client = _get_sdk_client(
+            settings.openai_api_key, settings.openai_base_url or None, settings.openai_timeout
         )
 
     def _decode(self, resp) -> Image.Image:
