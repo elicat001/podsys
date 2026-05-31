@@ -33,6 +33,11 @@ class Asset(Base):
     chash: Mapped[str] = mapped_column(String(128), index=True)  # 绝对颜色签名(4x4 RGB)
     source: Mapped[str] = mapped_column(String(64), default="upload")  # upload|collected|generated
     risk: Mapped[str] = mapped_column(String(16), default="unknown")   # safe|review|high|unknown
+    # batch10:我的空间深度 —— 回收站软删 / 批次 / 标签
+    deleted: Mapped[bool] = mapped_column(default=False, index=True)
+    batch: Mapped[str] = mapped_column(String(64), default="", index=True)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)        # 用于存储配额统计
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     owner: Mapped["User"] = relationship(back_populates="assets")
@@ -62,6 +67,12 @@ class Product(Base):
     print_path: Mapped[str] = mapped_column(String(512), default="")
     mockup_path: Mapped[str] = mapped_column(String(512), default="")
     attrs: Mapped[dict] = mapped_column(JSON, default=dict)
+    # batch10:商品库管理深度 —— SKU / 批次 / 来源 / 风险 / 标签
+    sku: Mapped[str] = mapped_column(String(64), default="", index=True)
+    batch: Mapped[str] = mapped_column(String(64), default="", index=True)
+    source: Mapped[str] = mapped_column(String(64), default="manual")
+    risk: Mapped[str] = mapped_column(String(16), default="unknown")
+    tags: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     owner: Mapped["User"] = relationship(back_populates="products")

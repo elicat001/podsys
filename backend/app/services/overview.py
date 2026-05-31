@@ -18,9 +18,14 @@ def _count(db: Session, model, owner_id: int) -> int:
 
 def overview(db: Session, user: User) -> dict:
     """返回该用户的资源总览:余额 + 各表计数。"""
+    # assets 计数排除回收站(deleted),与 space/quota 口径一致(评审 P1-1)
+    assets = int(db.execute(
+        select(func.count()).select_from(Asset)
+        .where(Asset.owner_id == user.id, Asset.deleted == False)  # noqa: E712
+    ).scalar_one())
     return {
         "credits": user.credits,
-        "assets": _count(db, Asset, user.id),
+        "assets": assets,
         "products": _count(db, Product, user.id),
         "shops": _count(db, Shop, user.id),
         "jobs": _count(db, Job, user.id),

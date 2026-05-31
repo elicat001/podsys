@@ -36,7 +36,7 @@ def check_image(db: Session, image: Image.Image, owner_id: int | None = None,
     dh = phash.dhash(image)
     ch = phash.color_sig(image)
     # 按租户隔离:只与该用户自己的素材库比对(避免越权探知他人素材 + 测试串扰)
-    q = select(Asset)
+    q = select(Asset).where(Asset.deleted == False)  # noqa: E712  回收站内素材不参与查重
     if owner_id is not None:
         q = q.where(Asset.owner_id == owner_id)
     rows = db.execute(q).scalars().all()

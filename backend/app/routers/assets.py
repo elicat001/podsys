@@ -33,7 +33,8 @@ async def add_asset(file: UploadFile = File(...), source: str = Form("upload"),
     path = storage.output_path(job_id, "asset.png")
     img.convert("RGBA").save(path, format="PNG")
     asset = Asset(owner_id=user.id, name=file.filename or "asset", path=str(path),
-                  dhash=chk["dhash"], chash=chk["chash"], source=source, risk=chk["risk"])
+                  dhash=chk["dhash"], chash=chk["chash"], source=source, risk=chk["risk"],
+                  size_bytes=len(raw))
     db.add(asset); db.commit(); db.refresh(asset)
     return {"asset_id": asset.id, "risk": asset.risk, "url": storage.output_url(job_id, "asset.png"),
             "infringement": chk}

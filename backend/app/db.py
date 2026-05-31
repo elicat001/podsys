@@ -21,6 +21,7 @@ def init_db() -> None:
     from . import models_collect  # noqa: F401  (采集任务/采集图表 — batch7)
     from . import models_shop  # noqa: F401  (店铺表 — batch7)
     from . import models_workflow  # noqa: F401  (保存的自定义工作流表 — batch8)
+    from . import models_template  # noqa: F401  (刊登/导出模板表 — batch10)
     Base.metadata.create_all(engine)
 
 

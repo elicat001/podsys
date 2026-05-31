@@ -31,7 +31,10 @@ def search_assets(db: Session, owner_id: int, image: Image.Image, top_k: int = 1
     q_dhash = phash.dhash(image)
     q_chash = phash.color_sig(image)
 
-    rows = db.execute(select(Asset).where(Asset.owner_id == owner_id)).scalars().all()
+    # 排除回收站(deleted)素材,与 infringement 口径一致(评审 P1-1)
+    rows = db.execute(
+        select(Asset).where(Asset.owner_id == owner_id, Asset.deleted == False)  # noqa: E712
+    ).scalars().all()
 
     scored: list[dict] = []
     for a in rows:

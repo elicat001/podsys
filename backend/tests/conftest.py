@@ -20,6 +20,10 @@ _TMP_DATA_DIR = Path(tempfile.gettempdir()) / f"podstudio_test_{uuid.uuid4().hex
 _TMP_DATA_DIR.mkdir(parents=True, exist_ok=True)
 os.environ["POD_DATA_DIR"] = str(_TMP_DATA_DIR)
 # 关键:确保即使存在 .env 也不会覆盖临时目录(env 变量优先级高于 .env 默认值)
+# 进程退出清理本次临时库,避免历史 podstudio_test_* 累积撑满 Temp(ENOSPC)
+import atexit  # noqa: E402
+import shutil  # noqa: E402
+atexit.register(lambda: shutil.rmtree(_TMP_DATA_DIR, ignore_errors=True))
 # -------------------------------------------------------------------------
 
 import pytest
