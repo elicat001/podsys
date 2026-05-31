@@ -32,6 +32,10 @@ from .routers import design_tools as design_tools_router
 from .routers import image_tools as image_tools_router
 from .routers import studio_tools as studio_tools_router
 from .routers import ip_guard as ip_guard_router
+from .routers import search as search_router
+from .routers import vectorize as vectorize_router
+from .routers import collect_tasks as collect_tasks_router
+from .routers import shops as shops_router
 
 app = FastAPI(title="PODStudio API", version="0.3.0")
 settings.ensure_dirs()
@@ -48,6 +52,10 @@ app.include_router(design_tools_router.router)
 app.include_router(image_tools_router.router)
 app.include_router(studio_tools_router.router)
 app.include_router(ip_guard_router.router)
+app.include_router(search_router.router)
+app.include_router(vectorize_router.router)
+app.include_router(collect_tasks_router.router)
+app.include_router(shops_router.router)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
 
