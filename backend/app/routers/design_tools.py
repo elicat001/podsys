@@ -18,6 +18,7 @@ from ..auth import current_user
 from ..services.billing import charge_for, charge, refund, InsufficientCredits
 from ..services import design_tools
 from ..services import seamless as seamless_svc
+from ..services.library import save_as_asset
 from ..web_utils import read_image_or_refund
 
 router = APIRouter(prefix="/api/design-tools", tags=["design-tools"])
@@ -72,7 +73,9 @@ async def variants(
     for i, im in enumerate(imgs):
         name = f"variant_{i + 1}.png"
         im.save(storage.output_path(job_id, name), format="PNG")
-        urls.append(storage.output_url(job_id, name))
+        url = storage.output_url(job_id, name)
+        urls.append(url)
+        save_as_asset(db, user.id, im, f"图裂变 {i+1}", url, source="generated")
     return {"job_id": job_id, "images": urls}
 
 
@@ -92,7 +95,9 @@ async def seamless(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     job_id = storage.new_job_id()
     out.save(storage.output_path(job_id, "seamless.png"), format="PNG")
-    return {"job_id": job_id, "image_url": storage.output_url(job_id, "seamless.png")}
+    url = storage.output_url(job_id, "seamless.png")
+    save_as_asset(db, user.id, out, "四方连续图", url, source="generated")
+    return {"job_id": job_id, "image_url": url}
 
 
 @router.post("/fuse")
@@ -115,7 +120,9 @@ async def fuse(
     job_id = storage.new_job_id()
     name = "fused.png"
     out_img.save(storage.output_path(job_id, name), format="PNG")
-    return {"job_id": job_id, "image_url": storage.output_url(job_id, name)}
+    url = storage.output_url(job_id, name)
+    save_as_asset(db, user.id, out_img, "元素融合", url, source="generated")
+    return {"job_id": job_id, "image_url": url}
 
 
 @router.post("/restyle")
@@ -138,7 +145,9 @@ async def restyle(
     job_id = storage.new_job_id()
     name = "restyled.png"
     out_img.save(storage.output_path(job_id, name), format="PNG")
-    return {"job_id": job_id, "image_url": storage.output_url(job_id, name)}
+    url = storage.output_url(job_id, name)
+    save_as_asset(db, user.id, out_img, f"风格转绘: {style[:20]}", url, source="generated")
+    return {"job_id": job_id, "image_url": url}
 
 
 @router.post("/meme")
@@ -162,4 +171,6 @@ async def meme(
     job_id = storage.new_job_id()
     name = "meme.png"
     out_img.save(storage.output_path(job_id, name), format="PNG")
-    return {"job_id": job_id, "image_url": storage.output_url(job_id, name)}
+    url = storage.output_url(job_id, name)
+    save_as_asset(db, user.id, out_img, "梗图印花", url, source="generated")
+    return {"job_id": job_id, "image_url": url}

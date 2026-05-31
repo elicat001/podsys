@@ -20,6 +20,7 @@ from .auth import current_user
 from .models_db import User
 from .db import init_db, get_db, SessionLocal
 from .services.jobs import create_job, run_job
+from .services.library import save_as_asset
 from sqlalchemy.orm import Session
 from .routers import auth as auth_router
 from .routers import assets as assets_router
@@ -116,6 +117,7 @@ async def process(
     print_img = extract_print(src, upscale=upscale)
     print_path = storage.output_path(job_id, "print.png")
     print_img.save(print_path, format="PNG")
+    save_as_asset(db, user.id, print_img, "印花提取", storage.output_url(job_id, "print.png"), source="generated")
 
     # ② 套图预览
     mockup_img = render_mockup(print_img, template_id=template)
@@ -202,6 +204,7 @@ async def generate(prompt: str = Form(...), size: str = Form("1024x1024"),
     job_id = storage.new_job_id()
     out = storage.output_path(job_id, "generated.png")
     img.save(out, format="PNG")
+    save_as_asset(db, user.id, img, f"文生图: {prompt[:24]}", storage.output_url(job_id, "generated.png"), source="generated")
     return JSONResponse({"job_id": job_id, "image_url": storage.output_url(job_id, "generated.png")})
 
 

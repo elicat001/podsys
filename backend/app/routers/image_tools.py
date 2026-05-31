@@ -17,6 +17,8 @@ from ..db import get_db
 from ..models_db import User
 from ..services.billing import charge_for, refund
 from ..services.image_tools import compress_image
+from ..services.library import save_as_asset
+from ..ai.upscale import get_upscale_provider
 from ..web_utils import read_image_or_refund as _read_image
 
 router = APIRouter(prefix="/api/image-tools", tags=["image-tools"])
@@ -52,7 +54,30 @@ def _edit_endpoint(raw: bytes, prompt: str, size: str, db: Session, user: User, 
         raise HTTPException(status_code=502, detail="处理失败,请稍后重试") from exc
     job_id = storage.new_job_id()
     out_img.save(storage.output_path(job_id, "result.png"), format="PNG")
+    save_as_asset(db, user.id, out_img, "图案处理", storage.output_url(job_id, "result.png"), source="generated")
     return job_id
+
+
+@router.post("/upscale")
+async def upscale(
+    file: UploadFile = File(...),
+    scale: float = Form(2.0),
+    user: User = Depends(charge_for("process")),
+    db: Session = Depends(get_db),
+):
+    """超分提质(真·放大输入图,非整条流水线)。返回放大后的图。"""
+    src = _read_image(await file.read(), db, user, "process")
+    scale = max(1.0, min(scale, 4.0))
+    try:
+        out = get_upscale_provider().upscale(src.convert("RGB"), scale=scale)
+    except Exception as exc:  # noqa: BLE001
+        refund(db, user, "process")
+        raise HTTPException(status_code=500, detail="超分失败") from exc
+    job_id = storage.new_job_id()
+    out.save(storage.output_path(job_id, "upscaled.png"), format="PNG")
+    url = storage.output_url(job_id, "upscaled.png")
+    save_as_asset(db, user.id, out, "超分提质", url, source="generated")
+    return JSONResponse({"job_id": job_id, "image_url": url, "width": out.width, "height": out.height})
 
 
 @router.post("/expand")
@@ -120,6 +145,8 @@ async def compress(
     name = f"compressed.{ext}"
     # 直接写编码后的字节,保证落盘文件与 output_bytes 完全一致
     storage.output_path(job_id, name).write_bytes(encoded)
+    save_as_asset(db, user.id, _out_img, "裁剪压缩", storage.output_url(job_id, name),
+                  source="generated", size_bytes=info["output_bytes"])
 
     return JSONResponse({
         "job_id": job_id,

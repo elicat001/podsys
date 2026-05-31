@@ -204,8 +204,8 @@ $('#nav').onclick=e=>{const a=e.target.closest('a');if(a)go(a.dataset.v)};
 /* ---------- tool registry (对标灵图 作图矩阵) ---------- */
 const TOOLS=[
  {cat:'印花提取',items:[
-   {id:'extract',ic:'✂️',name:'印花提取',desc:'抠图+裁剪,识别并提取印花',ep:'process',field:'file'},
-   {id:'matting',ic:'🪄',name:'一键抠图',desc:'印花专用抠图,更干净',ep:'process',field:'file'},
+   {id:'extract',ic:'✂️',name:'印花提取',desc:'抠图+裁剪,输出透明印花',ep:'process',show:'print'},
+   {id:'matting',ic:'🪄',name:'一键抠图',desc:'去背景,输出透明 PNG',ep:'process',show:'print'},
  ]},
  {cat:'印花设计',items:[
    {id:'generate',ic:'✨',name:'文生图',desc:'输入描述生成印花',ep:'generate',prompt:true,ai:1},
@@ -216,7 +216,7 @@ const TOOLS=[
    {id:'seamless',ic:'🔲',name:'四方连续图',desc:'无缝连续印花,服饰家纺',ep:'design-tools/seamless'},
  ]},
  {cat:'图案处理',items:[
-   {id:'upscale',ic:'🔍',name:'超分提质',desc:'图变清晰',ep:'process'},
+   {id:'upscale',ic:'🔍',name:'超分提质',desc:'真·放大输入图(2x)',ep:'image-tools/upscale'},
    {id:'expand',ic:'⤢',name:'扩图',desc:'外延构图调整',ep:'image-tools/expand',ai:1},
    {id:'dewatermark',ic:'💧',name:'去水印',desc:'批量去水印',ep:'image-tools/dewatermark',ai:1},
    {id:'vectorize',ic:'📐',name:'转矢量图',desc:'位图转 SVG',ep:'vectorize'},
@@ -226,7 +226,7 @@ const TOOLS=[
    {id:'ipguard',ic:'🛡️',name:'侵权风险过滤',desc:'TRO+艺术家版权库深度检索',ep:'ip-guard/scan'},
  ]},
  {cat:'套图 & 标题',items:[
-   {id:'mockup',ic:'👕',name:'商品套图',desc:'印花批量套商品图',ep:'process'},
+   {id:'mockup',ic:'👕',name:'商品套图',desc:'印花套到商品上',ep:'process',show:'mockup'},
    {id:'title',ic:'🏷️',name:'标题提取',desc:'生成电商标题',ep:'studio/title',kw:true},
    {id:'tryon',ic:'🧍',name:'模特试衣',desc:'服饰图生成上身图',ep:'studio/tryon',ai:1},
  ]},
@@ -235,7 +235,7 @@ const TOOLS=[
    {id:'group',ic:'👨‍👩‍👧',name:'合照',desc:'智能生成合照',ep:'studio/group-photo',prompt:true,ai:1},
  ]},
  {cat:'履约 / 视频',items:[
-   {id:'production',ic:'🏭',name:'生产图',desc:'套图模板联动出生产图',ep:'process'},
+   {id:'production',ic:'🏭',name:'生产图',desc:'高分辨率生产文件',ep:'process',show:'production'},
    {id:'videogen',ic:'🎬',name:'展示视频',desc:'运镜/轮播生成 GIF 短片',ep:'video/generate'},
  ]},
 ];
@@ -326,9 +326,13 @@ async function runTool(t){
     let res;
     const fd=new FormData();if(curFile)fd.append('file',curFile);
     const gv=id=>{const e=$('#'+id);return e?e.value:''};
-    if(t.ep==='process'){ // 主线 pipeline(抠图/套图/超分/生产 都走 process,展示三件套)
-      if(t.id==='upscale')fd.append('upscale','2');
-      const r=await api('/process',{method:'POST',form:fd});res={img:r.mockup_url||r.print_url,extra:`生产图 ${r.production_meta.width_px}×${r.production_meta.height_px}`,dl:r.production_url};
+    if(t.ep==='process'){ // 主线 pipeline:按 show 展示正确产物(抠图→透明印花 / 套图 / 生产图)
+      const r=await api('/process',{method:'POST',form:fd});
+      const pick={print:r.print_url,mockup:r.mockup_url,production:r.production_url};
+      const img=pick[t.show]||r.print_url;
+      res={img,extra:t.show==='print'?'透明印花(可直接用于套版)':`生产图 ${r.production_meta.width_px}×${r.production_meta.height_px}px`,dl:r.production_url};
+    }else if(t.ep==='image-tools/upscale'){fd.append('scale','2');
+      const r=await api('/image-tools/upscale',{method:'POST',form:fd});res={img:r.image_url,extra:`放大到 ${r.width}×${r.height}px`,dl:r.image_url};
     }else if(t.ep==='generate'){fd.append('prompt',gv('f_prompt')||'a cute cat print');fd.append('size','1024x1024');
       const r=await api('/generate',{method:'POST',form:fd});res={img:r.image_url};
     }else if(t.ep==='vectorize'){fd.append('colors','8');const r=await api('/vectorize',{method:'POST',form:fd});res={img:r.svg_url,extra:r.rect_count+' 矢量块',dl:r.svg_url};
