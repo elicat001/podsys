@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PODStudio · 可视化工作流编辑器</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --fg:#e6e8ec; --mut:#9aa3b2; --acc:#4f8cff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+         background:var(--bg); color:var(--fg); }
+  header { padding:18px 28px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:18px; }
+  header p { margin:6px 0 0; color:var(--mut); font-size:13px; }
+  header a { color:var(--acc); text-decoration:none; }
+  main { max-width:1280px; margin:0 auto; padding:24px; display:grid;
+         grid-template-columns:300px 1fr 360px; gap:20px; align-items:start; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  .card h2 { margin:0 0 12px; font-size:15px; }
+  label { display:block; font-size:13px; color:var(--mut); margin:12px 0 4px; }
+  input, select { width:100%; padding:8px 10px; background:#0e1015; color:var(--fg);
+                  border:1px solid var(--line); border-radius:8px; }
+  button { padding:9px 12px; background:var(--acc); color:#fff;
+           border:0; border-radius:9px; font-size:14px; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.sub { background:#222733; color:var(--fg); border:1px solid var(--line); padding:4px 9px;
+               font-size:13px; border-radius:7px; }
+  .block { width:100%; margin-top:14px; }
+
+  /* 左:可用节点 */
+  .node { background:#0e1015; border:1px solid var(--line); border-radius:9px;
+          padding:10px 12px; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+  .node .meta { flex:1; min-width:0; }
+  .node .nlabel { font-size:14px; }
+  .node .ntags { font-size:11px; color:var(--mut); margin-top:3px; }
+  .node .ntags .tag { display:inline-block; padding:1px 6px; border:1px solid var(--line);
+                      border-radius:5px; margin-right:5px; }
+  .node .tag.ai { color:#ffb454; border-color:#5a4528; }
+  .node .tag.off { color:#5ad17a; border-color:#2a5236; }
+  .node .add { background:var(--acc); color:#fff; border:0; border-radius:7px;
+               width:28px; height:28px; font-size:16px; line-height:1; cursor:pointer; }
+
+  /* 中:流水线 */
+  .pipe-item { background:#0e1015; border:1px solid var(--line); border-radius:9px;
+               padding:10px 12px; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+  .pipe-item.dragover { border-color:var(--acc); }
+  .pipe-item .idx { width:22px; height:22px; border-radius:50%; background:#222733;
+                    text-align:center; line-height:22px; font-size:12px; color:var(--mut); }
+  .pipe-item .pl { flex:1; font-size:14px; }
+  .pipe-item .ctrl button { margin-left:4px; }
+
+  /* 右:结果 */
+  .results { display:grid; grid-template-columns:repeat(2,1fr); gap:12px; margin-top:12px; }
+  .results figure { margin:0; background:#0e1015; border:1px solid var(--line);
+                    border-radius:10px; padding:8px; text-align:center; }
+  .results img { max-width:100%; max-height:200px; border-radius:6px;
+                 background:conic-gradient(#222 0 25%,#2b2b2b 0 50%) 0/20px 20px; }
+  figcaption { font-size:11px; color:var(--mut); margin-top:6px; word-break:break-all; }
+  figcaption a { color:var(--acc); }
+  .hint { font-size:12px; color:var(--mut); margin-top:10px; line-height:1.6; }
+  .err { color:#ff6b6b; }
+  .empty { color:var(--mut); text-align:center; padding:30px 0; font-size:13px; }
+  hr { border:0; border-top:1px solid var(--line); margin:16px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>PODStudio · 可视化工作流编辑器 <span style="color:var(--mut);font-weight:400">v0.7</span></h1>
+  <p>把节点拖入流水线 → 编排你自己的「一键工作流」 → 保存复用 / 直接运行
+     · <a href="/">← 返回工作站</a>
+     · <a href="/my-space.html">我的空间</a>
+     · <span id="balance" style="color:var(--acc)">余额 — 点</span></p>
+</header>
+<main>
+  <!-- 左:可用节点 -->
+  <section class="card">
+    <h2>可用节点</h2>
+    <div id="steps"><div class="empty">加载中…</div></div>
+  </section>
+
+  <!-- 中:我的流水线 -->
+  <section class="card">
+    <h2>我的流水线</h2>
+    <div id="pipe"><div class="empty">从左侧点击「+」加入节点</div></div>
+
+    <hr />
+    <label>我的工作流(选中回填到流水线)</label>
+    <select id="myflows"><option value="">— 选择已保存的工作流 —</option></select>
+
+    <label>保存为工作流</label>
+    <div style="display:flex; gap:8px;">
+      <input type="text" id="flowname" placeholder="工作流名称" />
+      <button id="save" style="white-space:nowrap;">保存</button>
+    </div>
+    <div class="hint" id="savestatus"></div>
+  </section>
+
+  <!-- 右:运行 -->
+  <section class="card">
+    <h2>运行</h2>
+    <label>输入图</label>
+    <input type="file" id="file" accept="image/*" />
+    <button class="block" id="run">运行流水线</button>
+    <div class="hint" id="runstatus"></div>
+    <div id="results"><div class="empty">运行结果将显示在这里</div></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+// 转义用户可控文本,防存储型 XSS(工作流名等)
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ----- 访客自动鉴权(照搬 index.html 模式) -----
+async function ensureToken() {
+  let tok = localStorage.getItem('pod_token');
+  if (tok) return tok;
+  const email = 'guest_' + Math.random().toString(36).slice(2, 10) + '@guest.local';
+  const r = await fetch('/api/auth/register', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: 'guest-' + email }),
+  });
+  const d = await r.json();
+  localStorage.setItem('pod_token', d.token);
+  return d.token;
+}
+async function authHeaders() { return { Authorization: 'Bearer ' + (await ensureToken()) }; }
+
+async function refreshBalance() {
+  try {
+    const r = await fetch('/api/billing/balance', { headers: await authHeaders() });
+    if (r.ok) $('balance').textContent = '余额 ' + (await r.json()).credits + ' 点';
+  } catch (e) {}
+}
+
+// ----- 状态:流水线 = step id 的有序数组;stepMeta = id -> 元数据 -----
+let pipeline = [];
+let stepMeta = {};
+
+// ----- 左:加载可用节点 -----
+async function loadSteps() {
+  try {
+    const r = await fetch('/api/workflows/steps', { headers: await authHeaders() });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const list = await r.json();
+    stepMeta = {};
+    list.forEach(s => { stepMeta[s.id] = s; });
+    $('steps').innerHTML = list.map(s => {
+      const tags =
+        `<span class="tag">${s.category || '-'}</span>` +
+        (s.needs_ai ? `<span class="tag ai">需要AI</span>` : '') +
+        (s.offline ? `<span class="tag off">离线可跑</span>` : '');
+      return `<div class="node">
+        <div class="meta">
+          <div class="nlabel">${s.label || s.id}</div>
+          <div class="ntags">${tags}</div>
+        </div>
+        <button class="add" data-id="${s.id}" title="加入流水线">+</button>
+      </div>`;
+    }).join('');
+    $('steps').querySelectorAll('.add').forEach(b => {
+      b.onclick = () => { pipeline.push(b.dataset.id); renderPipe(); };
+    });
+  } catch (e) {
+    $('steps').innerHTML = `<div class="empty err">加载失败: ${e.message}</div>`;
+  }
+}
+
+// ----- 中:渲染流水线(增删 / 上下移 / 原生拖拽调序) -----
+function renderPipe() {
+  if (pipeline.length === 0) {
+    $('pipe').innerHTML = '<div class="empty">从左侧点击「+」加入节点</div>';
+    return;
+  }
+  $('pipe').innerHTML = pipeline.map((id, i) => {
+    const m = stepMeta[id] || {};
+    return `<div class="pipe-item" draggable="true" data-i="${i}">
+      <span class="idx">${i + 1}</span>
+      <span class="pl">${m.label || id} <span style="color:var(--mut);font-size:11px">(${id})</span></span>
+      <span class="ctrl">
+        <button class="sub" data-act="up"   data-i="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button class="sub" data-act="down" data-i="${i}" ${i === pipeline.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="sub" data-act="del"  data-i="${i}">✕</button>
+      </span>
+    </div>`;
+  }).join('');
+
+  $('pipe').querySelectorAll('button[data-act]').forEach(b => {
+    b.onclick = () => {
+      const i = +b.dataset.i, act = b.dataset.act;
+      if (act === 'del') pipeline.splice(i, 1);
+      else if (act === 'up' && i > 0) [pipeline[i - 1], pipeline[i]] = [pipeline[i], pipeline[i - 1]];
+      else if (act === 'down' && i < pipeline.length - 1) [pipeline[i + 1], pipeline[i]] = [pipeline[i], pipeline[i + 1]];
+      renderPipe();
+    };
+  });
+
+  // 可选的 HTML5 拖拽调序(锦上添花,按钮仍可用)
+  let dragFrom = null;
+  $('pipe').querySelectorAll('.pipe-item').forEach(el => {
+    el.ondragstart = () => { dragFrom = +el.dataset.i; };
+    el.ondragover = (e) => { e.preventDefault(); el.classList.add('dragover'); };
+    el.ondragleave = () => el.classList.remove('dragover');
+    el.ondrop = (e) => {
+      e.preventDefault();
+      el.classList.remove('dragover');
+      const to = +el.dataset.i;
+      if (dragFrom === null || dragFrom === to) return;
+      const [moved] = pipeline.splice(dragFrom, 1);
+      pipeline.splice(to, 0, moved);
+      dragFrom = null;
+      renderPipe();
+    };
+  });
+}
+
+// ----- 中:保存为工作流 -----
+$('save').onclick = async () => {
+  const name = $('flowname').value.trim();
+  if (!name) { $('savestatus').innerHTML = '<span class="err">请输入工作流名称</span>'; return; }
+  if (pipeline.length === 0) { $('savestatus').innerHTML = '<span class="err">流水线为空,先加节点</span>'; return; }
+  $('save').disabled = true;
+  $('savestatus').textContent = '保存中…';
+  try {
+    const r = await fetch('/api/my-workflows', {
+      method: 'POST',
+      headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, steps: pipeline, params: {} }),
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const d = await r.json();
+    $('savestatus').textContent = '已保存 ✓ (#' + d.id + ')';
+    $('flowname').value = '';
+    await loadMyFlows();
+    refreshBalance();
+  } catch (e) {
+    $('savestatus').innerHTML = '<span class="err">出错: ' + e.message + '</span>';
+  } finally {
+    $('save').disabled = false;
+  }
+};
+
+// ----- 中:我的工作流下拉(加载 + 选中回填) -----
+async function loadMyFlows() {
+  try {
+    const r = await fetch('/api/my-workflows', { headers: await authHeaders() });
+    if (!r.ok) return;
+    const list = await r.json();
+    $('myflows').innerHTML = '<option value="">— 选择已保存的工作流 —</option>' +
+      list.map(w => `<option value="${w.id}">${esc(w.name)} (${(w.steps || []).length} 步)</option>`).join('');
+  } catch (e) {}
+}
+
+$('myflows').onchange = async () => {
+  const id = $('myflows').value;
+  if (!id) return;
+  try {
+    const r = await fetch('/api/my-workflows/' + id, { headers: await authHeaders() });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const w = await r.json();
+    pipeline = (w.steps || []).slice();
+    renderPipe();
+    $('savestatus').textContent = '已回填工作流「' + w.name + '」';
+  } catch (e) {
+    $('savestatus').innerHTML = '<span class="err">回填失败: ' + e.message + '</span>';
+  }
+};
+
+// ----- 轮询作业(照搬 index.html pollJob) -----
+async function pollJob(jid, headers) {
+  for (let i = 0; i < 90; i++) {
+    const r = await fetch('/api/jobs/' + jid, { headers });
+    if (r.ok) {
+      const j = await r.json();
+      if (j.status === 'done') return j;
+      if (j.status === 'error') throw new Error(j.error || '作业失败');
+    }
+    await new Promise(res => setTimeout(res, 800));
+  }
+  throw new Error('作业超时');
+}
+
+// ----- 右:运行流水线 -----
+$('run').onclick = async () => {
+  const f = $('file').files[0];
+  if (!f) { $('runstatus').innerHTML = '<span class="err">请先选择输入图</span>'; return; }
+  if (pipeline.length === 0) { $('runstatus').innerHTML = '<span class="err">流水线为空,先加节点</span>'; return; }
+  $('run').disabled = true;
+  $('runstatus').textContent = '提交中…';
+  $('results').innerHTML = '<div class="empty">运行中…</div>';
+  try {
+    const fd = new FormData();
+    fd.append('file', f);
+    fd.append('steps', pipeline.join(','));
+    fd.append('params', '{}');
+    const headers = await authHeaders();
+    const r = await fetch('/api/workflows/run-custom', { method: 'POST', body: fd, headers });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const { job_id } = await r.json();
+    $('runstatus').textContent = '运行中… 作业号 ' + job_id;
+    const done = await pollJob(job_id, headers);
+    const res = done.result || {};
+    const imgs = (res.outputs || []).filter(u => /\.(png|jpg|jpeg|svg)$/i.test(u));
+    if (imgs.length) {
+      $('results').innerHTML = '<div class="results">' +
+        imgs.map(u => `<figure><img src="${u}" /><figcaption>${u.split('/').pop()}<br/><a href="${u}" download>下载</a></figcaption></figure>`).join('') +
+        '</div>';
+    } else {
+      $('results').innerHTML = '<div class="empty">无图片产物</div>';
+    }
+    let msg = '完成 ✓ 步骤: ' + (res.steps_run || []).join(' → ');
+    const skipped = (res.meta && res.meta.skipped) || [];
+    if (skipped.length) msg += '<br/><span class="err">已跳过: ' + skipped.join('; ') + '</span>';
+    $('runstatus').innerHTML = msg;
+    refreshBalance();
+  } catch (e) {
+    $('runstatus').innerHTML = '<span class="err">出错: ' + e.message + '</span>';
+    $('results').innerHTML = '<div class="empty">—</div>';
+  } finally {
+    $('run').disabled = false;
+  }
+};
+
+// ----- 初始化 -----
+loadSteps();
+loadMyFlows();
+refreshBalance();
+</script>
+</body>
+</html>
