@@ -9,6 +9,12 @@ from __future__ import annotations
 from PIL import Image
 
 from ..ai.openai_image import OpenAIImageClient
+from ..config import settings
+from . import effects
+
+
+def _has_key() -> bool:
+    return bool(settings.openai_api_key)
 
 
 def _client() -> OpenAIImageClient:
@@ -59,23 +65,31 @@ def meme_prompt(text: str, extra: str = "") -> str:
     return f"{base} {extra}".strip() if extra else base
 
 
+# 有 OpenAI key → gpt-image(语义更强);无 key → 本地真实引擎(effects),不再报错。
 def make_variants(image: Image.Image, n: int, prompt: str = "") -> list[Image.Image]:
-    """对输入印花生成 n 个变体(每次 edit 返回一张,循环 n 次)。"""
-    client = _client()
-    p = variants_prompt(prompt)
-    return [client.edit(image, p) for _ in range(n)]
+    """图裂变:生成 n 个变体。"""
+    if _has_key():
+        client = _client(); p = variants_prompt(prompt)
+        return [client.edit(image, p) for _ in range(n)]
+    return effects.colorway_variants(image, n)
 
 
 def make_fuse(image: Image.Image, prompt: str) -> Image.Image:
-    """元素融合:把输入图与 prompt 融合出新图。"""
-    return _client().edit(image, fuse_prompt(prompt))
+    """元素融合。"""
+    if _has_key():
+        return _client().edit(image, fuse_prompt(prompt))
+    return effects.fuse(image, prompt)
 
 
 def make_restyle(image: Image.Image, style: str) -> Image.Image:
-    """风格转绘:按目标风格重绘。"""
-    return _client().edit(image, restyle_prompt(style))
+    """风格转绘。"""
+    if _has_key():
+        return _client().edit(image, restyle_prompt(style))
+    return effects.stylize(image, style)
 
 
 def make_meme(image: Image.Image, text: str, prompt: str = "") -> Image.Image:
-    """梗图印花:加梗文案排版。"""
-    return _client().edit(image, meme_prompt(text, prompt))
+    """梗图印花。"""
+    if _has_key():
+        return _client().edit(image, meme_prompt(text, prompt))
+    return effects.caption(image, text)

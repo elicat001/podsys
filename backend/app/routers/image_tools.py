@@ -34,12 +34,17 @@ _DEWATERMARK_PROMPT = (
 )
 
 
-def _edit_endpoint(raw: bytes, prompt: str, size: str, db: Session, user: User) -> str:
-    """共用:读图 → gpt-image edit → 落盘,返回 image_url。失败退点 + 502。"""
+def _edit_endpoint(raw: bytes, prompt: str, size: str, db: Session, user: User, offline=None) -> str:
+    """读图 → 有 key 走 gpt-image,无 key 走本地引擎 offline(真实处理,不报错)→ 落盘。"""
+    from ..config import settings
     src = _read_image(raw, db, user, "edit")
     try:
-        client = OpenAIImageClient()
-        out_img = client.edit(src, prompt, size=size)
+        if settings.openai_api_key:
+            out_img = OpenAIImageClient().edit(src, prompt, size=size)
+        elif offline is not None:
+            out_img = offline(src)
+        else:
+            raise RuntimeError("该功能需配置 AI key")
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -61,7 +66,8 @@ async def expand(
     """扩图(outpaint via gpt-image edit)。无 key → 502 + 退点。"""
     raw = await file.read()
     full_prompt = f"{_EXPAND_PROMPT} {prompt}".strip()
-    job_id = _edit_endpoint(raw, full_prompt, size, db, user)
+    from ..services.effects import outpaint_reflect
+    job_id = _edit_endpoint(raw, full_prompt, size, db, user, offline=lambda im: outpaint_reflect(im, 1.5))
     return JSONResponse({"job_id": job_id, "image_url": storage.output_url(job_id, "result.png")})
 
 
@@ -76,7 +82,8 @@ async def dewatermark(
     """去水印(gpt-image edit)。无 key → 502 + 退点。"""
     raw = await file.read()
     full_prompt = f"{_DEWATERMARK_PROMPT} {prompt}".strip()
-    job_id = _edit_endpoint(raw, full_prompt, size, db, user)
+    from ..services.effects import dewatermark as _dw
+    job_id = _edit_endpoint(raw, full_prompt, size, db, user, offline=_dw)
     return JSONResponse({"job_id": job_id, "image_url": storage.output_url(job_id, "result.png")})
 
 

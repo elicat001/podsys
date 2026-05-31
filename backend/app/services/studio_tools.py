@@ -38,14 +38,10 @@ def has_openai_key() -> bool:
 
 # ---- 标题提取 -------------------------------------------------------------
 def _placeholder_title(keywords: str, category: str) -> dict:
-    """无 key(或 AI 失败)时的降级占位标题——纯字符串拼接,不调用任何外部服务。"""
-    kw_list = [k.strip() for k in keywords.replace("，", ",").split(",") if k.strip()]
-    head = " ".join(kw_list[:4]) if kw_list else "Custom Design"
-    cat = (category or "apparel").strip()
-    title = f"{head} {cat.title()} - Trendy Print Gift".strip()
-    # 占位关键词:入参关键词 + 品类兜底
-    kws = kw_list[:8] if kw_list else [cat, "print", "gift", "custom"]
-    return {"title": title[:120], "keywords": kws, "degraded": True}
+    """无 key 时:用本地引擎按关键词派生(色调+品类+标签),不再是写死字符串。"""
+    from . import effects
+    r = effects.smart_title(None, keywords=keywords, category=category)
+    return {"title": r["title"], "keywords": r["keywords"], "degraded": True}
 
 
 def generate_title(keywords: str = "", category: str = "apparel") -> dict:

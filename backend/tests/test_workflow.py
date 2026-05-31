@@ -29,11 +29,11 @@ def test_run_workflow_offline_produces_outputs(tmp_path, monkeypatch):
 
 
 def test_tee_full_pipeline_offline(monkeypatch):
-    """新链路:variants 无 key 优雅跳过,compress 离线真实产出,不让工作流失败。"""
+    """全链路离线:variants 现在走本地引擎产出真实变体,compress/生产/标题均真实产出。"""
     img = Image.open(_png())
     out = run_workflow(img, "tee-full", job_id="wffull1")
-    # variants 因无 key 被跳过(记录在 meta.skipped),但工作流整体成功
-    assert any("variants" in s for s in out["meta"].get("skipped", []))
+    # batch11:variants 无 key 也能跑(本地配色裂变),产出 variant_*
+    assert any("variant_" in u for u in out["outputs"])
     # compress 真实产出 + 生产图 + 标题
     assert "compress" in out["meta"] and out["meta"]["compress"]["output_bytes"] > 0
     assert any("production.png" in u for u in out["outputs"])

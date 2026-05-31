@@ -59,10 +59,11 @@ def test_jobs_require_auth(client):
     assert client.get("/api/jobs").status_code == 401
 
 
-def test_failed_generate_refunds_credits(client, auth_headers):
-    """P0-2 回归:无 OpenAI key 时 generate 必 502,且预扣的点数应被退回。"""
+def test_generate_offline_produces_image(client, auth_headers):
+    """新契约(batch11):无 OpenAI key 时 generate 走本地程序化引擎 -> 200 真实图,正常扣 5。"""
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
-    r = client.post("/api/generate", headers=auth_headers, data={"prompt": "x", "size": "1024x1024"})
-    assert r.status_code == 502, r.text
+    r = client.post("/api/generate", headers=auth_headers, data={"prompt": "galaxy cat", "size": "512x512"})
+    assert r.status_code == 200, r.text
+    assert r.json()["image_url"].endswith(".png")
     bal1 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
-    assert bal1 == bal0, f"失败的 generate 应退点: {bal0}->{bal1}"
+    assert bal1 == bal0 - 5, f"generate 扣 5: {bal0}->{bal1}"

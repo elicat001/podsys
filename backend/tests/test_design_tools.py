@@ -64,53 +64,37 @@ def _balance(client, headers) -> int:
     return resp.json()["credits"]
 
 
-def test_variants_no_key_502_refunds(client, dt_client, auth_headers, png):
-    """billing/balance 走主 app(client);业务调用走 dt_client。两者同一进程同一 DB。"""
+# 新契约(batch11):无 OpenAI key 走本地真实引擎 -> 200 + 真实产物,正常扣点(不再 502)
+def test_variants_no_key_offline_real(client, dt_client, auth_headers, png):
     before = _balance(client, auth_headers)
-    resp = dt_client.post(
-        "/api/design-tools/variants",
-        headers=auth_headers,
-        files={"file": ("a.png", png(), "image/png")},
-        data={"n": "3"},
-    )
-    assert resp.status_code == 502, resp.text
-    assert _balance(client, auth_headers) == before
+    resp = dt_client.post("/api/design-tools/variants", headers=auth_headers,
+        files={"file": ("a.png", png(), "image/png")}, data={"n": "3"})
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["images"]) == 3
+    assert _balance(client, auth_headers) == before - 3 * 4
 
 
-def test_fuse_no_key_502_refunds(client, dt_client, auth_headers, png):
+def test_fuse_no_key_offline_real(client, dt_client, auth_headers, png):
     before = _balance(client, auth_headers)
-    resp = dt_client.post(
-        "/api/design-tools/fuse",
-        headers=auth_headers,
-        files={"file": ("a.png", png(), "image/png")},
-        data={"prompt": "galaxy cat"},
-    )
-    assert resp.status_code == 502, resp.text
-    assert _balance(client, auth_headers) == before
+    resp = dt_client.post("/api/design-tools/fuse", headers=auth_headers,
+        files={"file": ("a.png", png(), "image/png")}, data={"prompt": "galaxy cat"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["image_url"]
+    assert _balance(client, auth_headers) == before - 4
 
 
-def test_restyle_no_key_502_refunds(client, dt_client, auth_headers, png):
-    before = _balance(client, auth_headers)
-    resp = dt_client.post(
-        "/api/design-tools/restyle",
-        headers=auth_headers,
-        files={"file": ("a.png", png(), "image/png")},
-        data={"style": "Temu 2D flat"},
-    )
-    assert resp.status_code == 502, resp.text
-    assert _balance(client, auth_headers) == before
+def test_restyle_no_key_offline_real(client, dt_client, auth_headers, png):
+    resp = dt_client.post("/api/design-tools/restyle", headers=auth_headers,
+        files={"file": ("a.png", png(), "image/png")}, data={"style": "Temu 2D flat"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["image_url"]
 
 
-def test_meme_no_key_502_refunds(client, dt_client, auth_headers, png):
-    before = _balance(client, auth_headers)
-    resp = dt_client.post(
-        "/api/design-tools/meme",
-        headers=auth_headers,
-        files={"file": ("a.png", png(), "image/png")},
-        data={"text": "It is what it is"},
-    )
-    assert resp.status_code == 502, resp.text
-    assert _balance(client, auth_headers) == before
+def test_meme_no_key_offline_real(client, dt_client, auth_headers, png):
+    resp = dt_client.post("/api/design-tools/meme", headers=auth_headers,
+        files={"file": ("a.png", png(), "image/png")}, data={"text": "It is what it is"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["image_url"]
 
 
 # ---- 参数校验:variants n 越界 -> 400 且退点 --------------------------------

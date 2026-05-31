@@ -144,26 +144,18 @@ def test_dewatermark_requires_auth(client, png):
     assert resp.status_code == 401
 
 
-def test_expand_no_key_502_and_refunds(client, auth_headers, png):
+# 新契约(batch11):无 key 走本地引擎 -> 200 真实产物,正常扣 edit(不再 502)
+def test_expand_no_key_offline_real(client, auth_headers, png):
     before = _balance(client, auth_headers)
-    resp = client.post(
-        "/api/image-tools/expand",
-        headers=auth_headers,
-        files={"file": ("a.png", png(), "image/png")},
-        data={"prompt": "more space"},
-    )
-    assert resp.status_code == 502, resp.text
-    after = _balance(client, auth_headers)
-    assert after == before  # edit 预扣 4 已退回,余额不变
+    resp = client.post("/api/image-tools/expand", headers=auth_headers,
+        files={"file": ("a.png", png(), "image/png")}, data={"prompt": "more space"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["image_url"]
+    assert _balance(client, auth_headers) == before - 4
 
 
-def test_dewatermark_no_key_502_and_refunds(client, auth_headers, png):
-    before = _balance(client, auth_headers)
-    resp = client.post(
-        "/api/image-tools/dewatermark",
-        headers=auth_headers,
-        files={"file": ("a.png", png(), "image/png")},
-    )
-    assert resp.status_code == 502, resp.text
-    after = _balance(client, auth_headers)
-    assert after == before
+def test_dewatermark_no_key_offline_real(client, auth_headers, png):
+    resp = client.post("/api/image-tools/dewatermark", headers=auth_headers,
+        files={"file": ("a.png", png(), "image/png")})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["image_url"]
