@@ -19,7 +19,7 @@ class InsufficientCredits(Exception):
 
 
 # 各操作的点数定价
-COST: dict[str, int] = {"process": 2, "generate": 5, "edit": 4, "asset": 1}
+COST: dict[str, int] = {"process": 2, "generate": 5, "edit": 4, "asset": 1, "video": 3}
 
 
 def cost_of(op: str) -> int:

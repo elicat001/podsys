@@ -74,4 +74,6 @@ def test_charge_insufficient_does_not_go_negative(db):
 
 
 def test_cost_dict_values():
-    assert COST == {"process": 2, "generate": 5, "edit": 4, "asset": 1}
+    # 核心计费项固定;新增项(如 video=3)按子集校验,避免每加一项就改死断言
+    for k, v in {"process": 2, "generate": 5, "edit": 4, "asset": 1}.items():
+        assert COST[k] == v

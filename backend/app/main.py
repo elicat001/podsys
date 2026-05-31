@@ -39,6 +39,7 @@ from .routers import shops as shops_router
 from .routers import workflow_custom as workflow_custom_router
 from .routers import my_workflows as my_workflows_router
 from .routers import me as me_router
+from .routers import video as video_router
 
 app = FastAPI(title="PODStudio API", version="0.3.0")
 settings.ensure_dirs()
@@ -62,6 +63,7 @@ app.include_router(shops_router.router)
 app.include_router(workflow_custom_router.router)
 app.include_router(my_workflows_router.router)
 app.include_router(me_router.router)
+app.include_router(video_router.router)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
 

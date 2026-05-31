@@ -107,6 +107,19 @@ def _seamless(ctx: dict) -> None:
     _save(ctx, "seamless.png", out)
 
 
+@step("video")  # 商品展示视频(离线 GIF,流水线末端出短片)
+def _video(ctx: dict) -> None:
+    from .video import make_showcase
+    res = make_showcase([ctx["image"]],
+                        style=ctx["params"].get("video_style", "kenburns"),
+                        aspect=ctx["params"].get("video_aspect", "square"),
+                        fps=int(ctx["params"].get("fps", 12)),
+                        text=ctx["params"].get("video_text", ""))
+    storage.output_path(ctx["job_id"], "showcase.gif").write_bytes(res["bytes"])
+    ctx["outputs"].append(storage.output_url(ctx["job_id"], "showcase.gif"))
+    ctx["meta"]["video"] = {k: res[k] for k in ("frames", "width", "height", "duration_ms")}
+
+
 @step("compress")  # 裁剪压缩(离线,导出前归一化尺寸/体积/格式)
 def _compress(ctx: dict) -> None:
     from .image_tools import compress_image
@@ -170,6 +183,7 @@ STEP_META: dict[str, dict] = {
     "mockup":     {"label": "商品套图",   "category": "套图标题", "needs_ai": False, "offline": True},
     "title":      {"label": "标题提取",   "category": "套图标题", "needs_ai": False, "offline": True},
     "production": {"label": "履约生产图", "category": "履约",     "needs_ai": False, "offline": True},
+    "video":      {"label": "展示视频",   "category": "视频",     "needs_ai": False, "offline": True},
 }
 
 
