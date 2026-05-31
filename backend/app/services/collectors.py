@@ -36,7 +36,15 @@ _PLATFORM_HOST_MARKERS: list[tuple[str, tuple[str, ...]]] = [
 _AMAZON_SIZE_SEG = re.compile(r"\.(?:_[A-Z0-9,]+)+_(?=\.)")
 
 # etsy 文件名里的尺寸段,如 `il_340x270`、`il_600x600`、`il_794xN`。
-_ETSY_SIZE_SEG = re.compile(r"il_\d+x[\dN]+", re.IGNORECASE)
+# 不用 IGNORECASE:etsy 真实 URL 一律小写 il_,避免把大写误改并把模板写成小写造成大小写不一致(评审 P1-2)。
+_ETSY_SIZE_SEG = re.compile(r"il_\d+x[\dN]+")
+
+# query 中代表「签名/鉴权」的参数;一旦出现就保守地完全不动该 URL,
+# 以免重排/重编码破坏签名(评审 P1-4)。
+_SIGNED_QUERY_KEYS = frozenset(
+    {"sign", "signature", "sig", "token", "expires", "expire", "policy",
+     "keyid", "x-amz-signature", "x-amz-credential", "auth", "st"}
+)
 
 # temu / tiktok 等需要从 query 里剔除的缩放/处理参数(小写比较)。
 _SCALING_QUERY_KEYS = frozenset(
@@ -86,13 +94,22 @@ def detect_platform(url: str) -> str:
 
 
 def _strip_scaling_query(url: str) -> str:
-    """剔除 query 中的缩放/图片处理参数,保留其余主体。"""
+    """剔除 query 中的缩放/图片处理参数,保留其余主体。
+
+    安全护栏(评审 P1-4):
+    - query 含签名/鉴权参数 → 原样返回,避免重排破坏签名;
+    - 没有任何需要剔除的参数 → 原样返回,避免无谓重编码(如 `+`↔`%20` 漂移)。
+    """
     parts = urlsplit(url)
-    kept = [
-        (k, v)
-        for k, v in parse_qsl(parts.query, keep_blank_values=True)
-        if k.lower() not in _SCALING_QUERY_KEYS
-    ]
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    if not pairs:
+        return url
+    lowered = {k.lower() for k, _ in pairs}
+    if lowered & _SIGNED_QUERY_KEYS:
+        return url
+    kept = [(k, v) for k, v in pairs if k.lower() not in _SCALING_QUERY_KEYS]
+    if len(kept) == len(pairs):
+        return url  # 无可剔除项,保持原样
     new_query = urlencode(kept)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
 

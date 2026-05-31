@@ -2,7 +2,7 @@
 from __future__ import annotations
 import io
 from pathlib import Path
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,7 +18,8 @@ from .services.collectors import detect_platform, upgrade_to_hires
 from .services.billing import charge_for, refund
 from .auth import current_user
 from .models_db import User
-from .db import init_db, get_db
+from .db import init_db, get_db, SessionLocal
+from .services.jobs import create_job, run_job
 from sqlalchemy.orm import Session
 from .routers import auth as auth_router
 from .routers import assets as assets_router
@@ -98,6 +99,60 @@ async def process(
         "production_url": storage.output_url(job_id, "production.png"),
         "production_meta": meta,
     })
+
+
+@app.post("/api/process-async")
+async def process_async(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    template: str = Form("tshirt"),
+    upscale: float = Form(1.0),
+    width_cm: float = Form(30.0),
+    height_cm: float = Form(40.0),
+    dpi: int = Form(300),
+    user: User = Depends(charge_for("process")),
+    db: Session = Depends(get_db),
+):
+    """异步主线:立即返回 job_id,后台跑抠图→套图→导出;前端轮询 GET /api/jobs/{id}。"""
+    raw = await file.read()
+    try:
+        src = Image.open(io.BytesIO(raw)); src.load()
+    except Exception as exc:  # noqa: BLE001
+        refund(db, user, "process")
+        raise HTTPException(status_code=400, detail=f"无法读取图片: {exc}") from exc
+
+    job = create_job(db, "process", params={"template": template}, owner_id=user.id)
+    jid = job.id
+    uid = user.id
+    storage.upload_path(jid).write_bytes(raw)
+
+    def _work() -> dict:
+        try:
+            print_img = extract_print(src, upscale=upscale)
+            print_img.save(storage.output_path(jid, "print.png"), format="PNG")
+            mockup_img = render_mockup(print_img, template_id=template)
+            mockup_img.save(storage.output_path(jid, "mockup.png"), format="PNG")
+            meta = export_production(print_img, storage.output_path(jid, "production.png"),
+                                     width_cm=width_cm, height_cm=height_cm, dpi=dpi)
+            return {
+                "print_url": storage.output_url(jid, "print.png"),
+                "mockup_url": storage.output_url(jid, "mockup.png"),
+                "production_url": storage.output_url(jid, "production.png"),
+                "production_meta": meta,
+            }
+        except Exception:
+            # 后台失败也要退点(与同步路径 P0-2 一致),用独立 session
+            s = SessionLocal()
+            try:
+                u = s.get(User, uid)
+                if u:
+                    refund(s, u, "process")
+            finally:
+                s.close()
+            raise
+
+    background_tasks.add_task(run_job, jid, _work)
+    return JSONResponse({"job_id": jid, "status": "pending"})
 
 
 @app.post("/api/generate")

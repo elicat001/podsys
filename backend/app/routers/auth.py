@@ -1,12 +1,14 @@
 """注册 / 登录 / 当前用户。"""
 from __future__ import annotations
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from ..db import get_db
 from ..models_db import User
 from ..auth import hash_password, verify_password, make_token, current_user
+from ..ratelimit import register_limiter
+from ..config import settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -17,7 +19,12 @@ class Credentials(BaseModel):
 
 
 @router.post("/register")
-def register(body: Credentials, db: Session = Depends(get_db)):
+def register(body: Credentials, request: Request, db: Session = Depends(get_db)):
+    # 每 IP 注册限流(评审 P0-3:堵 guest 清缓存重刷点)
+    ip = request.client.host if request.client else "unknown"
+    if not register_limiter.allow(f"reg:{ip}", settings.register_rate_limit,
+                                  settings.register_rate_window_sec):
+        raise HTTPException(status_code=429, detail="注册过于频繁,请稍后再试")
     if db.execute(select(User).where(User.email == body.email)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="邮箱已注册")
     user = User(email=body.email, password_hash=hash_password(body.password))
