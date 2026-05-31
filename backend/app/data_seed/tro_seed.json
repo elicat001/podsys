@@ -1,0 +1,68 @@
+[
+  {
+    "_comment": "演示种子库(DEMO ONLY)。真实落地必须对接权威 TRO/版权数据源(法院 PACER TRO 名单、USPTO/EUIPO 商标库、品牌权利人黑名单、艺术家授权登记),并定期同步。此处 dhash 为占位测试值、品牌/关键词为公开知名占位,不代表真实侵权判定。"
+  },
+  {
+    "name": "知名卡通形象 A",
+    "brand": "Disney",
+    "type": "tro",
+    "dhash": "12080e96960e0812",
+    "keywords": ["disney", "mickey", "frozen", "elsa"]
+  },
+  {
+    "name": "运动鞋大牌 Logo",
+    "brand": "Nike",
+    "type": "tro",
+    "dhash": "0016969696961600",
+    "keywords": ["nike", "just do it", "swoosh", "jordan"]
+  },
+  {
+    "name": "赛事联盟标识",
+    "brand": "FIFA World Cup",
+    "type": "tro",
+    "dhash": "08000c4d0e960200",
+    "keywords": ["world cup", "fifa", "uefa", "champions league"]
+  },
+  {
+    "name": "时尚奢侈品牌花纹",
+    "brand": "Louis Vuitton",
+    "type": "tro",
+    "dhash": null,
+    "keywords": ["louis vuitton", "lv monogram", "gucci", "chanel"]
+  },
+  {
+    "name": "游戏 IP 角色",
+    "brand": "Pokemon",
+    "type": "tro",
+    "dhash": null,
+    "keywords": ["pokemon", "pikachu", "nintendo", "mario"]
+  },
+  {
+    "name": "流行音乐组合周边",
+    "brand": "Taylor Swift",
+    "type": "tro",
+    "dhash": null,
+    "keywords": ["taylor swift", "the eras tour", "swiftie"]
+  },
+  {
+    "name": "数字插画艺术家作品集",
+    "brand": "ArtistStudio One",
+    "type": "artist",
+    "dhash": null,
+    "keywords": ["artiststudio one", "as1 original", "registered artwork"]
+  },
+  {
+    "name": "独立摄影师版权图库",
+    "brand": "PhotoGrapher X",
+    "type": "artist",
+    "dhash": null,
+    "keywords": ["photographer x", "px licensed", "stock copyright"]
+  },
+  {
+    "name": "漫画连载工作室",
+    "brand": "MangaWorks",
+    "type": "artist",
+    "dhash": null,
+    "keywords": ["mangaworks", "doujin", "fan art unlicensed"]
+  }
+]

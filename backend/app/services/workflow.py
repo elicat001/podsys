@@ -72,15 +72,48 @@ def _production(ctx: dict) -> None:
     ctx["meta"]["production"] = meta
 
 
-@step("title")  # 标题提取(需文本 AI;无 key 时降级为占位)
+@step("title")  # 标题提取(委托 studio_tools;无 key 自动降级为占位,不报错)
 def _title(ctx: dict) -> None:
-    from ..config import settings
-    if not settings.openai_api_key:
-        ctx["meta"]["title"] = ctx["params"].get("title_hint", "Custom POD Design")
-        ctx["meta"].setdefault("skipped", []).append("title(no openai key, used placeholder)")
+    from .studio_tools import generate_title
+    res = generate_title(keywords=ctx["params"].get("keywords", ""),
+                         category=ctx["params"].get("category", "apparel"))
+    ctx["meta"]["title"] = res["title"]
+    ctx["meta"]["title_keywords"] = res["keywords"]
+    if res.get("degraded"):
+        ctx["meta"].setdefault("skipped", []).append("title(no openai key, placeholder)")
+
+
+@step("variants")  # 图裂变(需 gpt-image;无 key 优雅跳过,不让整条工作流失败)
+def _variants(ctx: dict) -> None:
+    from .design_tools import make_variants
+    try:
+        imgs = make_variants(ctx["image"], int(ctx["params"].get("variant_n", 3)))
+    except RuntimeError as exc:  # 无 OpenAI key → 优雅跳过(真实 bug 不在此吞,留给 runner 暴露)
+        ctx["meta"].setdefault("skipped", []).append(f"variants(no key: {exc})")
         return
-    # 有 key 时可接 gpt 文本生成标题(此处留作集成点)
-    ctx["meta"]["title"] = ctx["params"].get("title_hint", "Custom POD Design")
+    for i, im in enumerate(imgs):
+        _save(ctx, f"variant_{i+1}.png", im)
+
+
+@step("compress")  # 裁剪压缩(离线,导出前归一化尺寸/体积/格式)
+def _compress(ctx: dict) -> None:
+    from .image_tools import compress_image
+    try:
+        final, encoded, info = compress_image(
+            ctx["image"],
+            target_w=int(ctx["params"].get("target_w", 0)),
+            target_h=int(ctx["params"].get("target_h", 0)),
+            quality=int(ctx["params"].get("quality", 85)),
+            fmt=ctx["params"].get("fmt", "jpeg"),
+        )
+    except ValueError as exc:  # 非法 fmt/尺寸越界 → 跳过,不让整条工作流 500
+        ctx["meta"].setdefault("skipped", []).append(f"compress({exc})")
+        return
+    fmt = info.get("format", "jpeg")
+    name = f"compressed.{fmt}"
+    storage.output_path(ctx["job_id"], name).write_bytes(encoded)
+    ctx["outputs"].append(storage.output_url(ctx["job_id"], name))
+    ctx["meta"]["compress"] = info
 
 
 # ---------------- 预设工作流(对标灵图首页卡片) ----------------
@@ -102,6 +135,12 @@ WORKFLOWS: dict[str, dict] = {
         "desc": "输入图 → 印花提取 → 多联裂变 → 套图",
         "steps": ["extract", "split", "mockup"],
         "defaults": {"templates": ["canvas"], "split_mode": "horizontal", "panels": 3},
+    },
+    "tee-full": {
+        "label": "T恤-全链路(提取·裂变·套图·压缩·生产·标题)",
+        "desc": "输入图 → 提取 → 图裂变(需AI,无key跳过)→ 套图 → 压缩 → 生产图 → 标题",
+        "steps": ["extract", "variants", "mockup", "compress", "production", "title"],
+        "defaults": {"templates": ["tshirt"], "variant_n": 3, "fmt": "jpeg", "target_w": 1200},
     },
 }
 
