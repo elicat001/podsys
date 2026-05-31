@@ -157,6 +157,47 @@ WORKFLOWS: dict[str, dict] = {
 }
 
 
+# ---------------- step 元数据(供前端编辑器渲染可用节点) ----------------
+# category: 印花提取|印花设计|图案处理|套图标题|履约
+# needs_ai: 该 step 是否需要外部 AI(无 key 时降级/跳过)
+# offline:  默认配置下能否纯本地跑通(true=离线可跑)
+STEP_META: dict[str, dict] = {
+    "extract":    {"label": "印花提取",   "category": "印花提取", "needs_ai": False, "offline": True},
+    "variants":   {"label": "图裂变(AI)", "category": "印花设计", "needs_ai": True,  "offline": False},
+    "split":      {"label": "多联裂变",   "category": "图案处理", "needs_ai": False, "offline": True},
+    "seamless":   {"label": "四方连续图", "category": "图案处理", "needs_ai": False, "offline": True},
+    "compress":   {"label": "裁剪压缩",   "category": "图案处理", "needs_ai": False, "offline": True},
+    "mockup":     {"label": "商品套图",   "category": "套图标题", "needs_ai": False, "offline": True},
+    "title":      {"label": "标题提取",   "category": "套图标题", "needs_ai": False, "offline": True},
+    "production": {"label": "履约生产图", "category": "履约",     "needs_ai": False, "offline": True},
+}
+
+
+def list_steps() -> list[dict]:
+    """返回所有已注册 step 及其元数据(供前端编辑器渲染可用节点)。"""
+    return [{"id": k, **STEP_META.get(k, {})} for k in STEP_REGISTRY]
+
+
+def run_custom(image: Image.Image, steps: list[str], job_id: str,
+               params: dict | None = None) -> dict:
+    """运行任意 step 序列(自定义工作流)。
+
+    校验每个 step ∈ STEP_REGISTRY(非法 → ValueError);ctx 构造同 run_workflow;
+    顺序执行,产物累积进 outputs。返回 {steps_run, outputs, meta} 同构于 run_workflow。
+    """
+    for s in steps:
+        if s not in STEP_REGISTRY:
+            raise ValueError(f"unknown step: {s}")
+    ctx = {
+        "image": image, "job_id": job_id, "outputs": [], "meta": {}, "trace": [],
+        "params": dict(params or {}),
+    }
+    for s in steps:
+        STEP_REGISTRY[s](ctx)
+        ctx["trace"].append(s)
+    return {"steps_run": ctx["trace"], "outputs": ctx["outputs"], "meta": ctx["meta"]}
+
+
 def list_workflows() -> list[dict]:
     return [{"id": k, "label": v["label"], "desc": v["desc"], "steps": v["steps"]}
             for k, v in WORKFLOWS.items()]
