@@ -3,221 +3,461 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>PODStudio — POD 设计工作站</title>
+<title>灵犀POD · 设计工作站</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=DM+Sans:wght@400;500;600&family=DM+Mono&display=swap" rel="stylesheet"></noscript>
 <style>
-  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --fg:#e6e8ec; --mut:#9aa3b2; --acc:#4f8cff; }
-  * { box-sizing: border-box; }
-  body { margin:0; font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
-         background:var(--bg); color:var(--fg); }
-  header { padding:20px 28px; border-bottom:1px solid var(--line); }
-  header h1 { margin:0; font-size:18px; }
-  header p { margin:4px 0 0; color:var(--mut); font-size:13px; }
-  main { max-width:1100px; margin:0 auto; padding:24px; display:grid;
-         grid-template-columns:320px 1fr; gap:24px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; }
-  label { display:block; font-size:13px; color:var(--mut); margin:12px 0 4px; }
-  input, select { width:100%; padding:8px 10px; background:#0e1015; color:var(--fg);
-                  border:1px solid var(--line); border-radius:8px; }
-  .row { display:flex; gap:10px; }
-  .row > div { flex:1; }
-  button { margin-top:18px; width:100%; padding:11px; background:var(--acc); color:#fff;
-           border:0; border-radius:9px; font-size:14px; cursor:pointer; }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  .results { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
-  .results figure { margin:0; background:#0e1015; border:1px solid var(--line);
-                    border-radius:10px; padding:10px; text-align:center; }
-  .results img { max-width:100%; max-height:280px; border-radius:6px;
-                 background:conic-gradient(#222 0 25%,#2b2b2b 0 50%) 0/20px 20px; }
-  figcaption { font-size:12px; color:var(--mut); margin-top:8px; }
-  figcaption a { color:var(--acc); }
-  .hint { font-size:12px; color:var(--mut); margin-top:8px; line-height:1.6; }
-  .empty { color:var(--mut); text-align:center; padding:60px 0; }
+:root{
+  --bg:#0d0c0f; --bg2:#141218; --panel:#1a181f; --panel2:#221f29;
+  --line:#2c2833; --line2:#3a3543;
+  --fg:#f3eee9; --mut:#a39caf; --dim:#6f6878;
+  --amber:#ff7a3d; --amber2:#ffb049; --gold:#f5c451;
+  --teal:#3fd6c4; --violet:#b07bff;
+  --ok:#46d39a; --warn:#ffb049; --bad:#ff5d6c;
+  --r:14px; --shadow:0 18px 50px -18px rgba(0,0,0,.7);
+  --disp:'Bricolage Grotesque',sans-serif; --body:'DM Sans',sans-serif; --mono:'DM Mono',monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(255,122,61,.10), transparent 60%),
+    radial-gradient(900px 500px at -10% 10%, rgba(176,123,255,.08), transparent 55%),
+    var(--bg);
+  color:var(--fg); font-family:var(--body); -webkit-font-smoothing:antialiased; overflow-x:hidden;
+}
+/* 颗粒纹理 */
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:999;opacity:.045;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+a{color:inherit;text-decoration:none}
+::selection{background:var(--amber);color:#160d07}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:8px}
+
+/* ---------- top nav ---------- */
+header{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);
+  background:linear-gradient(180deg,rgba(13,12,15,.92),rgba(13,12,15,.7));border-bottom:1px solid var(--line)}
+.bar{display:flex;align-items:center;gap:28px;padding:0 26px;height:62px;max-width:1500px;margin:0 auto}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-weight:800;font-size:21px;letter-spacing:-.5px}
+.brand .mark{width:30px;height:30px;border-radius:9px;background:conic-gradient(from 200deg,var(--amber),var(--gold),var(--violet),var(--amber));
+  box-shadow:0 0 22px -2px var(--amber);display:grid;place-items:center;font-size:15px;color:#160d07;font-weight:800;transform:rotate(-6deg)}
+.brand b{background:linear-gradient(90deg,var(--fg),var(--amber2));-webkit-background-clip:text;background-clip:text;color:transparent}
+nav{display:flex;gap:4px;flex:1}
+nav a{padding:8px 15px;border-radius:10px;color:var(--mut);font-weight:600;font-size:14.5px;position:relative;transition:.18s}
+nav a:hover{color:var(--fg);background:var(--panel)}
+nav a.on{color:var(--fg)}
+nav a.on::after{content:"";position:absolute;left:15px;right:15px;bottom:2px;height:2px;border-radius:2px;background:linear-gradient(90deg,var(--amber),var(--gold))}
+.actions{display:flex;align-items:center;gap:12px}
+.credits{font-family:var(--mono);font-size:13px;color:var(--gold);border:1px solid var(--line2);padding:6px 11px;border-radius:20px;background:var(--panel)}
+.credits b{color:var(--amber2)}
+.av{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--violet),var(--amber));display:grid;place-items:center;font-weight:700;font-size:13px;color:#160d07}
+
+main{max-width:1500px;margin:0 auto;padding:34px 26px 80px;animation:fade .5s ease}
+@keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.reveal{animation:rise .55s cubic-bezier(.2,.7,.2,1) backwards}
+@keyframes rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+
+/* ---------- hero ---------- */
+.hero{position:relative;border:1px solid var(--line);border-radius:22px;overflow:hidden;padding:46px 44px;margin-bottom:34px;
+  background:linear-gradient(120deg,var(--bg2),var(--panel) 60%,#1d1622);box-shadow:var(--shadow)}
+.hero::before{content:"";position:absolute;right:-80px;top:-120px;width:420px;height:420px;border-radius:50%;
+  background:radial-gradient(circle,rgba(255,122,61,.32),transparent 65%);filter:blur(8px)}
+.hero h1{font-family:var(--disp);font-weight:800;font-size:clamp(30px,4vw,50px);line-height:1.02;margin:0 0 14px;letter-spacing:-1.5px;max-width:680px}
+.hero h1 em{font-style:normal;background:linear-gradient(90deg,var(--amber),var(--gold));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{color:var(--mut);font-size:16px;max-width:560px;margin:0 0 26px;line-height:1.6}
+.flow{display:flex;gap:8px;flex-wrap:wrap;font-family:var(--mono);font-size:12.5px;color:var(--dim)}
+.flow span{border:1px solid var(--line2);border-radius:8px;padding:5px 11px;background:rgba(255,255,255,.02)}
+.flow span.hot{color:var(--amber2);border-color:rgba(255,122,61,.4)}
+
+.sec{margin:38px 0 16px;display:flex;align-items:baseline;gap:14px}
+.sec h2{font-family:var(--disp);font-weight:700;font-size:22px;margin:0;letter-spacing:-.4px}
+.sec .tag{font-size:12.5px;color:var(--dim)}
+.sec .more{margin-left:auto;font-size:13px;color:var(--amber2);cursor:pointer}
+
+/* ---------- cards ---------- */
+.grid{display:grid;gap:16px}
+.g3{grid-template-columns:repeat(3,1fr)} .g4{grid-template-columns:repeat(4,1fr)}
+.g6{grid-template-columns:repeat(6,1fr)} .gauto{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+@media(max-width:1100px){.g3,.g4,.g6{grid-template-columns:repeat(2,1fr)}}
+
+.wf{position:relative;border:1px solid var(--line);border-radius:var(--r);padding:20px;background:linear-gradient(160deg,var(--panel),var(--bg2));
+  cursor:pointer;transition:.22s;overflow:hidden}
+.wf:hover{transform:translateY(-4px);border-color:var(--line2);box-shadow:var(--shadow)}
+.wf::after{content:"";position:absolute;inset:0;background:linear-gradient(120deg,transparent,rgba(255,122,61,.07));opacity:0;transition:.22s}
+.wf:hover::after{opacity:1}
+.wf .ic{font-size:24px;margin-bottom:12px}
+.wf h3{font-family:var(--disp);font-weight:700;font-size:16.5px;margin:0 0 7px}
+.wf .steps{font-family:var(--mono);font-size:11.5px;color:var(--dim);line-height:1.7}
+.wf .go{margin-top:14px;font-size:13px;color:var(--amber2);font-weight:600;opacity:0;transform:translateX(-6px);transition:.22s}
+.wf:hover .go{opacity:1;transform:none}
+
+.tool{border:1px solid var(--line);border-radius:12px;padding:16px;background:var(--panel);cursor:pointer;transition:.18s;display:flex;gap:12px;align-items:flex-start}
+.tool:hover{background:var(--panel2);border-color:var(--amber);transform:translateY(-2px)}
+.tool .ic{width:38px;height:38px;border-radius:10px;flex:none;display:grid;place-items:center;font-size:18px;
+  background:linear-gradient(135deg,rgba(255,122,61,.18),rgba(176,123,255,.14));border:1px solid var(--line2)}
+.tool h4{margin:0 0 3px;font-size:14.5px;font-weight:600}
+.tool p{margin:0;font-size:12px;color:var(--mut);line-height:1.45}
+.tool .ai{font-size:10px;color:var(--violet);font-family:var(--mono);border:1px solid var(--line2);padding:1px 5px;border-radius:5px;margin-top:5px;display:inline-block}
+
+.catrow{display:flex;align-items:center;gap:12px;margin:26px 0 12px}
+.catrow .dot{width:8px;height:8px;border-radius:50%;background:var(--amber)}
+.catrow h3{font-family:var(--disp);font-size:17px;margin:0;font-weight:700}
+.catrow .n{font-size:12px;color:var(--dim);font-family:var(--mono)}
+
+.case{border-radius:12px;overflow:hidden;border:1px solid var(--line);aspect-ratio:3/4;position:relative;background:var(--panel2)}
+.case img{width:100%;height:100%;object-fit:cover;display:block}
+.case .cap{position:absolute;left:0;right:0;bottom:0;padding:10px 12px;font-size:12px;
+  background:linear-gradient(180deg,transparent,rgba(0,0,0,.75));font-weight:600}
+.case .badge{position:absolute;top:8px;right:8px;font-size:10px;background:rgba(0,0,0,.55);padding:3px 7px;border-radius:6px;font-family:var(--mono)}
+
+/* sidebar layout for sub-pages */
+.split{display:grid;grid-template-columns:230px 1fr;gap:24px}
+.side{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:10px;height:fit-content;position:sticky;top:80px}
+.side a{display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:9px;color:var(--mut);font-size:14px;font-weight:500;cursor:pointer}
+.side a:hover{background:var(--panel2);color:var(--fg)} .side a.on{background:linear-gradient(90deg,rgba(255,122,61,.16),transparent);color:var(--amber2)}
+
+/* generic ui */
+.btn{background:linear-gradient(90deg,var(--amber),var(--gold));color:#160d07;border:0;border-radius:10px;padding:11px 16px;font-weight:700;font-family:var(--body);cursor:pointer;font-size:14px;transition:.15s}
+.btn:hover{filter:brightness(1.06)} .btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.ghost{background:var(--panel2);color:var(--fg);border:1px solid var(--line2)}
+input,select{width:100%;padding:9px 11px;background:var(--bg2);color:var(--fg);border:1px solid var(--line2);border-radius:9px;font-family:var(--body);font-size:14px}
+label{display:block;font-size:12.5px;color:var(--mut);margin:12px 0 5px}
+.panel{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:22px}
+.stat{border:1px solid var(--line);border-radius:14px;padding:18px 20px;background:linear-gradient(160deg,var(--panel),var(--bg2))}
+.stat .k{font-size:12.5px;color:var(--mut)} .stat .v{font-family:var(--disp);font-weight:800;font-size:30px;margin-top:4px}
+.stat .v small{font-size:14px;color:var(--dim);font-weight:500}
+.bar-q{height:7px;border-radius:6px;background:var(--bg2);overflow:hidden;margin-top:10px}
+.bar-q i{display:block;height:100%;background:linear-gradient(90deg,var(--amber),var(--gold))}
+.muted{color:var(--mut);font-size:13px} .empty{color:var(--dim);text-align:center;padding:60px 0}
+.chip{display:inline-block;font-size:11px;font-family:var(--mono);padding:2px 8px;border-radius:6px;border:1px solid var(--line2);color:var(--mut);margin:2px}
+.chip.high{color:var(--bad);border-color:rgba(255,93,108,.4)} .chip.review{color:var(--warn)} .chip.safe{color:var(--ok)}
+
+/* modal tool runner */
+.mask{position:fixed;inset:0;background:rgba(8,7,10,.72);backdrop-filter:blur(4px);z-index:100;display:none;align-items:center;justify-content:center;padding:30px}
+.mask.show{display:flex;animation:fade .25s}
+.modal{width:min(900px,96vw);max-height:90vh;overflow:auto;border:1px solid var(--line2);border-radius:18px;background:var(--bg2);box-shadow:var(--shadow)}
+.modal .top{display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg2);z-index:2}
+.modal .top h3{font-family:var(--disp);margin:0;font-size:18px;flex:1}
+.modal .x{cursor:pointer;color:var(--mut);font-size:22px;line-height:1}
+.modal .body{padding:22px;display:grid;grid-template-columns:300px 1fr;gap:24px}
+.drop{border:1.5px dashed var(--line2);border-radius:12px;padding:26px;text-align:center;color:var(--mut);cursor:pointer;font-size:13px;transition:.15s}
+.drop:hover{border-color:var(--amber);color:var(--fg)} .drop img{max-width:100%;border-radius:8px;margin-top:10px}
+.out{min-height:200px;border:1px solid var(--line);border-radius:12px;background:var(--panel);display:grid;place-items:center;padding:16px}
+.out img{max-width:100%;max-height:420px;border-radius:8px;background:conic-gradient(#222 0 25%,#2b2b2b 0 50%) 0/18px 18px}
+.spin{width:30px;height:30px;border:3px solid var(--line2);border-top-color:var(--amber);border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line2);padding:11px 18px;border-radius:10px;z-index:200;font-size:14px;display:none}
 </style>
 </head>
 <body>
 <header>
-  <h1>PODStudio · POD 设计工作站 <span style="color:var(--mut);font-weight:400">v0.1 MVP</span></h1>
-  <p>上传图片 → AI 抠图 → 提取印花 → 套图预览 → 导出生产文件
-     · <a href="/editor.html" style="color:var(--acc)">DIY 编辑器</a>
-     · <span id="balance" style="color:var(--acc)">余额 — 点</span></p>
+  <div class="bar">
+    <div class="brand"><span class="mark">灵</span><span>灵犀<b>POD</b></span></div>
+    <nav id="nav">
+      <a data-v="home">首页</a><a data-v="find">找图</a><a data-v="design">作图</a>
+      <a data-v="video">视频</a><a data-v="publish">上架</a><a data-v="space">我的空间</a>
+    </nav>
+    <div class="actions">
+      <span class="credits" id="credits">余额 <b>—</b></span>
+      <div class="av">Me</div>
+    </div>
+  </div>
 </header>
-<main>
-  <section class="card">
-    <label>① 上传商品图 / 设计图</label>
-    <input type="file" id="file" accept="image/*" />
-
-    <label>② 产品模板(套图)</label>
-    <select id="template"></select>
-
-    <label>③ 印花放大倍数</label>
-    <select id="upscale">
-      <option value="1">不放大 (1x)</option>
-      <option value="2">2x (Lanczos)</option>
-      <option value="4">4x</option>
-    </select>
-
-    <label>④ 生产文件尺寸</label>
-    <div class="row">
-      <div><input type="number" id="w" value="30" /><span class="hint">宽 cm</span></div>
-      <div><input type="number" id="h" value="40" /><span class="hint">高 cm</span></div>
-      <div><input type="number" id="dpi" value="300" /><span class="hint">DPI</span></div>
-    </div>
-
-    <button id="run">开始处理</button>
-    <div class="hint" id="status"></div>
-
-    <hr style="border-color:#2a2f3a;margin:18px 0" />
-    <label>⚡ 一键工作流(采集→提取→裂变→套图→标题 串联)</label>
-    <select id="workflow"></select>
-    <button id="runwf">运行工作流</button>
-    <div class="hint" id="wfstatus"></div>
-  </section>
-
-  <section class="card">
-    <div id="results"><div class="empty">处理结果将显示在这里</div></div>
-
-    <hr style="border-color:#2a2f3a;margin:20px 0" />
-    <label>AI 文生图(gpt-image / image2)</label>
-    <div class="row">
-      <div style="flex:3"><input type="text" id="prompt" placeholder="描述你想生成的印花/设计…" /></div>
-      <div style="flex:1"><button id="gen" style="margin-top:0">生成</button></div>
-    </div>
-    <div class="hint" id="genstatus"></div>
-    <div id="genresult"></div>
-  </section>
-</main>
+<main id="view"></main>
+<div class="mask" id="mask"><div class="modal" id="modal"></div></div>
+<div class="toast" id="toast"></div>
 
 <script>
-const $ = (id) => document.getElementById(id);
+const $=(s,r=document)=>r.querySelector(s); const $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const toast=m=>{const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(t._t);t._t=setTimeout(()=>t.style.display='none',2600)};
+/* 本地确定性渐变占位(离线可用,无外网依赖) */
+function ph(seed){let h=0;seed=String(seed);for(let i=0;i<seed.length;i++)h=(h*31+seed.charCodeAt(i))%360;
+  const c1=`hsl(${h},62%,26%)`,c2=`hsl(${(h+38)%360},58%,16%)`,c3=`hsl(${(h+200)%360},55%,40%)`;
+  const svg=`<svg xmlns='http://www.w3.org/2000/svg' width='300' height='400'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='${c1}'/><stop offset='1' stop-color='${c2}'/></linearGradient></defs><rect width='300' height='400' fill='url(%23g)'/><circle cx='${60+h%160}' cy='${120+h%180}' r='${60+h%50}' fill='${c3}' opacity='.4'/></svg>`;
+  return 'data:image/svg+xml;utf8,'+encodeURIComponent(svg);}
 
-// --- 访客自动鉴权:首次自动注册一个 guest,token 存 localStorage,所有请求带上 ---
-async function ensureToken() {
-  let tok = localStorage.getItem('pod_token');
-  if (tok) return tok;
-  const email = 'guest_' + Math.random().toString(36).slice(2, 10) + '@guest.local';
-  const r = await fetch('/api/auth/register', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password: 'guest-' + email }),
-  });
-  const d = await r.json();
-  localStorage.setItem('pod_token', d.token);
-  return d.token;
-}
-async function authHeaders() { return { Authorization: 'Bearer ' + (await ensureToken()) }; }
+/* ---------- auth + api ---------- */
+async function token(){let t=localStorage.getItem('pod_token');if(t)return t;
+  const email='guest_'+Math.random().toString(36).slice(2,10)+'@guest.local';
+  const r=await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:'g-'+email})});
+  t=(await r.json()).token;localStorage.setItem('pod_token',t);return t;}
+async function api(path,{method='GET',json,form}={}){
+  const h={Authorization:'Bearer '+(await token())};let body;
+  if(json){h['Content-Type']='application/json';body=JSON.stringify(json)} if(form)body=form;
+  const r=await fetch('/api'+path,{method,headers:h,body});
+  const ct=r.headers.get('content-type')||'';const data=ct.includes('json')?await r.json():await r.text();
+  if(!r.ok)throw new Error((data&&data.detail)||r.statusText);return data;}
+async function refreshCredits(){try{const d=await api('/billing/balance');$('#credits').innerHTML='余额 <b>'+d.credits+'</b> 点';}catch(e){}}
+async function poll(jid){for(let i=0;i<80;i++){const j=await api('/jobs/'+jid);if(j.status==='done')return j;if(j.status==='error')throw new Error(j.error||'作业失败');await new Promise(r=>setTimeout(r,700));}throw new Error('超时')}
 
-async function refreshBalance() {
-  try {
-    const r = await fetch('/api/billing/balance', { headers: await authHeaders() });
-    if (r.ok) $('balance').textContent = '余额 ' + (await r.json()).credits + ' 点';
-  } catch (e) {}
-}
+/* ---------- router ---------- */
+const VIEWS={};
+function go(v){location.hash=v}
+function render(){const v=(location.hash.slice(1)||'home').split('/')[0];
+  $$('#nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===v));
+  (VIEWS[v]||VIEWS.home)($('#view'));window.scrollTo(0,0);}
+window.addEventListener('hashchange',render);
+$('#nav').onclick=e=>{const a=e.target.closest('a');if(a)go(a.dataset.v)};
 
-async function loadTemplates() {
-  const r = await fetch('/api/templates');
-  const list = await r.json();
-  $('template').innerHTML = list.map(t => `<option value="${t.id}">${t.label}</option>`).join('');
-}
+/* ---------- tool registry (对标灵图 作图矩阵) ---------- */
+const TOOLS=[
+ {cat:'印花提取',items:[
+   {id:'extract',ic:'✂️',name:'印花提取',desc:'抠图+裁剪,识别并提取印花',ep:'process',field:'file'},
+   {id:'matting',ic:'🪄',name:'一键抠图',desc:'印花专用抠图,更干净',ep:'process',field:'file'},
+ ]},
+ {cat:'印花设计',items:[
+   {id:'generate',ic:'✨',name:'文生图',desc:'输入描述生成印花',ep:'generate',prompt:true,ai:1},
+   {id:'variants',ic:'🧬',name:'图裂变',desc:'识别卖点,裂变多款',ep:'design-tools/variants',ai:1},
+   {id:'fuse',ic:'🔥',name:'元素融合',desc:'融合双爆款,生成新款',ep:'design-tools/fuse',prompt:true,ai:1},
+   {id:'restyle',ic:'🎨',name:'风格转绘',desc:'Temu 2D flat 强刚需',ep:'design-tools/restyle',style:true,ai:1},
+   {id:'meme',ic:'😎',name:'梗图印花',desc:'加梗文案/排版',ep:'design-tools/meme',text:true,ai:1},
+   {id:'seamless',ic:'🔲',name:'四方连续图',desc:'无缝连续印花,服饰家纺',ep:'design-tools/seamless'},
+ ]},
+ {cat:'图案处理',items:[
+   {id:'upscale',ic:'🔍',name:'超分提质',desc:'图变清晰',ep:'process'},
+   {id:'expand',ic:'⤢',name:'扩图',desc:'外延构图调整',ep:'image-tools/expand',ai:1},
+   {id:'dewatermark',ic:'💧',name:'去水印',desc:'批量去水印',ep:'image-tools/dewatermark',ai:1},
+   {id:'vectorize',ic:'📐',name:'转矢量图',desc:'位图转 SVG',ep:'vectorize'},
+   {id:'compress',ic:'🗜️',name:'裁剪压缩',desc:'压缩体积/改尺寸/格式',ep:'image-tools/compress'},
+ ]},
+ {cat:'侵权检测',items:[
+   {id:'ipguard',ic:'🛡️',name:'侵权风险过滤',desc:'TRO+艺术家版权库深度检索',ep:'ip-guard/scan'},
+ ]},
+ {cat:'套图 & 标题',items:[
+   {id:'mockup',ic:'👕',name:'商品套图',desc:'印花批量套商品图',ep:'process'},
+   {id:'title',ic:'🏷️',name:'标题提取',desc:'生成电商标题',ep:'studio/title',kw:true},
+   {id:'tryon',ic:'🧍',name:'模特试衣',desc:'服饰图生成上身图',ep:'studio/tryon',ai:1},
+ ]},
+ {cat:'来图定制',items:[
+   {id:'pet',ic:'🐾',name:'宠物换装',desc:'宠物造型换装 30+',ep:'studio/pet-costume',ai:1},
+   {id:'group',ic:'👨‍👩‍👧',name:'合照',desc:'智能生成合照',ep:'studio/group-photo',prompt:true,ai:1},
+ ]},
+ {cat:'履约 / 视频',items:[
+   {id:'production',ic:'🏭',name:'生产图',desc:'套图模板联动出生产图',ep:'process'},
+   {id:'videogen',ic:'🎬',name:'展示视频',desc:'运镜/轮播生成 GIF 短片',ep:'video/generate'},
+ ]},
+];
 
-$('run').onclick = async () => {
-  const f = $('file').files[0];
-  if (!f) { $('status').textContent = '请先选择一张图片'; return; }
-  const fd = new FormData();
-  fd.append('file', f);
-  fd.append('template', $('template').value);
-  fd.append('upscale', $('upscale').value);
-  fd.append('width_cm', $('w').value);
-  fd.append('height_cm', $('h').value);
-  fd.append('dpi', $('dpi').value);
-
-  $('run').disabled = true;
-  $('status').textContent = '处理中…';
-  try {
-    const r = await fetch('/api/process', { method: 'POST', body: fd, headers: await authHeaders() });
-    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
-    const d = await r.json();
-    const m = d.production_meta;
-    $('results').innerHTML = `
-      <div class="results">
-        <figure><img src="${d.print_url}" /><figcaption>提取的印花(透明底)</figcaption></figure>
-        <figure><img src="${d.mockup_url}" /><figcaption>套图预览</figcaption></figure>
-        <figure><img src="${d.production_url}" /><figcaption>
-          生产文件 ${m.width_px}×${m.height_px}px @${m.dpi}DPI<br/>
-          <a href="${d.production_url}" download>下载生产文件</a></figcaption></figure>
-      </div>`;
-    $('status').textContent = '完成 ✓  作业号 ' + d.job_id;
-    refreshBalance();
-  } catch (e) {
-    $('status').textContent = '出错: ' + e.message;
-  } finally {
-    $('run').disabled = false;
-  }
+/* ===== HOME ===== */
+VIEWS.home=async(el)=>{
+  el.innerHTML=`
+  <section class="hero reveal">
+    <h1>从<em>采集</em>到<em>上架</em>,<br>一条印制工作流跑通。</h1>
+    <p>AI 印花提取 · 图裂变 · 套图 · 侵权检测 · 展示视频 · 一键刊登。节点随心编排,串联成闭环。</p>
+    <div class="flow"><span class="hot">采集</span><span>提取</span><span>裂变</span><span>套图</span><span>压缩</span><span class="hot">刊登</span></div>
+  </section>
+  <div class="sec"><h2>工作流</h2><span class="tag">节点顺序随心排 · 一键串联</span><span class="more" onclick="go('design')">去编排 →</span></div>
+  <div class="grid g3" id="wfs"><div class="empty">加载中…</div></div>
+  <div class="sec"><h2>玩法精选</h2><span class="tag">点开即用的单点工具</span><span class="more" onclick="go('design')">全部工具 →</span></div>
+  <div class="grid gauto" id="plays"></div>
+  <div class="sec"><h2>案例中心</h2><span class="tag">视频玩法</span><span class="more" onclick="go('video')">更多 →</span></div>
+  <div class="grid g6" id="cases"><div class="empty">加载中…</div></div>`;
+  // workflows
+  try{const wfs=await api('/workflows');$('#wfs').innerHTML=wfs.map((w,i)=>`
+    <div class="wf reveal" style="animation-delay:${i*70}ms" onclick="go('design')">
+      <div class="ic">${['📱','🧩','🖼️','⚙️'][i%4]}</div><h3>${esc(w.label)}</h3>
+      <div class="steps">${esc(w.desc||(w.steps||[]).join(' → '))}</div>
+      <div class="go">立即使用 →</div></div>`).join('');}catch(e){$('#wfs').innerHTML='<div class="empty">—</div>'}
+  // plays = featured tools
+  const feat=['variants','seamless','title','ipguard','videogen','vectorize','mockup','tryon'];
+  const flat=TOOLS.flatMap(c=>c.items);
+  $('#plays').innerHTML=feat.map((id,i)=>{const t=flat.find(x=>x.id===id);return t?`
+    <div class="tool reveal" style="animation-delay:${i*50}ms" onclick="openTool('${t.id}')">
+      <div class="ic">${t.ic}</div><div><h4>${t.name} ${t.ai?'<span class="ai">AI</span>':''}</h4><p>${t.desc}</p></div></div>`:''}).join('');
+  // cases from video-cases
+  try{const cs=await api('/video-cases');$('#cases').innerHTML=cs.items.slice(0,12).map((c,i)=>`
+    <div class="case reveal" style="animation-delay:${i*40}ms">
+      <img src="${ph(c.id)}" loading="lazy"/>
+      <span class="badge">▶ ${esc(c.category)}</span><div class="cap">${esc(c.title)}</div></div>`).join('');}
+  catch(e){$('#cases').innerHTML='<div class="empty">—</div>'}
 };
 
-document.getElementById('gen').onclick = async () => {
-  const p = document.getElementById('prompt').value.trim();
-  if (!p) { document.getElementById('genstatus').textContent = '请输入描述'; return; }
-  document.getElementById('genstatus').textContent = '生成中…';
-  try {
-    const fd = new FormData(); fd.append('prompt', p); fd.append('size', '1024x1024');
-    const r = await fetch('/api/generate', { method: 'POST', body: fd, headers: await authHeaders() });
-    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
-    const d = await r.json();
-    document.getElementById('genresult').innerHTML =
-      `<figure class="results"><img src="${d.image_url}" style="max-height:320px" /></figure>`;
-    document.getElementById('genstatus').textContent = '完成 ✓ 作业号 ' + d.job_id;
-    refreshBalance();
-  } catch (e) { document.getElementById('genstatus').textContent = '出错: ' + e.message; }
+/* ===== DESIGN (作图矩阵) ===== */
+VIEWS.design=(el)=>{
+  el.innerHTML=`<div class="sec reveal"><h2>作图</h2><span class="tag">印花提取 · 设计 · 处理 · 套图 · 来图定制 · 一键串联</span>
+     <span class="more" onclick="openWorkflowBuilder()">⚡ 自定义工作流编排</span></div>
+   <div id="cats"></div>`;
+  $('#cats').innerHTML=TOOLS.map((c,ci)=>`
+    <div class="catrow reveal" style="animation-delay:${ci*60}ms"><span class="dot"></span><h3>${c.cat}</h3><span class="n">${c.items.length} 工具</span></div>
+    <div class="grid g4">${c.items.map(t=>`
+      <div class="tool" onclick="openTool('${t.id}')"><div class="ic">${t.ic}</div>
+        <div><h4>${t.name} ${t.ai?'<span class="ai">AI</span>':''}</h4><p>${t.desc}</p></div></div>`).join('')}</div>`).join('');
 };
 
-async function loadWorkflows() {
-  const r = await fetch('/api/workflows');
-  const list = await r.json();
-  $('workflow').innerHTML = list.map(w => `<option value="${w.id}" title="${w.desc}">${w.label}</option>`).join('');
-}
+/* ===== universal TOOL runner modal ===== */
+let curFile=null;
+window.openTool=(id)=>{
+  const t=TOOLS.flatMap(c=>c.items).find(x=>x.id===id);if(!t)return;curFile=null;
+  const extra=[];
+  if(t.prompt)extra.push(`<label>描述 / Prompt</label><input id="f_prompt" placeholder="例:水彩风格猫咪印花"/>`);
+  if(t.style)extra.push(`<label>目标风格</label><input id="f_style" placeholder="Temu 2D flat"/>`);
+  if(t.text)extra.push(`<label>文案</label><input id="f_text" placeholder="梗文案"/>`);
+  if(t.kw)extra.push(`<label>关键词</label><input id="f_kw" placeholder="cat lover, gift"/>`);
+  if(t.id==='videogen')extra.push(`<label>画幅</label><select id="f_aspect"><option value="square">1:1</option><option value="portrait">9:16 TK竖版</option><option value="landscape">16:9</option></select>`);
+  if(t.id==='compress')extra.push(`<label>目标宽(px)</label><input id="f_w" type="number" value="1200"/>`);
+  const needFile=t.id!=='generate';
+  $('#modal').innerHTML=`<div class="top"><span class="ic">${t.ic}</span><h3>${t.name}</h3><span class="x" onclick="closeModal()">✕</span></div>
+    <div class="body">
+      <div>${needFile?`<div class="drop" id="drop">点击或拖入图片<input type="file" id="file" accept="image/*" hidden></div>`:''}
+        ${extra.join('')}
+        <button class="btn" id="run" style="width:100%;margin-top:16px">运行 · 扣${({generate:5,'design-tools/variants':4,'design-tools/fuse':4,'design-tools/restyle':4,'design-tools/meme':4,'image-tools/expand':4,'image-tools/dewatermark':4,'studio/tryon':4,'studio/pet-costume':4,'studio/group-photo':4,'video/generate':3}[t.ep]||(t.id==='title'?0:2))}点</button>
+        <div class="muted" id="rstat" style="margin-top:10px"></div></div>
+      <div class="out" id="out"><span class="muted">结果预览</span></div>
+    </div>`;
+  $('#mask').classList.add('show');
+  if(needFile){const d=$('#drop'),f=$('#file');
+    d.onclick=()=>f.click();
+    d.ondragover=e=>{e.preventDefault();d.style.borderColor='var(--amber)'};
+    d.ondrop=e=>{e.preventDefault();curFile=e.dataTransfer.files[0];showThumb()};
+    f.onchange=()=>{curFile=f.files[0];showThumb()};}
+  $('#run').onclick=()=>runTool(t);
+};
+function showThumb(){if(!curFile)return;const r=new FileReader();r.onload=()=>{$('#drop').innerHTML='已选择<img src="'+r.result+'">';};r.readAsDataURL(curFile);}
+window.closeModal=()=>$('#mask').classList.remove('show');
+$('#mask').onclick=e=>{if(e.target===$('#mask'))closeModal()};
 
-async function pollJob(jid, headers) {
-  for (let i = 0; i < 60; i++) {
-    const r = await fetch('/api/jobs/' + jid, { headers });
-    if (r.ok) {
-      const j = await r.json();
-      if (j.status === 'done') return j;
-      if (j.status === 'error') throw new Error(j.error || '作业失败');
+async function runTool(t){
+  const out=$('#out'),st=$('#rstat');
+  if(t.id!=='generate'&&!curFile){st.textContent='请先选择图片';return;}
+  $('#run').disabled=true;out.innerHTML='<div class="spin"></div>';st.textContent='处理中…';
+  try{
+    let res;
+    const fd=new FormData();if(curFile)fd.append('file',curFile);
+    const gv=id=>{const e=$('#'+id);return e?e.value:''};
+    if(t.ep==='process'){ // 主线 pipeline(抠图/套图/超分/生产 都走 process,展示三件套)
+      if(t.id==='upscale')fd.append('upscale','2');
+      const r=await api('/process',{method:'POST',form:fd});res={img:r.mockup_url||r.print_url,extra:`生产图 ${r.production_meta.width_px}×${r.production_meta.height_px}`,dl:r.production_url};
+    }else if(t.ep==='generate'){fd.append('prompt',gv('f_prompt')||'a cute cat print');fd.append('size','1024x1024');
+      const r=await api('/generate',{method:'POST',form:fd});res={img:r.image_url};
+    }else if(t.ep==='vectorize'){fd.append('colors','8');const r=await api('/vectorize',{method:'POST',form:fd});res={img:r.svg_url,extra:r.rect_count+' 矢量块',dl:r.svg_url};
+    }else if(t.ep==='ip-guard/scan'){const r=await api('/ip-guard/scan',{method:'POST',form:fd});
+      out.innerHTML=`<div style="text-align:center"><div style="font-size:34px;font-family:var(--disp)" class="chip ${r.risk}">${({high:'高风险',review:'需复核',safe:'安全'}[r.risk]||r.risk)}</div><p class="muted">命中 ${r.match_count} 条 · ${esc(r.advice||'')}</p></div>`;
+      st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
+    }else if(t.ep==='studio/title'){fd.append('keywords',gv('f_kw'));fd.append('category','apparel');
+      const r=await api('/studio/title',{method:'POST',form:fd});
+      out.innerHTML=`<div><h4 style="font-family:var(--disp)">${esc(r.title)}</h4><p class="muted">${(r.keywords||[]).map(k=>'<span class=chip>'+esc(k)+'</span>').join('')}</p>${r.degraded?'<p class="muted">（占位:配置 OpenAI key 后走真实生成）</p>':''}</div>`;
+      st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
+    }else if(t.ep==='video/generate'){fd.append('style','kenburns');fd.append('aspect',gv('f_aspect')||'square');
+      const r=await api('/video/generate',{method:'POST',form:fd});res={img:r.video_url,extra:`${r.width}×${r.height} · ${r.frames}帧`,dl:r.video_url};
+    }else if(t.ep==='image-tools/compress'){fd.append('target_w',gv('f_w')||'1200');fd.append('fmt','jpeg');
+      const r=await api('/image-tools/compress',{method:'POST',form:fd});res={img:r.image_url,extra:`${r.width}px · ${(r.output_bytes/1024).toFixed(0)}KB`,dl:r.image_url};
+    }else{ // 其余 gpt-image 类
+      if(t.prompt)fd.append('prompt',gv('f_prompt')||'enhance');
+      if(t.style)fd.append('style',gv('f_style')||'flat');
+      if(t.text)fd.append('text',gv('f_text')||'TEXT');
+      const r=await api('/'+t.ep,{method:'POST',form:fd});res={img:r.image_url||(r.images&&r.images[0]),extra:r.images?r.images.length+' 张变体':''};
     }
-    await new Promise(res => setTimeout(res, 800));
-  }
-  throw new Error('作业超时');
+    out.innerHTML=res.img?`<div style="text-align:center"><img src="${res.img}"/>${res.extra?'<p class="muted">'+esc(res.extra)+'</p>':''}${res.dl?'<p><a class="chip" href="'+res.dl+'" download>下载</a></p>':''}</div>`:'<span class="muted">完成,无图产物</span>';
+    st.textContent='完成 ✓';refreshCredits();
+  }catch(e){out.innerHTML='<span class="muted" style="color:var(--bad)">'+esc(e.message)+'</span>';st.textContent='失败';refreshCredits();}
+  $('#run').disabled=false;
 }
 
-$('runwf').onclick = async () => {
-  const f = $('file').files[0];
-  if (!f) { $('wfstatus').textContent = '请先在上方选择一张图片'; return; }
-  $('runwf').disabled = true;
-  $('wfstatus').textContent = '工作流运行中…';
-  try {
-    const fd = new FormData();
-    fd.append('file', f);
-    fd.append('workflow_id', $('workflow').value);
-    const headers = await authHeaders();
-    const r = await fetch('/api/workflows/run', { method: 'POST', body: fd, headers });
-    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
-    const { job_id } = await r.json();
-    const done = await pollJob(job_id, headers);
-    const imgs = (done.result.outputs || []).filter(u => /\.(png|jpg)$/i.test(u));
-    $('results').innerHTML = '<div class="results">' +
-      imgs.map(u => `<figure><img src="${u}" /><figcaption>${u.split('/').pop()}</figcaption></figure>`).join('') +
-      '</div>';
-    $('wfstatus').textContent = '完成 ✓ 步骤: ' + (done.result.steps_run || []).join(' → ');
-    refreshBalance();
-  } catch (e) {
-    $('wfstatus').textContent = '出错: ' + e.message;
-  } finally {
-    $('runwf').disabled = false;
-  }
+/* ===== custom workflow builder (轻量) ===== */
+window.openWorkflowBuilder=async()=>{
+  const steps=await api('/workflows/steps');
+  $('#modal').innerHTML=`<div class="top"><span class="ic">⚡</span><h3>自定义工作流</h3><span class="x" onclick="closeModal()">✕</span></div>
+   <div class="body"><div>
+     <div class="drop" id="drop">点击或拖入输入图<input type="file" id="file" accept="image/*" hidden></div>
+     <label>选择步骤(按顺序点选,仅离线步骤)</label>
+     <div id="stepbox">${steps.filter(s=>!s.needs_ai).map(s=>`<span class="chip" data-s="${s.id}" style="cursor:pointer">${esc(s.label)}</span>`).join('')}</div>
+     <label>已选流水线</label><div id="pipe" class="muted">—</div>
+     <button class="btn" id="run" style="width:100%;margin-top:14px">运行工作流 · 扣2点</button>
+     <div class="muted" id="rstat" style="margin-top:8px"></div>
+   </div><div class="out" id="out"><span class="muted">产物预览</span></div></div>`;
+  $('#mask').classList.add('show');
+  const d=$('#drop'),f=$('#file');curFile=null;d.onclick=()=>f.click();f.onchange=()=>{curFile=f.files[0];showThumb()};
+  const pipe=[];
+  $('#stepbox').onclick=e=>{const c=e.target.closest('[data-s]');if(!c)return;pipe.push(c.dataset.s);$('#pipe').textContent=pipe.join(' → ')};
+  $('#run').onclick=async()=>{if(!curFile||!pipe.length){$('#rstat').textContent='需选图+至少一个步骤';return;}
+    $('#run').disabled=true;$('#out').innerHTML='<div class="spin"></div>';
+    try{const fd=new FormData();fd.append('file',curFile);fd.append('steps',pipe.join(','));fd.append('params','{}');
+      const r=await api('/workflows/run-custom',{method:'POST',form:fd});const j=await poll(r.job_id);
+      const imgs=(j.result.outputs||[]).filter(u=>/\.(png|jpg|jpeg|gif)$/i.test(u));
+      $('#out').innerHTML='<div style="text-align:center">'+imgs.map(u=>'<img src="'+u+'" style="max-height:200px;margin:4px">').join('')+'<p class="muted">'+(j.result.steps_run||[]).join(' → ')+'</p></div>';
+      $('#rstat').textContent='完成 ✓';refreshCredits();
+    }catch(e){$('#out').innerHTML='<span style="color:var(--bad)">'+esc(e.message)+'</span>'}$('#run').disabled=false;};
 };
 
-loadTemplates();
-loadWorkflows();
-refreshBalance();
+/* ===== FIND (找图) ===== */
+VIEWS.find=(el)=>{
+  el.innerHTML=`<div class="sec reveal"><h2>找图</h2><span class="tag">采集 · 以图搜图 · 采集任务</span></div>
+   <div class="grid g3">
+     <div class="panel reveal"><h3 style="font-family:var(--disp);margin-top:0">🔗 原图升级</h3>
+       <p class="muted">粘贴 Temu/Amazon/Etsy/TikTok 缩略图链接,得到原图地址</p>
+       <input id="cu" placeholder="https://..."/><button class="btn ghost" style="margin-top:10px;width:100%" onclick="doCollect()">解析原图</button>
+       <div class="muted" id="cu_out" style="margin-top:10px;word-break:break-all"></div></div>
+     <div class="panel reveal" style="animation-delay:.06s"><h3 style="font-family:var(--disp);margin-top:0">🔍 以图搜图</h3>
+       <p class="muted">在你的素材库里找相似图</p>
+       <div class="drop" id="sdrop" style="padding:18px">选择图片<input id="sfile" type="file" accept="image/*" hidden></div>
+       <button class="btn ghost" style="margin-top:10px;width:100%" onclick="doSearch()">检索</button>
+       <div id="s_out" style="margin-top:10px"></div></div>
+     <div class="panel reveal" style="animation-delay:.12s"><h3 style="font-family:var(--disp);margin-top:0">📥 采集任务</h3>
+       <div id="tasks" class="muted">加载中…</div></div>
+   </div>`;
+  $('#sdrop').onclick=()=>$('#sfile').click();$('#sfile').onchange=()=>{$('#sdrop').textContent=$('#sfile').files[0].name};
+  api('/collect-tasks').then(ts=>{$('#tasks').innerHTML=(ts.length?ts.map(t=>`<div class="chip">#${t.id.slice(0,6)} · ${t.count}图 · ${t.source}</div>`).join(''):'暂无采集任务')}).catch(()=>$('#tasks').textContent='—');
+};
+window.doCollect=async()=>{const u=$('#cu').value.trim();if(!u)return;try{const r=await api('/collect',{method:'POST',json:{url:u}});$('#cu_out').innerHTML=`<b style="color:var(--amber2)">${r.platform}</b><br>${esc(r.hires_url)}`;}catch(e){$('#cu_out').textContent=e.message}};
+window.doSearch=async()=>{const f=$('#sfile').files[0];if(!f){toast('选张图');return}const fd=new FormData();fd.append('file',f);
+  try{const r=await api('/search/by-image',{method:'POST',form:fd});$('#s_out').innerHTML=r.count?r.results.map(m=>`<div class="chip">${esc(m.name)} · ${(m.similarity*100).toFixed(0)}%</div>`).join(''):'<span class="muted">库里没有相似图</span>'}catch(e){$('#s_out').textContent=e.message}};
+
+/* ===== VIDEO ===== */
+VIEWS.video=async(el)=>{
+  el.innerHTML=`<div class="sec reveal"><h2>视频</h2><span class="tag">展示视频生成 · 案例库</span>
+     <span class="more" onclick="openTool('videogen')">＋ 生成视频</span></div>
+   <div id="vcats" class="muted">加载中…</div><div class="grid g6" id="vcases" style="margin-top:14px"></div>`;
+  try{const cats=await api('/video-cases/categories');$('#vcats').innerHTML=cats.map(c=>`<span class="chip">${esc(c.category)} ${c.count}</span>`).join('');
+    const cs=await api('/video-cases');$('#vcases').innerHTML=cs.items.map((c,i)=>`
+      <div class="case reveal" style="animation-delay:${i*30}ms"><img src="${ph(c.id)}" loading="lazy"/>
+        <span class="badge">▶ ${esc(c.aspect||'')}</span><div class="cap">${esc(c.title)}</div></div>`).join('');}
+  catch(e){$('#vcats').textContent='—'}
+};
+
+/* ===== PUBLISH (上架/商品库) ===== */
+VIEWS.publish=async(el)=>{
+  el.innerHTML=`<div class="sec reveal"><h2>上架 · 商品库</h2><span class="tag">筛选 · 批量 · 店铺 · 刊登</span>
+     <span class="more" onclick="newProduct()">＋ 新建商品</span></div>
+   <div class="panel reveal" style="margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+     <input id="p_q" placeholder="按风险筛选 risk: safe/review/high" style="max-width:260px"/>
+     <button class="btn ghost" onclick="loadProducts()">查询</button>
+     <span class="muted" id="p_total"></span></div>
+   <div id="p_list" class="grid gauto"><div class="empty">加载中…</div></div>
+   <div class="sec reveal"><h2 style="font-size:18px">店铺管理</h2><span class="more" onclick="newShop()">＋ 新建店铺</span></div>
+   <div id="shops" class="grid g4"></div>`;
+  loadProducts();loadShops();
+};
+window.loadProducts=async()=>{const q=$('#p_q')?.value.trim();try{const r=await api('/products/search'+(q?('?risk='+encodeURIComponent(q)):''));
+  $('#p_total').textContent=`共 ${r.total} 件`;$('#p_list').innerHTML=r.items.length?r.items.map(p=>`
+    <div class="panel"><b>${esc(p.title)}</b><div class="muted">¥${p.price} · ${esc(p.category)}</div>
+      <div style="margin-top:6px"><span class="chip ${p.risk}">${esc(p.risk)}</span>${(p.tags||[]).map(t=>'<span class=chip>'+esc(t)+'</span>').join('')}</div></div>`).join(''):'<div class="empty">暂无商品,点右上「新建商品」</div>';}catch(e){$('#p_list').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}};
+window.newProduct=async()=>{const title=prompt('商品标题');if(!title)return;await api('/products',{method:'POST',json:{title,price:19.9}});toast('已创建');loadProducts();};
+window.loadShops=async()=>{const s=await api('/shops');$('#shops').innerHTML=s.length?s.map(x=>`<div class="panel"><b>${esc(x.name)}</b><div class="muted">${esc(x.platform)} · ${esc(x.status)}</div></div>`).join(''):'<div class="empty">暂无店铺</div>';};
+window.newShop=async()=>{const name=prompt('店铺名');if(!name)return;await api('/shops',{method:'POST',json:{platform:'local',name}});toast('已创建');loadShops();};
+
+/* ===== SPACE (我的空间) ===== */
+VIEWS.space=async(el)=>{
+  el.innerHTML=`<div class="sec reveal"><h2>我的空间</h2><span class="tag">配额 · 素材 · 回收站</span></div>
+    <div class="grid g4" id="quota"><div class="empty">加载中…</div></div>
+    <div class="sec reveal"><h2 style="font-size:18px">素材</h2></div>
+    <div id="assets" class="grid gauto"><div class="empty">加载中…</div></div>`;
+  try{const q=await api('/space/quota');const gb=b=>(b/1073741824).toFixed(2);
+    $('#quota').innerHTML=`
+      <div class="stat reveal"><div class="k">存储用量</div><div class="v">${gb(q.used_bytes)}<small>/ ${gb(q.quota_bytes)} GB</small></div>
+        <div class="bar-q"><i style="width:${Math.min(100,q.percent)}%"></i></div>
+        <div class="muted" style="margin-top:6px">${q.percent}% ${q.over?'· <span style="color:var(--bad)">超容</span>':''}</div></div>
+      <div class="stat reveal" style="animation-delay:.05s"><div class="k">采集</div><div class="v">${q.by_category.collected.count}</div></div>
+      <div class="stat reveal" style="animation-delay:.1s"><div class="k">素材</div><div class="v">${q.by_category.material.count}</div></div>
+      <div class="stat reveal" style="animation-delay:.15s"><div class="k">回收站</div><div class="v">${q.trash.count}</div></div>`;
+    const a=await api('/space/assets');$('#assets').innerHTML=a.total?a.items.map(x=>`
+      <div class="panel"><b style="font-size:13px">${esc(x.name)}</b><div style="margin-top:6px"><span class="chip ${x.risk}">${esc(x.risk)}</span><span class="chip">${esc(x.source)}</span></div></div>`).join(''):'<div class="empty">空空如也 — 去「作图」生成些素材吧</div>';
+  }catch(e){$('#quota').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}
+};
+
+/* boot */
+refreshCredits();render();
 </script>
 </body>
 </html>
