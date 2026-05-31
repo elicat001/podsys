@@ -27,6 +27,7 @@ from .routers import design as design_router
 from .routers import products as products_router
 from .routers import jobs as jobs_router
 from .routers import billing as billing_router
+from .routers import workflow as workflow_router
 
 app = FastAPI(title="PODStudio API", version="0.3.0")
 settings.ensure_dirs()
@@ -38,6 +39,7 @@ app.include_router(design_router.router)
 app.include_router(products_router.router)
 app.include_router(jobs_router.router)
 app.include_router(billing_router.router)
+app.include_router(workflow_router.router)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
 
