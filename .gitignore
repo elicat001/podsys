@@ -10,3 +10,8 @@ backend/data/
 # os
 Thumbs.db
 .DS_Store
+
+# 根目录运行时数据(预览/直接在根目录跑时生成)
+/data/
+data/
+*.db
