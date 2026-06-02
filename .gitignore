@@ -7,6 +7,18 @@ __pycache__/
 # data / generated outputs
 backend/data/
 
+# 本地 IDE/启动配置(含机器相关绝对路径,不入库)
+.claude/launch.json
+
+# 本地开发工具链(只在本机用,不入库)
+backend/pyproject.toml
+backend/requirements-dev.txt
+backend/e2e/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
 # os
 Thumbs.db
 .DS_Store

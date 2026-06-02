@@ -1,0 +1,280 @@
+"""印花提取(真正的):从图里把『印刷的图案』单独抠出来,输出透明 PNG。
+
+和『一键抠图』(rembg 去背景留主体)是两回事:
+- 一键抠图:背景去掉、留下主体(人/物)。
+- 印花提取:把衣服/物品上印的那块图案单独抠出来(保真,用于复印套版)。
+
+流程(全本地、确定性、不依赖网关):
+  ① 框出『产品本体』:衣服 → cloth-seg(能排除人/皮肤);非衣服(枕头/杯子/袋子等)→ 通用 rembg。
+  ② 衣服先压平缓变光照/阴影(`_flatten_illumination`,只为算 mask;产品本就平整,不压)。
+  ③ 产品 mask 小幅向内腐蚀(只削轮廓一圈明暗,不伤袖子/边缘印花)。
+  ④ 双阈值滞后(hysteresis)去主导材质色:强信号(种子)+ 与种子连通的弱信号 = 印花及其淡色细节;
+     孤立的淡噪点/淡褶皱丢掉。这样能多留细节而不带进孤立褶皱。
+  ⑤ 连通块清理:衣服→留主体(最大成片块)+ 附近块,丢远处/细长褶皱条;产品→只丢极小噪点(保全部铺满的设计)。
+  ⑥ 双分辨率出图:粗区域在 1000px 定『印花在哪』(去阴影稳),再把其 bbox 放大裁出『全分辨率印花块』,
+     在原始像素上按真实色差重新描边 → 边缘清晰、细线/淡色细节都在(不再是 1000px 放大的软边)。
+  ⑦ 补细节后处理 `_deepen`:加饱和 + 加对比,印花颜色更实更深(只加深、不变浅)。
+都没分到产品(输入本身就是设计图)→ 退化为整图去底(`extract_on_fabric`)。
+
+为速度&内存:分割/估色/聚类在缩小图(1000px)上做;精细描边只在裁出的印花块(全分辨率,长边封顶 2600)上做。
+**已知边界 & 别再过拟合**:重褶皱浅色布料(白衣)的『锐利褶皱折痕』——同时像边缘(滤波抹不掉)、颜色接近浅色印花
+(色差分不开)、又和印花连通(连通性丢不掉)——颜色法/边缘保留滤波/光照压平都只能缓解(压平只压缓变阴影、压不掉折痕)。
+**绝不能用"像素级开运算/降饱和/取最大块只留一块/暴力降阈值"硬凑**(会碎掉细线印花、丢浅色印花、白衣褶皱反压过印花)。
+要彻底干净只能上 AI 编辑(语义"看懂褶皱 vs 印花",需 edit key)。宁留残留也保印花完整。
+"""
+from __future__ import annotations
+
+import numpy as np
+from PIL import Image, ImageEnhance, ImageFilter
+from scipy import ndimage
+
+_MAX_PX = 40_000_000   # 输入像素上限,防 OOM
+_ANALYZE = 1000        # 分析(分割/估色/聚类)用的缩放边长;太大反而放大褶皱噪点(踩过坑)
+_CROP_CAP = 2600       # 印花裁剪块的长边上限:精细 alpha 在『全分辨率印花块』上算 → 清晰保细节,封顶防 OOM
+_CLOTH = None          # cloth-seg 会话(缓存复用)
+
+
+def _cloth_session():
+    global _CLOTH
+    if _CLOTH is None:
+        from rembg import new_session  # lazy import(重依赖)
+
+        _CLOTH = new_session("u2net_cloth_seg")
+    return _CLOTH
+
+
+def _product_mask(img: Image.Image) -> tuple[np.ndarray | None, str]:
+    """框出『产品本体』的布尔 mask。衣服 → cloth-seg(能排除人/皮肤);非衣服(枕头/杯子/
+    袋子等)→ 通用 rembg。返回 (mask, kind);都没分到 → (None, ...)。"""
+    w, h = img.size
+    cloth_cov = 0.0  # cloth-seg 看到的衣服占比(用于判定是不是衣服)
+    try:
+        from rembg import remove  # lazy import
+
+        seg = remove(img, session=_cloth_session())  # 上衣/下装/全身 三段纵向堆叠
+        cmask = np.asarray(seg.convert("RGBA").crop((0, 0, w, h)).getchannel("A")) > 30
+        cloth_cov = cmask.sum() / (w * h)
+        if cloth_cov > 0.02:  # cloth-seg 干净分出了衣服 → 直接用它(能排除人/皮肤)
+            return cmask, "garment"
+    except Exception:  # noqa: BLE001
+        pass
+    try:  # cloth-seg 没分干净 → 用通用 rembg 拿完整产品本体
+        from ..ai.matting import RembgMattingProvider
+
+        obj = RembgMattingProvider().cutout(img).convert("RGBA")
+        mask = np.asarray(obj.getchannel("A")) > 30
+        if mask.sum() > 0.02 * w * h:
+            # cloth-seg 看到过衣服碎片(平铺衣常这样)→ 仍按衣服(高tol+聚类);完全没看到 → 非衣服产品
+            return mask, ("garment" if cloth_cov > 0.005 else "product")
+    except Exception:  # noqa: BLE001
+        pass
+    return None, "none"
+
+
+def _flatten_illumination(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """压平缓变的光照/阴影:用大尺度模糊估出低频光照场,除掉它 → 布料变均匀。
+
+    只用于『算 mask』(让褶皱的缓变阴影不被当印花);最终输出仍用原图像素,不影响颜色。
+    注:只压得掉『缓变阴影』(如衣服一侧偏暗);压不掉锐利的褶皱折痕(中频、本身像边缘)。
+    """
+    g = rgb.mean(axis=2)
+    illum = np.clip(ndimage.gaussian_filter(g, sigma=max(g.shape) / 9.0), 1.0, None)
+    target = float(np.median(g[mask])) if mask.any() else float(g.mean())
+    return np.clip(rgb * (target / illum)[..., None], 0, 255)
+
+
+def _dominant_color(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """region 内出现最多的颜色(粗量化后取众数)= 布料底色。"""
+    px = (rgb[mask] // 24 * 24)
+    cols, cnts = np.unique(px, axis=0, return_counts=True)
+    return cols[cnts.argmax()].astype(int)
+
+
+def _keep_print_components(labels: np.ndarray, n: int) -> np.ndarray:
+    """从连通块里只留『印花』:保留主体(最大块)+ 主体附近的成片块;
+    丢掉① 极小噪点 ② 远离主体的零散残留 ③ 细长的『条』(褶皱)。
+    用形状/位置判定,不在像素级做开运算,所以不会把成片印花/细线印花打碎。"""
+    sizes = ndimage.sum(np.ones_like(labels), labels, range(1, n + 1))
+    coms = ndimage.center_of_mass(np.ones_like(labels), labels, range(1, n + 1))
+    objs = ndimage.find_objects(labels)
+
+    def _is_streak(idx):  # 细长的『条』(褶皱)= 一边很窄 + 长宽比大
+        bh = objs[idx][0].stop - objs[idx][0].start
+        bw = objs[idx][1].stop - objs[idx][1].start
+        return min(bh, bw) < 6 and max(bh, bw) / (min(bh, bw) + 1) > 4
+
+    # 印花主体 = 最大的『成片块』(跳过细长褶皱条,免得锚错到褶皱上)
+    big = int(sizes.argmax()) + 1
+    for idx in np.argsort(sizes)[::-1]:
+        if not _is_streak(idx):
+            big = int(idx) + 1
+            break
+    ys, xs = np.where(labels == big)
+    cy, cx = ys.mean(), xs.mean()
+    radius = max(int(np.ptp(ys)), int(np.ptp(xs))) * 1.25 + 60  # 主体覆盖范围
+    keep = [big]                                             # 主体永远保留
+    for i in range(1, n + 1):
+        if i == big or sizes[i - 1] < 6:                     # 主体 / 极小噪点(阈值调低,保细节)
+            continue
+        y, x = coms[i - 1]
+        if (y - cy) ** 2 + (x - cx) ** 2 >= radius ** 2:     # 远离主体 → 丢
+            continue
+        if _is_streak(i - 1):                                # 细长褶皱条 → 丢
+            continue
+        keep.append(i)
+    return np.isin(labels, keep)
+
+
+def _drop_tiny(labels: np.ndarray, n: int) -> np.ndarray:
+    """只丢极小噪点,保留所有成片块 —— 用于产品(枕头/袋子等):设计铺满整个产品、无褶皱,
+    不能像衣服那样按"主体附近"聚类(会把散布的花卉等远处图案误删)。"""
+    sizes = ndimage.sum(np.ones_like(labels), labels, range(1, n + 1))
+    thr = max(4, sizes.max() * 0.0012)  # 阈值调低,保留更多细小图案
+    return np.isin(labels, list((np.where(sizes > thr)[0] + 1).tolist()))
+
+
+def _print_alpha(rgb: np.ndarray, region: np.ndarray, kind: str = "garment") -> np.ndarray:
+    """在 region(产品本体)内去主导材质色,返回印花的 alpha(uint8)。
+
+    双阈值滞后(hysteresis):强信号(dist>hi)= 印花种子;弱信号(dist>lo,含淡色细节也含淡褶皱)
+    只有『和种子连通』才保留 → 留住印花的淡色细节/柔边,丢掉孤立的淡褶皱。这样能压低弱阈值多留细节
+    而不会把孤立褶皱也留进来。再按产品类型做连通块清理。
+    - 衣服(garment):hi=70 防褶皱、lo=50(再低会把白衣淡阴影连进来)、腐蚀 6;聚类清理。
+    - 产品(枕头/袋子等):hi=35、lo=16 留淡色图案、腐蚀 3 不削边缘花;只丢极小噪点。
+    """
+    hi, lo, shrink = (70, 50, 6) if kind == "garment" else (35, 16, 3)
+    inner = ndimage.binary_erosion(region, iterations=shrink)
+    if inner.sum() < 50:
+        inner = region
+    fabric = _dominant_color(rgb, inner)
+    dist = np.sqrt(((rgb - fabric) ** 2).sum(axis=2))
+    seeds = inner & (dist > hi)                 # 强信号:确定是印花
+    weak = inner & (dist > lo)                  # 弱信号:含淡色细节 + 淡褶皱
+    labels, n = ndimage.label(weak, structure=np.ones((3, 3)))  # 8 邻接,利于连住细节
+    if n:
+        seed_labels = set(np.unique(labels[seeds]).tolist()) - {0}
+        pm = np.isin(labels, list(seed_labels))  # 只留含强信号的弱区域 = 印花+其淡色细节
+    else:
+        pm = np.zeros(weak.shape, dtype=bool)
+    labels2, n2 = ndimage.label(pm)
+    if n2:
+        pm = _keep_print_components(labels2, n2) if kind == "garment" else _drop_tiny(labels2, n2)
+    return np.where(pm, 255, 0).astype("uint8")
+
+
+def extract_on_fabric(crop: Image.Image, tol: int = 60) -> Image.Image:
+    """整图去底(设计图降级路径):从四边估布料色,洪水填充去掉与边相连的底色,保留图案内部。
+
+    不写死颜色:边缘色(白/黑/任意)都从图里估;本地、确定性、可离线测。
+    """
+    rgb = np.asarray(crop.convert("RGB"), dtype=np.int16)
+    h, w = rgb.shape[:2]
+    border = np.concatenate([rgb[0, :], rgb[h - 1, :], rgb[:, 0], rgb[:, w - 1]], axis=0)
+    fabric = np.median(border, axis=0)
+    dist = np.sqrt(((rgb - fabric) ** 2).sum(axis=2))
+    near = dist < tol
+    labels, n = ndimage.label(near)
+    if n:
+        bd = set(labels[0, :]) | set(labels[h - 1, :]) | set(labels[:, 0]) | set(labels[:, w - 1])
+        bd.discard(0)
+        bg = np.isin(labels, list(bd))
+    else:
+        bg = np.zeros((h, w), dtype=bool)
+    alpha = np.where(bg, 0, 255).astype("uint8")
+    out = Image.fromarray(np.dstack([np.asarray(crop.convert("RGB")), alpha]), "RGBA")
+    a = (
+        out.getchannel("A")
+        .filter(ImageFilter.MaxFilter(3))
+        .filter(ImageFilter.MinFilter(3))
+        .filter(ImageFilter.GaussianBlur(0.6))
+    )
+    out.putalpha(a)
+    return out
+
+
+def _autocrop(rgba: Image.Image) -> Image.Image:
+    bbox = rgba.getchannel("A").getbbox()
+    return rgba.crop(bbox) if bbox else rgba
+
+
+def _capped(img: Image.Image) -> Image.Image:
+    """长边封顶到 _CROP_CAP,防超大印花块算色差时 OOM(小图原样返回)。"""
+    if max(img.size) > _CROP_CAP:
+        img = img.copy()
+        img.thumbnail((_CROP_CAP, _CROP_CAP))
+    return img
+
+
+def _deepen(rgba: Image.Image) -> Image.Image:
+    """补细节后处理:加饱和 + 加对比 → 印花颜色更实更深(只加深、不变浅)。
+
+    印花贴到白底后,套版前肉眼会觉得"淡了"——这里把饱和/对比拉回来。只动 RGB,不动 alpha。
+    幅度温和(避免色偏):饱和 ×1.28、对比 ×1.12。
+    """
+    rgb = rgba.convert("RGB")
+    rgb = ImageEnhance.Color(rgb).enhance(1.28)
+    rgb = ImageEnhance.Contrast(rgb).enhance(1.12)
+    out = rgb.convert("RGBA")
+    out.putalpha(rgba.getchannel("A"))
+    return out
+
+
+def extract_design(image: Image.Image) -> tuple[Image.Image, dict]:
+    """返回 (透明印花图, meta)。meta.method ∈ garment / whole_image / whole_image_fallback。"""
+    full = image.convert("RGB")
+    W, H = full.size
+    if W * H > _MAX_PX:
+        raise ValueError("图片过大,请压缩后再试")
+
+    small = full.copy()
+    small.thumbnail((_ANALYZE, _ANALYZE))  # 分割/聚类/估色:小图快且对褶皱噪点稳
+    sw, sh = small.size
+    mask, kind = _product_mask(small)
+
+    if mask is None:  # 衣服/产品都没分到 → 输入当作一张设计图,整图去底
+        cut = _autocrop(_deepen(extract_on_fabric(_capped(full))))
+        return cut, {"method": "whole_image", "size": list(cut.size)}
+
+    # ① 粗区域(1000px):定『哪些区域是印花』——去阴影 + 连通块聚类,对褶皱稳
+    orig_small = np.asarray(small).astype(int)
+    rgb_small = orig_small.astype(float)
+    if kind == "garment":  # 衣服先压平缓变阴影(只为算粗区域);产品本就平整、不压
+        rgb_small = _flatten_illumination(rgb_small, mask)
+    alpha_small = _print_alpha(rgb_small.astype(int), mask, kind)
+    region_small = Image.fromarray(alpha_small, "L").point(lambda v: 255 if v >= 90 else 0)
+    bbox = region_small.getbbox()
+    if bbox is None:  # 没抠出图案 → 退回整图去底
+        cut = _autocrop(_deepen(extract_on_fabric(_capped(full))))
+        return cut, {"method": "whole_image_fallback", "size": list(cut.size)}
+
+    # ② 把粗区域 bbox 放大到全分辨率、加边距,裁出『印花块』在全分辨率上处理(清晰、保细节)
+    pad = 6
+    x0 = max(0, int(bbox[0] * W / sw) - pad); y0 = max(0, int(bbox[1] * H / sh) - pad)
+    x1 = min(W, int(bbox[2] * W / sw) + pad); y1 = min(H, int(bbox[3] * H / sh) + pad)
+    crop = _capped(full.crop((x0, y0, x1, y1)))
+    cw, ch = crop.size
+
+    # ③ 精细 alpha:在粗区域『内』,按全分辨率印花块的真实色差重新描边
+    #    → 边缘清晰、细线/淡色细节都在;阴影已被粗区域挡在外面,故阈值可压低多留细节。
+    region = (
+        region_small.crop(bbox).resize((cw, ch), Image.BILINEAR)
+        .point(lambda v: 255 if v >= 90 else 0)
+        .filter(ImageFilter.MaxFilter(5))  # 稍外扩,给精细色差描边留出边缘余量
+    )
+    region_arr = np.asarray(region) > 0
+    inner = ndimage.binary_erosion(mask, iterations=6 if kind == "garment" else 3)
+    if inner.sum() < 50:
+        inner = mask
+    fabric = _dominant_color(orig_small, inner)  # 用原图色(非压平)估布料色
+    lo = 40 if kind == "garment" else 14         # 比粗阈值低:区域内已无阴影,可多留细节
+    dist = np.sqrt(((np.asarray(crop).astype(int) - fabric) ** 2).sum(axis=2))
+    fine = region_arr & (dist > lo)
+    cut = crop.convert("RGBA")
+    cut.putalpha(Image.fromarray(np.where(fine, 255, 0).astype("uint8"), "L"))
+
+    method = kind  # garment(衣服)/ product(枕头/杯子/袋子 等)
+    if cut.getchannel("A").getbbox() is None:  # 没抠出 → 退回整图
+        cut = extract_on_fabric(crop)
+        method = "whole_image_fallback"
+    cut = _autocrop(_deepen(cut))
+    return cut, {"method": method, "size": list(cut.size)}

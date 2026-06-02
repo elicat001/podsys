@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/ip-guard", tags=["ip-guard"])
 
 
 @router.post("/scan")
-async def scan(
+def scan(
     file: UploadFile = File(...),
     title: str = Form(""),
     verbose: bool = Form(False),
@@ -33,7 +33,7 @@ async def scan(
     P2-2:默认只回 risk/advice/命中条数;`verbose=true` 才回命中条目明细
     (品牌/距离/命中关键词),避免向终端用户泄露侵权库结构与判定阈值。
     """
-    img = read_image_or_refund(await file.read(), db, user, "process")
+    img = read_image_or_refund(file.file.read(), db, user, "process")
     report = ip_guard.scan(img, title=title or None)
     if not verbose:
         report = {

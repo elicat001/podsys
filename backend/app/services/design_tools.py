@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from PIL import Image
 
 from ..ai.openai_image import OpenAIImageClient
@@ -15,6 +17,17 @@ from . import effects
 
 def _has_key() -> bool:
     return bool(settings.openai_api_key)
+
+
+def _downscale_for_edit(image: Image.Image, max_side: int = 1024) -> Image.Image:
+    """发给 gpt-image edit 前等比缩小:输出最大 1024×1536,发超大原图(用户照片常 18~20MP)
+    纯属浪费上传体积与网关处理时间(实测大图比小图慢数倍)。缩到最长边 ≤ max_side,
+    上传从数 MB 降到 ~1MB,产出质量不受影响(输出本就 ≤1024)。"""
+    m = max(image.size)
+    if m <= max_side:
+        return image
+    s = max_side / m
+    return image.resize((max(1, round(image.width * s)), max(1, round(image.height * s))), Image.LANCZOS)
 
 
 def _client() -> OpenAIImageClient:
@@ -67,10 +80,18 @@ def meme_prompt(text: str, extra: str = "") -> str:
 
 # 有 OpenAI key → gpt-image(语义更强);无 key → 本地真实引擎(effects),不再报错。
 def make_variants(image: Image.Image, n: int, prompt: str = "") -> list[Image.Image]:
-    """图裂变:生成 n 个变体。"""
+    """图裂变:生成 n 个变体。
+
+    有 key 时**并行**调用 gpt-image:单次 edit 是阻塞网络 I/O(实测网关 ~80s),
+    串行 n 次会让整个请求达到 ~n×单次,极易触发浏览器/网关超时(前端表现为
+    "Failed to fetch")。并行后墙钟≈单次。SDK 客户端(httpx 连接池)线程安全、可跨线程复用。
+    任一调用失败时 list() 迭代会抛出,交由 router 退回全部已扣点。
+    """
     if _has_key():
         client = _client(); p = variants_prompt(prompt)
-        return [client.edit(image, p) for _ in range(n)]
+        src = _downscale_for_edit(image)  # 大图先缩,显著降低上传+网关耗时(输出≤1024,质量不变)
+        with ThreadPoolExecutor(max_workers=min(n, 4)) as ex:
+            return list(ex.map(lambda _: client.edit(src, p), range(n)))
     return effects.colorway_variants(image, n)
 
 

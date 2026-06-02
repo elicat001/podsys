@@ -2,12 +2,19 @@
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# 锚定到 backend/ 目录(本文件在 backend/app/config.py),使数据库与 .env 的解析
+# 不再依赖"启动时的工作目录"。否则从不同目录启动 uvicorn 会读/建不同的 data/podstudio.db,
+# 导致"换了个空库 → 已登录用户变成'用户不存在'"。env 变量(POD_DATA_DIR)仍可覆盖。
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="POD_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="POD_", env_file=str(_BACKEND_DIR / ".env"), extra="ignore"
+    )
 
     # storage
-    data_dir: Path = Path("data")
+    data_dir: Path = _BACKEND_DIR / "data"
 
     # auth
     jwt_secret: str = "dev-secret-change-me-please-set-POD_JWT_SECRET-in-prod"
@@ -32,7 +39,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = ""                 # 留空走官方;可填代理/Azure 兼容网关
     openai_image_model: str = "gpt-image-1"
-    openai_timeout: float = 60.0              # P1-2:OpenAI 调用超时(秒),防线程池被慢请求吃满
+    openai_timeout: float = 120.0             # OpenAI 调用超时(秒)。文生图较慢(20~40s),放宽防被掐断
+    openai_max_retries: int = 4               # 网关瞬时抖动(502/超时/连接错误)自动重试次数(SDK 指数退避)
 
     # print extraction
     autocrop_padding: int = 8                # px padding around detected content

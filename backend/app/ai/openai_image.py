@@ -34,13 +34,17 @@ def _file_tuple(img: Image.Image, name: str = "image.png"):
 _SDK_CACHE: dict = {}
 
 
-def _get_sdk_client(api_key: str, base_url: str | None, timeout: float):
-    """复用 SDK 客户端(P1-2:避免每次调用重建 httpx 连接池;按凭证缓存)。"""
-    key = (api_key, base_url, timeout)
+def _get_sdk_client(api_key: str, base_url: str | None, timeout: float, max_retries: int = 2):
+    """复用 SDK 客户端(P1-2:避免每次调用重建 httpx 连接池;按凭证缓存)。
+
+    max_retries:SDK 自带指数退避重试,自动覆盖网关瞬时抖动(502/超时/连接错误),
+    无需在业务层手写重试循环。
+    """
+    key = (api_key, base_url, timeout, max_retries)
     client = _SDK_CACHE.get(key)
     if client is None:
         from openai import OpenAI  # lazy import
-        client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+        client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=max_retries)
         _SDK_CACHE[key] = client
     return client
 
@@ -51,7 +55,8 @@ class OpenAIImageClient:
             raise RuntimeError("POD_OPENAI_API_KEY 未配置,无法调用 gpt-image")
         self.model = settings.openai_image_model
         self.client = _get_sdk_client(
-            settings.openai_api_key, settings.openai_base_url or None, settings.openai_timeout
+            settings.openai_api_key, settings.openai_base_url or None,
+            settings.openai_timeout, settings.openai_max_retries,
         )
 
     def _decode(self, resp) -> Image.Image:

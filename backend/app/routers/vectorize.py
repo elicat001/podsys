@@ -19,14 +19,14 @@ router = APIRouter(prefix="/api/vectorize", tags=["vectorize"])
 
 
 @router.post("")
-async def vectorize(
+def vectorize(
     file: UploadFile = File(...),
     colors: int = Form(8),
     user: User = Depends(charge_for("process")),
     db: Session = Depends(get_db),
 ):
     """位图转 SVG。读图失败或 colors 越界 → 退点 + 400。"""
-    raw = await file.read()
+    raw = file.file.read()
     src = _read_image(raw, db, user, "process")
     try:
         svg, rect_count = to_svg(src, colors=colors)

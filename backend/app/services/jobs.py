@@ -62,3 +62,51 @@ def submit(background_tasks, db: Session, kind: str, fn: Callable[[], dict],
     job = create_job(db, kind, params=params, owner_id=owner_id)
     background_tasks.add_task(run_job, job.id, fn)
     return job.id
+
+
+def refund_in_background(owner_id: int, op: str, n: int = 1) -> None:
+    """后台作业失败退点:请求 session 已关,必须用独立 session;按 n 笔退。"""
+    from ..models_db import User
+    from .billing import refund
+    s = SessionLocal()
+    try:
+        u = s.get(User, owner_id)
+        if u is None:
+            return
+        for _ in range(n):
+            refund(s, u, op)
+    finally:
+        s.close()
+
+
+def save_asset_in_background(owner_id: int, image, name: str, url: str,
+                             source: str = "generated") -> None:
+    """后台作业内入库素材:用独立 session(请求 session 已关)。save_as_asset 自身吞错。"""
+    from .library import save_as_asset
+    s = SessionLocal()
+    try:
+        save_as_asset(s, owner_id, image, name, url, source=source)
+    finally:
+        s.close()
+
+
+def submit_ai_job(background_tasks, db: Session, kind: str, owner_id: int,
+                  work: Callable[[str], dict], *, refund_op: str, refund_n: int = 1,
+                  params: dict | None = None) -> str:
+    """建作业 + 后台执行 work(job_id);work 抛错时按 refund_n 笔退 refund_op,再交 run_job 记 error。
+
+    work 接收 job_id(可作产物存储目录),返回结果 dict(存入 job.result)。
+    用于 gpt-image 等耗时端点:HTTP 立即返回 job_id,前端轮询 GET /api/jobs/{id}。
+    """
+    job = create_job(db, kind, params=params, owner_id=owner_id)
+    jid = job.id
+
+    def _wrapped() -> dict:
+        try:
+            return work(jid)
+        except Exception:
+            refund_in_background(owner_id, refund_op, refund_n)
+            raise
+
+    background_tasks.add_task(run_job, jid, _wrapped)
+    return jid

@@ -18,9 +18,9 @@ def _read(raw: bytes) -> Image.Image:
 
 
 @router.post("/split")
-async def split(file: UploadFile = File(...), mode: str = Form("horizontal"),
-                panels: int = Form(3), rows: int = Form(2), cols: int = Form(2)):
-    img = _read(await file.read())
+def split(file: UploadFile = File(...), mode: str = Form("horizontal"),
+          panels: int = Form(3), rows: int = Form(2), cols: int = Form(2)):
+    img = _read(file.file.read())
     try:
         parts = split_panels(img, mode=mode, panels=panels, rows=rows, cols=cols)
     except ValueError as exc:
@@ -35,8 +35,8 @@ async def split(file: UploadFile = File(...), mode: str = Form("horizontal"),
 
 
 @router.post("/mockup-batch")
-async def mockup_batch(file: UploadFile = File(...), templates: str = Form("tshirt,tote,canvas")):
-    img = _read(await file.read())
+def mockup_batch(file: UploadFile = File(...), templates: str = Form("tshirt,tote,canvas")):
+    img = _read(file.file.read())
     tids = [t.strip() for t in templates.split(",") if t.strip()]
     results = render_batch(img, tids)
     job_id = storage.new_job_id()

@@ -11,16 +11,18 @@ from __future__ import annotations
 
 import io
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from PIL import Image
 from sqlalchemy.orm import Session
 
 from .. import storage
 from ..auth import current_user
+from ..config import settings
 from ..db import get_db
 from ..models_db import User
 from ..services import studio_tools
 from ..services.billing import InsufficientCredits, charge, charge_for, refund
+from ..services.jobs import submit_ai_job
 from ..web_utils import read_image_or_refund as _read
 
 router = APIRouter(prefix="/api/studio", tags=["studio"])
@@ -61,6 +63,7 @@ def title(
 
 @router.post("/tryon")
 async def tryon(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     size: str = Form("auto"),
     user: User = Depends(charge_for("edit")),
@@ -68,6 +71,16 @@ async def tryon(
 ):
     """模特试衣:服饰印花图 -> 模特上身图。无 key -> 502 + 退点。"""
     garment = _read(await file.read(), db, user, "edit")
+    if settings.openai_api_key:  # gpt-image 耗时 -> 后台作业,前端轮询
+        uid = user.id
+
+        def _work(jid: str) -> dict:
+            out = studio_tools.model_tryon(garment, size=size)
+            out.save(storage.output_path(jid, "tryon.png"), format="PNG")
+            return {"image_url": storage.output_url(jid, "tryon.png")}
+
+        jid = submit_ai_job(background_tasks, db, "tryon", uid, _work, refund_op="edit")
+        return {"job_id": jid, "status": "pending"}
     try:
         out = studio_tools.model_tryon(garment, size=size)
     except HTTPException:
@@ -80,6 +93,7 @@ async def tryon(
 
 @router.post("/pet-costume")
 async def pet_costume_endpoint(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     costume: str = Form("royal european"),
     size: str = Form("auto"),
@@ -88,6 +102,16 @@ async def pet_costume_endpoint(
 ):
     """宠物换装。无 key -> 502 + 退点。"""
     pet = _read(await file.read(), db, user, "edit")
+    if settings.openai_api_key:  # gpt-image 耗时 -> 后台作业,前端轮询
+        uid = user.id
+
+        def _work(jid: str) -> dict:
+            out = studio_tools.pet_costume(pet, costume=costume, size=size)
+            out.save(storage.output_path(jid, "pet.png"), format="PNG")
+            return {"image_url": storage.output_url(jid, "pet.png")}
+
+        jid = submit_ai_job(background_tasks, db, "pet-costume", uid, _work, refund_op="edit")
+        return {"job_id": jid, "status": "pending"}
     try:
         out = studio_tools.pet_costume(pet, costume=costume, size=size)
     except HTTPException:
@@ -100,6 +124,7 @@ async def pet_costume_endpoint(
 
 @router.post("/group-photo")
 async def group_photo_endpoint(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     prompt: str = Form(...),
     size: str = Form("auto"),
@@ -108,6 +133,16 @@ async def group_photo_endpoint(
 ):
     """合照。无 key -> 502 + 退点。"""
     base = _read(await file.read(), db, user, "edit")
+    if settings.openai_api_key:  # gpt-image 耗时 -> 后台作业,前端轮询
+        uid = user.id
+
+        def _work(jid: str) -> dict:
+            out = studio_tools.group_photo(base, prompt, size=size)
+            out.save(storage.output_path(jid, "group.png"), format="PNG")
+            return {"image_url": storage.output_url(jid, "group.png")}
+
+        jid = submit_ai_job(background_tasks, db, "group-photo", uid, _work, refund_op="edit")
+        return {"job_id": jid, "status": "pending"}
     try:
         out = studio_tools.group_photo(base, prompt, size=size)
     except HTTPException:

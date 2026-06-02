@@ -20,6 +20,12 @@ _TMP_DATA_DIR = Path(tempfile.gettempdir()) / f"podstudio_test_{uuid.uuid4().hex
 _TMP_DATA_DIR.mkdir(parents=True, exist_ok=True)
 os.environ["POD_DATA_DIR"] = str(_TMP_DATA_DIR)
 # 关键:确保即使存在 .env 也不会覆盖临时目录(env 变量优先级高于 .env 默认值)
+# 测试必须『离线、确定性、不碰真实外部 API』:即使 backend/.env 配了真 key,
+# 也在这里强制清空 key + 锁定 pillow 引擎,否则 AI 类测试会真去调网关→超时/不稳定。
+# (env 变量优先级高于 .env,所以这几行能盖掉 .env 里的值)
+os.environ["POD_OPENAI_API_KEY"] = ""
+os.environ["POD_MATTING_PROVIDER"] = "pillow"
+os.environ["POD_UPSCALE_PROVIDER"] = "pillow"
 # 进程退出清理本次临时库,避免历史 podstudio_test_* 累积撑满 Temp(ENOSPC)
 import atexit  # noqa: E402
 import shutil  # noqa: E402
