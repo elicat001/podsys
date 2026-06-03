@@ -47,6 +47,56 @@ def colorway_variants(img: Image.Image, n: int = 3) -> list[Image.Image]:
     return out
 
 
+def _print_region_mask(img: Image.Image):
+    """定位『印花』区域,返回全幅 L mask(255=印花)。复用 design_extract 的本地检测
+    (cloth-seg 排除人/皮肤 + 去主导材质色),**只读不改它**。
+
+    小图(测试/缩略图)/依赖缺失(rembg/scipy)/未检出/任何异常 → 返回 None,
+    交由调用方回退整图改色。所以即便检测不可用,图裂变也永远能出图,不会崩。"""
+    if min(img.size) < 512:  # 小图:不加载重模型(保测试快 + 纯 pillow 可跑),直接回退
+        return None
+    try:
+        import numpy as np
+
+        from .design_extract import _ANALYZE, _flatten_illumination, _print_alpha, _product_mask
+        small = img.convert("RGB")
+        small.thumbnail((_ANALYZE, _ANALYZE))  # 检测在 1000px 上做(快且对褶皱稳)
+        pm, kind = _product_mask(small)
+        if pm is None:
+            return None
+        arr = np.asarray(small).astype(float)
+        if kind == "garment":
+            arr = _flatten_illumination(arr, pm)
+        alpha = _print_alpha(arr.astype(int), pm, kind)  # 小图尺度的印花 mask(uint8)
+        mask = Image.fromarray(alpha, "L").resize(img.size, Image.BILINEAR)
+        return mask if mask.getbbox() is not None else None
+    except Exception:  # noqa: BLE001  依赖缺失/检测异常 → 回退整图改色
+        return None
+
+
+def print_colorway_variants(img: Image.Image, n: int = 3) -> list[Image.Image]:
+    """无 key 图裂变(主体感知):先定位印花区域,**只给印花换配色,人物/背景保持不变**。
+
+    定位不可用(小图 / 无 rembg/scipy / 未检出)→ 回退 colorway_variants(整图改色,原行为)。
+    """
+    n = max(1, min(n, 6))
+    base = img.convert("RGB")
+    mask = _print_region_mask(base)
+    if mask is None:
+        return colorway_variants(img, n)
+    soft = mask.filter(ImageFilter.GaussianBlur(2))  # 软化 mask 边缘,合成自然
+    src_alpha = img.convert("RGBA").split()[-1] if img.mode == "RGBA" else None
+    hues = [40, 150, 280, 90, 200, 330]
+    out = []
+    for k in range(n):
+        shifted = _hue_shift(base, hues[k % len(hues)])
+        v = Image.composite(shifted, base, soft).convert("RGBA")  # 仅印花处用改色版,其余原图
+        if src_alpha is not None:
+            v.putalpha(src_alpha)
+        out.append(v)
+    return out
+
+
 # ---------- 风格转绘:真实滤镜风格化 ----------
 def stylize(img: Image.Image, style: str = "flat") -> Image.Image:
     s = (style or "").lower()

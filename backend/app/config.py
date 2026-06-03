@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # print extraction
     autocrop_padding: int = 8                # px padding around detected content
     bg_tolerance: int = 28                   # pillow matting: color distance threshold
+    print_target_px: int = 2048              # 提取结果长边低于此 → 放大到此(超分);0=关闭
+    print_max_upscale: float = 3.0           # 单次放大倍数上限(防过度插值变糊)
 
     @property
     def uploads_dir(self) -> Path:

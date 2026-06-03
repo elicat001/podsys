@@ -296,13 +296,13 @@ let curFile=null;
 window.openTool=(id)=>{
   const t=TOOLS.flatMap(c=>c.items).find(x=>x.id===id);if(!t)return;curFile=null;
   const extra=[];
-  if(t.prompt)extra.push(`<label>描述 / Prompt</label><input id="f_prompt" placeholder="例:一只可爱的柯基,卡通贴纸风格,纯白背景"/><div class="muted" style="margin-top:5px;font-size:12px;line-height:1.5">💡 描述越具体,效果越好:<b>主体 + 风格 + 背景</b>。AI 出图约需 <b>20~60 秒</b>,请耐心等。</div>`);
+  if(t.prompt)extra.push(`<label>描述 / Prompt</label><input id="f_prompt" placeholder="例:一只可爱的柯基,卡通贴纸风格,纯白背景"/><div class="muted" style="margin-top:5px;font-size:12px;line-height:1.5">💡 描述越具体,效果越好:<b>主体 + 风格 + 背景</b>。AI 出图大约需要 <b>20~60 秒</b>,请稍候片刻 ✨</div>`);
   if(t.style)extra.push(`<label>目标风格</label><input id="f_style" placeholder="Temu 2D flat"/>`);
   if(t.text)extra.push(`<label>文案</label><input id="f_text" placeholder="梗文案"/>`);
   if(t.kw)extra.push(`<label>关键词</label><input id="f_kw" placeholder="cat lover, gift"/>`);
   if(t.id==='videogen')extra.push(`<label>画幅</label><select id="f_aspect"><option value="square">1:1</option><option value="portrait">9:16 TK竖版</option><option value="landscape">16:9</option></select>`);
   if(t.id==='compress')extra.push(`<label>目标宽(px)</label><input id="f_w" type="number" value="1200"/>`);
-  if(t.id==='variants')extra.push(`<label>裂变张数</label><select id="f_n"><option value="1">1 张</option><option value="2" selected>2 张</option><option value="3">3 张</option><option value="4">4 张</option></select><div class="muted" style="margin-top:5px;font-size:12px;line-height:1.5">💡 每张约 <b>60~90 秒</b>(并行出图),张数越多越慢,请耐心等。</div>`);
+  if(t.id==='variants')extra.push(`<label>裂变张数</label><select id="f_n"><option value="1">1 张</option><option value="2" selected>2 张</option><option value="3">3 张</option><option value="4">4 张</option></select><div class="muted" style="margin-top:5px;font-size:12px;line-height:1.5">💡 每张约 <b>60~90 秒</b>(并行出图),张数越多稍慢一些,请稍候片刻 ✨</div>`);
   const needFile=t.id!=='generate';
   $('#modal').innerHTML=`<div class="top"><span class="ic">${t.ic}</span><h3>${t.name}</h3><span class="x" onclick="closeModal()">✕</span></div>
     <div class="body">
@@ -363,9 +363,11 @@ async function runTool(t){
       if(t.prompt)fd.append('prompt',gv('f_prompt')||'enhance');
       if(t.style)fd.append('style',gv('f_style')||'flat');
       if(t.text)fd.append('text',gv('f_text')||'TEXT');
-      const r=await runJob(t.ep,fd);res={img:r.image_url||(r.images&&r.images[0]),extra:r.images?r.images.length+' 张变体':''};
+      const r=await runJob(t.ep,fd);res={img:r.image_url||(r.images&&r.images[0]),imgs:r.images,extra:r.images?r.images.length+' 张变体':''};
     }
-    out.innerHTML=res.img?`<div style="text-align:center"><img src="${res.img}"/>${res.extra?'<p class="muted">'+esc(res.extra)+'</p>':''}${res.dl?'<p><a class="chip" href="'+res.dl+'" download>下载</a></p>':''}</div>`:'<span class="muted">完成,无图产物</span>';
+    out.innerHTML=(res.imgs&&res.imgs.length)
+      ?`<div style="width:100%"><div style="display:grid;grid-template-columns:repeat(${Math.min(res.imgs.length,3)},1fr);gap:10px">${res.imgs.map((u,i)=>`<div style="text-align:center"><img src="${u}"/><p style="margin:6px 0 0"><a class="chip" href="${u}" download>下载 ${i+1}</a></p></div>`).join('')}</div>${res.extra?'<p class="muted" style="text-align:center;margin-top:10px">'+esc(res.extra)+'</p>':''}</div>`
+      :(res.img?`<div style="text-align:center"><img src="${res.img}"/>${res.extra?'<p class="muted">'+esc(res.extra)+'</p>':''}${res.dl?'<p><a class="chip" href="'+res.dl+'" download>下载</a></p>':''}</div>`:'<span class="muted">完成,无图产物</span>');
     st.textContent='完成 ✓';refreshCredits();
   }catch(e){out.innerHTML='<span class="muted" style="color:var(--bad)">'+esc(e.message)+'</span>';st.textContent='失败';refreshCredits();}
   $('#run').disabled=false;

@@ -92,7 +92,8 @@ def make_variants(image: Image.Image, n: int, prompt: str = "") -> list[Image.Im
         src = _downscale_for_edit(image)  # 大图先缩,显著降低上传+网关耗时(输出≤1024,质量不变)
         with ThreadPoolExecutor(max_workers=min(n, 4)) as ex:
             return list(ex.map(lambda _: client.edit(src, p), range(n)))
-    return effects.colorway_variants(image, n)
+    # 无 key:主体感知离线裂变(只给印花换色,人/背景不变);定位不可用时内部自动回退整图改色
+    return effects.print_colorway_variants(image, n)
 
 
 def make_fuse(image: Image.Image, prompt: str) -> Image.Image:

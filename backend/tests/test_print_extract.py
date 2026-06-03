@@ -48,8 +48,8 @@ def test_extract_design_on_design_image():
     assert design.mode == "RGBA"
     assert "method" in meta
     assert design.getchannel("A").getbbox() is not None  # 抠出了内容
-    # 自动裁剪到内容:输出应小于原图(裁掉了白边)
-    assert design.size[0] < 200 and design.size[1] < 200
+    # 自动裁剪到内容:裁完后内容应贴满四边(bbox == 整图;不再用绝对尺寸,因为有超分会放大)
+    assert design.getchannel("A").getbbox() == (0, 0, design.size[0], design.size[1])
 
 
 def test_extract_design_rejects_oversized(monkeypatch):
