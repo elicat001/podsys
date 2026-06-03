@@ -48,6 +48,21 @@ def _cloth_session():
     return _CLOTH
 
 
+def _rembg_object(img: Image.Image) -> Image.Image | None:
+    """用通用 rembg 把印花当『前景物体』整体抠出 —— 深色照片印深色衣时颜色法会碎裂,这是兜底。
+
+    返回二值化(crisp)RGBA;依赖缺失/失败 → None(调用方回退颜色法)。
+    """
+    try:
+        from ..ai.matting import RembgMattingProvider
+
+        out = RembgMattingProvider().cutout(img).convert("RGBA")
+    except Exception:  # noqa: BLE001
+        return None
+    out.putalpha(out.getchannel("A").point(lambda v: 255 if v >= 128 else 0))  # 去半透明柔边
+    return out
+
+
 def _product_mask(img: Image.Image) -> tuple[np.ndarray | None, str]:
     """框出『产品本体』的布尔 mask。衣服 → cloth-seg(能排除人/皮肤);非衣服(枕头/杯子/
     袋子等)→ 通用 rembg。返回 (mask, kind);都没分到 → (None, ...)。"""
@@ -243,6 +258,36 @@ def _capped(img: Image.Image) -> Image.Image:
     return img
 
 
+def _fill_subject_holes(rgba: Image.Image) -> Image.Image:
+    """补回『主体内部、和布料同色被误删』的区域(如狗头的白肚皮、人物的白衣)。
+
+    关键区分(解决"内容缺失"又不毁文字):
+    - 被『厚实图案』包围的洞 = 主体内部(白肚皮)→ 填回,用洞自身原色(白→白,不会染成身体色)。
+    - 被『细笔画』包围的洞 = 描边文字字心 / 镂空 → 不填,保持透明(黑底也不会变黑块)。
+    判据:把图案按到边缘的距离腐蚀掉一圈(厚度阈 k),细笔画会被腐蚀没→其洞『露出去』不再封闭;
+    厚实主体腐蚀后仍封闭→其洞保留。只填腐蚀后仍封闭的洞。
+    """
+    arr = np.asarray(rgba)
+    a0 = arr[..., 3] > 0
+    if not a0.any():
+        return rgba
+    holes = ndimage.binary_fill_holes(a0) & ~a0
+    if not holes.any():
+        return rgba
+    k = max(10, int(min(a0.shape) * 0.02))             # 厚度阈:> 笔画宽、< 主体厚
+    deep = ndimage.binary_fill_holes(ndimage.distance_transform_edt(a0) > k)
+    hlab, hn = ndimage.label(holes)
+    sizes = ndimage.sum(np.ones_like(hlab), hlab, range(1, hn + 1))
+    cap = a0.sum() * 0.35                               # 上限:超主体 35% 的洞不填(防大片框住的背景)
+    deep_ids = set(np.unique(hlab[holes & deep]).tolist()) - {0}
+    keep_ids = [i for i in deep_ids if sizes[i - 1] < cap]  # 腐蚀后仍封闭 且 不过大 = 主体内部
+    if not keep_ids:
+        return rgba
+    a = a0 | np.isin(hlab, keep_ids)
+    out = np.dstack([arr[..., :3], np.where(a, 255, 0).astype(np.uint8)])  # 各像素保留自身原色
+    return Image.fromarray(out, "RGBA")
+
+
 def _supersample(rgba: Image.Image) -> Image.Image:
     """超分:结果长边低于目标时,用 upscale Provider(默认 Lanczos)放大到目标。
 
@@ -303,7 +348,7 @@ def extract_design(image: Image.Image) -> tuple[Image.Image, dict]:
     mask, kind = _product_mask(small)
 
     if mask is None:  # 衣服/产品都没分到 → 输入当作一张设计图,整图去底
-        cut = _supersample(_autocrop(_deepen(extract_on_fabric(_capped(full)))))
+        cut = _supersample(_autocrop(_deepen(_fill_subject_holes(extract_on_fabric(_capped(full))))))
         return cut, {"method": "whole_image", "size": list(cut.size)}
 
     # ① 粗区域(1000px):定『哪些区域是印花』——去阴影 + 连通块聚类,对褶皱稳
@@ -315,7 +360,7 @@ def extract_design(image: Image.Image) -> tuple[Image.Image, dict]:
     region_small = Image.fromarray(alpha_small, "L").point(lambda v: 255 if v >= 90 else 0)
     bbox = region_small.getbbox()
     if bbox is None:  # 没抠出图案 → 退回整图去底
-        cut = _supersample(_autocrop(_deepen(extract_on_fabric(_capped(full)))))
+        cut = _supersample(_autocrop(_deepen(_fill_subject_holes(extract_on_fabric(_capped(full))))))
         return cut, {"method": "whole_image_fallback", "size": list(cut.size)}
 
     # ② 把粗区域 bbox 放大到全分辨率、加边距,裁出『印花块』在全分辨率上处理(清晰、保细节)
@@ -358,6 +403,45 @@ def extract_design(image: Image.Image) -> tuple[Image.Image, dict]:
         method = "whole_image_fallback"
     # 深色底 vs 浅色底(感知亮度判断,不写死黑/白——深蓝/墨绿/深红等都算深色底)
     deep_bg = bool(0.299 * fabric[0] + 0.587 * fabric[1] + 0.114 * fabric[2] < 115)
-    # 收尾:加深颜色(深色底去灰) → 自动裁剪 → 超分到目标分辨率
-    cut = _supersample(_autocrop(_deepen(cut, deep_bg=deep_bg)))
+
+    # 衣服:rembg 物体抠图 与 颜色法『合并』。rembg 给完整干净主体(补回浅色绒毛手臂、保住暗部
+    # /照片调,如狗头手臂、NEO 死神),颜色法补 rembg 漏掉的『独立物体』(刀、四周文字)。
+    # rembg 出雾时其二值前景很小、合并退化为≈颜色法(自带兜底);平面/水彩印花照样走颜色法。
+    if method == "garment":
+        obj = _rembg_object(crop)
+        if obj is not None:
+            ca = np.asarray(cut)[..., 3] > 0           # 颜色法 alpha
+            oa = np.asarray(obj)[..., 3] > 0           # rembg 二值前景
+            lab, nlab = ndimage.label(ca)
+            extra = np.zeros_like(ca)
+            ncomp = 0
+            min_extra = max(50, int(ca.size * 0.0005))
+            for c in range(1, nlab + 1):
+                comp = lab == c
+                cs = int(comp.sum())
+                # 颜色块『大部分在 rembg 主体之外』= 伸出主体的独立物体(被爪子抓着的刀:握柄与
+                # 主体重叠、刀身/柄头伸在外)→ 整块补上。主体本身的色块大部分在 oa 内 → 不补(用 rembg 干净版)。
+                if cs >= min_extra and int((comp & ~oa).sum()) >= cs * 0.35:
+                    extra |= comp
+                    ncomp += 1
+            # extra 是少数几块『独立物体』(如刀,≤2 块):在物体周围一圈区域内放宽阈值,补回被
+            # 删掉的浅色金属(刀刃),再桥接 + 填内缝 → 整把刀完整。缝/补处填的都是原图真实像素。
+            # 文字类(多块)跳过,免得字母糊在一起。
+            if 1 <= ncomp <= 2:
+                grow = max(40, int(min(ca.shape) * 0.09))  # 覆盖整把刀(刀身→护手→握柄)
+                obj_region = ndimage.binary_dilation(extra, iterations=grow)
+                # 在刀的活动区内按色差抓全刀(含被删的浅色金属);阈值 28 够高,排除旁边的白衬衫。
+                # 不做闭运算/填洞——那会按形状把刀旁的白衬衫一起填进来(深色底上现白边)。
+                extra = extra | (obj_region & (dist > 28))
+            # 补 rembg 边缘缺口:浅色绒毛贴浅底时 rembg 会咬掉一小块(如狗前臂),用紧贴主体边缘
+            # 一圈(8px)的颜色法内容补回——只补边缘、不带远处毛边。
+            edge_fill = ca & ndimage.binary_dilation(oa, iterations=8)
+            merged = oa | extra | edge_fill
+            if merged.sum() >= ca.sum() * 0.5:         # 防 rembg 异常导致内容反而变少
+                cut = crop.convert("RGBA")
+                cut.putalpha(Image.fromarray(np.where(merged, 255, 0).astype("uint8"), "L"))
+                method = "garment_merged"
+
+    # 收尾:补主体内部空洞 → 加深颜色(深色底去灰) → 自动裁剪 → 超分到目标分辨率
+    cut = _supersample(_autocrop(_deepen(_fill_subject_holes(cut), deep_bg=deep_bg)))
     return cut, {"method": method, "size": list(cut.size)}

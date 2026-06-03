@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from PIL import Image
 from sqlalchemy.orm import Session
 
 from .. import storage
@@ -38,4 +39,10 @@ def print_extract(
     design.save(out, format="PNG")
     url = storage.output_url(job_id, "design.png")
     save_as_asset(db, user.id, design, "印花提取", url, source="generated")
-    return {"job_id": job_id, "image_url": url, **meta}
+
+    # 白底版:透明区填白,便于下载/预览(深色看图器里透明会显黑)。透明版 design.png 仍保留(套版/印刷用)。
+    white = Image.new("RGB", design.size, (255, 255, 255))
+    white.paste(design, (0, 0), design)
+    white.save(storage.output_path(job_id, "design_white.png"), format="PNG")
+    white_url = storage.output_url(job_id, "design_white.png")
+    return {"job_id": job_id, "image_url": url, "white_url": white_url, **meta}

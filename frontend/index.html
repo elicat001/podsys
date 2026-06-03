@@ -342,7 +342,7 @@ async function runTool(t){
       const r=await api('/image-tools/upscale',{method:'POST',form:fd});res={img:r.image_url,extra:`放大到 ${r.width}×${r.height}px`,dl:r.image_url};
     }else if(t.ep==='print-extract'){
       const r=await api('/print-extract',{method:'POST',form:fd});
-      out.innerHTML=`<div style="text-align:center"><img src="${r.image_url}" style="background:#fff;border-radius:10px;padding:8px;max-width:100%"/><p><a class="chip" href="${r.image_url}" download>下载</a></p></div>`;
+      out.innerHTML=`<div style="text-align:center"><img src="${r.image_url}" style="background:#fff;border-radius:10px;padding:8px;max-width:100%"/><p><a class="chip" href="${r.white_url||r.image_url}" download>下载(白底)</a> <a class="chip" href="${r.image_url}" download>下载(透明)</a></p><p class="muted" style="font-size:12px">白底:预览/分享;透明:套版/印刷(印在彩色衣服上请用透明版)</p></div>`;
       st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='generate'){fd.append('prompt',gv('f_prompt')||'a cute cat print');fd.append('size','1024x1024');
       const r=await runJob('generate',fd);res={img:r.image_url,extra:r.hint||''};
