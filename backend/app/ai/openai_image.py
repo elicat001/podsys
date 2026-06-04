@@ -9,7 +9,7 @@ Powers four tasks through one model:
 gpt-image-1 always returns base64 PNG (no url option), so we decode b64_json.
 NOTE: gpt-image-1 is NOT a super-resolution model — do not use it for 无损放大
 of print files (it regenerates pixels and will distort the design). Keep a real
-upscaler (Pillow/Real-ESRGAN) for production files. See README.
+upscaler (Pillow/FSRCNN) for production files. See README.
 """
 from __future__ import annotations
 import base64

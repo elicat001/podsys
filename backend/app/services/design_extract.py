@@ -292,7 +292,7 @@ def _supersample(rgba: Image.Image) -> Image.Image:
     """超分:结果长边低于目标时,用 upscale Provider(默认 Lanczos)放大到目标。
 
     放大后把 alpha『重新二值化』——避免插值产生半透明柔边(那会让边缘变糊、贴白底变浅)。
-    Provider 可插拔:配 POD_UPSCALE_PROVIDER=realesrgan 即换真超分(更锐)。倍数封顶防过度插值。
+    Provider 可插拔:配 POD_UPSCALE_PROVIDER=fsrcnn 即换本地超分(更锐)。倍数封顶防过度插值。
     """
     target = settings.print_target_px
     long = max(rgba.size)

@@ -4,11 +4,9 @@
 """
 from __future__ import annotations
 
-import io
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
-from PIL import Image
 from sqlalchemy.orm import Session
 
 from .. import storage

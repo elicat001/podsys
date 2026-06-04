@@ -6,7 +6,6 @@
 from __future__ import annotations
 import colorsys
 import hashlib
-import math
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps, ImageChops
 
 MAX_PX = 50_000_000

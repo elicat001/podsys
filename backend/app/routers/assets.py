@@ -9,7 +9,6 @@ from ..db import get_db
 from ..models_db import Asset, User
 from ..auth import current_user
 from .. import storage
-from ..services import phash
 from ..services.infringement import check_image
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])

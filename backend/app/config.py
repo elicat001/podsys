@@ -30,10 +30,8 @@ class Settings(BaseSettings):
 
     # AI providers — swap implementation without touching call sites
     matting_provider: str = "pillow"        # pillow | rembg | api | gptimage
-    upscale_provider: str = "pillow"         # pillow(Lanczos) | fsrcnn(快·略清晰) | onnx(Swin2SR x4 慢·最清晰)
-    upscale_onnx_model: str = "swin2sr_x4.onnx"  # onnx 超分模型(Swin2SR,质量高但慢);缺失则降级 Lanczos
+    upscale_provider: str = "pillow"         # pillow(Lanczos) | fsrcnn(本地快速超分,略清晰)
     upscale_fsrcnn_model: str = "FSRCNN_x4.pb"   # FSRCNN 模型(cv2.dnn_superres,毫秒级,略清晰);缺失则降级 Lanczos
-    upscale_sr_max_input: int = 512          # onnx 超分输入长边上限:大图先缩(控 CPU 耗时/内存)
 
     # third-party API config (used when *_provider == "api")
     matting_api_url: str = ""
@@ -54,10 +52,6 @@ class Settings(BaseSettings):
     # 印花提取引擎:默认走 AI 重绘(gpt-image edit 展平,95% 视觉一致,挂拍/褶皱也能处理);
     # 有 key 才生效,失败/无 key 自动回退本地保真算法(extract_design)。置 false=永远本地。
     print_extract_ai: bool = True
-
-    @property
-    def upscale_onnx_path(self) -> Path:
-        return _BACKEND_DIR / "models" / self.upscale_onnx_model
 
     @property
     def upscale_fsrcnn_path(self) -> Path:
