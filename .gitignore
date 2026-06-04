@@ -8,7 +8,9 @@ __pycache__/
 backend/data/
 
 # 本地 AI 模型(超分 Swin2SR onnx / FSRCNN pb 等,体积大,不入库;缺失时代码自动降级 Lanczos)
-backend/models/
+# 忽略目录内容,但保留放置说明 README(告诉别人该下载哪些文件、放哪)
+backend/models/*
+!backend/models/README.md
 *.onnx
 *.pb
 
