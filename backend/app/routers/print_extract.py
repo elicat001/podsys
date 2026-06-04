@@ -12,8 +12,8 @@ from .. import storage
 from ..db import get_db
 from ..models_db import User
 from ..services.billing import charge_for, refund
-from ..services.design_extract import extract_design
 from ..services.library import save_as_asset
+from ..services.print_extract import extract_print_design
 from ..web_utils import read_image_or_refund
 
 router = APIRouter(prefix="/api/print-extract", tags=["print-extract"])
@@ -30,7 +30,7 @@ def print_extract(
     job_id = storage.new_job_id()
     storage.upload_path(job_id).write_bytes(raw)  # 保存原图,便于排查真实失败案例
     try:
-        design, meta = extract_design(src)
+        design, meta = extract_print_design(src)
     except ValueError as exc:
         refund(db, user, "process")
         raise HTTPException(status_code=400, detail=str(exc)) from exc

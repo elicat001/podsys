@@ -85,3 +85,51 @@ def test_print_extract_charges_points(client, auth_headers, png):
                 files={"file": ("d.png", png(shape="rect"), "image/png")})
     after = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     assert after == before - 2  # process 扣 2 点
+
+
+# ---------- 编排:AI 重绘默认 + 本地兜底 ----------
+
+def test_orchestrator_uses_local_without_key():
+    # 离线(conftest 已清空 key)→ 自动走本地保真算法
+    from app.services import print_extract as pe
+    _design, meta = pe.extract_print_design(_design_on_white())
+    assert meta["engine"] == "local"
+    assert meta["method"] != "ai_flatten"
+
+
+def test_orchestrator_prefers_ai_when_available(monkeypatch):
+    from app.services import print_extract as pe
+    monkeypatch.setattr(pe.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(pe.settings, "print_extract_ai", True)
+    fake = Image.new("RGBA", (64, 64), (10, 20, 30, 255))
+    monkeypatch.setattr(pe, "_extract_ai", lambda img: (fake, {"method": "ai_flatten", "engine": "ai", "size": [64, 64]}))
+    out, meta = pe.extract_print_design(_design_on_white())
+    assert meta["engine"] == "ai" and meta["method"] == "ai_flatten"
+    assert out is fake
+
+
+def test_orchestrator_falls_back_on_ai_failure(monkeypatch):
+    from app.services import print_extract as pe
+    monkeypatch.setattr(pe.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(pe.settings, "print_extract_ai", True)
+
+    def _boom(img):
+        raise RuntimeError("网关 502")
+
+    monkeypatch.setattr(pe, "_extract_ai", _boom)
+    out, meta = pe.extract_print_design(_design_on_white())
+    assert meta["engine"] == "local"  # AI 失败 → 自动降级本地
+    assert out.mode == "RGBA"
+
+
+def test_orchestrator_ai_flag_off_stays_local(monkeypatch):
+    from app.services import print_extract as pe
+    monkeypatch.setattr(pe.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(pe.settings, "print_extract_ai", False)  # 显式关 AI
+
+    def _should_not_call(img):
+        raise AssertionError("关了 AI 还调用了 _extract_ai")
+
+    monkeypatch.setattr(pe, "_extract_ai", _should_not_call)
+    _out, meta = pe.extract_print_design(_design_on_white())
+    assert meta["engine"] == "local"
