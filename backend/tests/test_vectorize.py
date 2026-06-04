@@ -37,14 +37,21 @@ def test_vectorize_ok_and_charges_two(client, auth_headers, png):
         files={"file": ("in.png", img, "image/png")},
         data={"colors": "8"},
     )
+    # 异步:立即返回 job_id + pending。TestClient 会同步跑完 BackgroundTasks,故此时作业已 done。
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["colors"] == 8
-    assert body["rect_count"] > 0
-    assert body["svg_url"].startswith("/files/")
+    assert body["status"] == "pending"
+    job = client.get(f"/api/jobs/{body['job_id']}", headers=auth_headers)
+    assert job.status_code == 200, job.text
+    jb = job.json()
+    assert jb["status"] == "done", jb
+    result = jb["result"]
+    assert result["colors"] == 8
+    assert result["rect_count"] > 0
+    assert result["svg_url"].startswith("/files/")
 
     # 取回 svg 内容
-    got = client.get(body["svg_url"])
+    got = client.get(result["svg_url"])
     assert got.status_code == 200, got.text
     text = got.text
     assert "<svg" in text

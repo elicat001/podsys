@@ -350,7 +350,7 @@ async function runTool(t){
       clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='generate'){fd.append('prompt',gv('f_prompt')||'a cute cat print');fd.append('size','1024x1024');
       const r=await runJob('generate',fd);res={img:r.image_url,extra:r.hint||'',dl:r.image_url};
-    }else if(t.ep==='vectorize'){fd.append('colors','12');fd.append('preset',gv('f_preset')||'auto');const r=await api('/vectorize',{method:'POST',form:fd});res={img:r.svg_url,extra:r.rect_count+' 个矢量形状',dl:r.svg_url};
+    }else if(t.ep==='vectorize'){fd.append('colors','12');fd.append('preset',gv('f_preset')||'auto');const r=await runJob('vectorize',fd);res={img:r.svg_url,extra:r.rect_count+' 个矢量形状',dl:r.svg_url};
     }else if(t.ep==='ip-guard/scan'){const r=await api('/ip-guard/scan',{method:'POST',form:fd});
       out.innerHTML=`<div style="text-align:center"><div style="font-size:34px;font-family:var(--disp)" class="chip ${r.risk}">${({high:'高风险',review:'需复核',safe:'安全'}[r.risk]||r.risk)}</div><p class="muted">命中 ${r.match_count} 条 · ${esc(r.advice||'')}</p></div>`;
       clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
