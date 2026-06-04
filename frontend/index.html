@@ -190,11 +190,13 @@ async function api(path,{method='GET',json,form}={}){
   const ct=r.headers.get('content-type')||'';const data=ct.includes('json')?await r.json():await r.text();
   if(!r.ok)throw new Error((data&&data.detail)||r.statusText);return data;}
 async function refreshCredits(){try{const d=await api('/billing/balance');$('#credits').innerHTML='余额 <b>'+d.credits+'</b> 点';}catch(e){}}
-async function poll(jid,tries=80,interval=700){for(let i=0;i<tries;i++){const j=await api('/jobs/'+jid);if(j.status==='done')return j;if(j.status==='error')throw new Error(j.error||'作业失败');await new Promise(r=>setTimeout(r,interval));}throw new Error('超时')}
+// 固定 5 秒轮询(首次立即查,之后每 5s 一次),直到 maxWait(默认 6 分钟)。
+// 每任务 0.2 次/秒、每次只是按主键查一条作业记录,几乎零开销;只打本地 /jobs/{id}、不碰中转站。
+async function poll(jid,interval=5000,maxWait=360000){let waited=0;while(waited<maxWait){const j=await api('/jobs/'+jid);if(j.status==='done')return j;if(j.status==='error')throw new Error(j.error||'作业失败');await new Promise(r=>setTimeout(r,interval));waited+=interval;}throw new Error('超时')}
 // AI 端点双模式:有 key 时后端返回 {job_id,status:pending}(耗时,改后台作业,避免 Failed to fetch)→ 轮询;
 // 无 key 时后端同步返回结果对象。统一成结果对象返回。给 AI 作业 ~6 分钟预算(单张 gpt-image 可达 ~200s)。
 async function runJob(ep,fd){const r=await api('/'+ep,{method:'POST',form:fd});
-  if(r&&r.status==='pending'&&r.job_id){const j=await poll(r.job_id,360,1000);return j.result||{};}
+  if(r&&r.status==='pending'&&r.job_id){const j=await poll(r.job_id);return j.result||{};}
   return r;}
 
 /* ---------- router ---------- */
@@ -341,7 +343,7 @@ async function runTool(t){
     }else if(t.ep==='image-tools/upscale'){fd.append('scale','2');
       const r=await api('/image-tools/upscale',{method:'POST',form:fd});res={img:r.image_url,extra:`放大到 ${r.width}×${r.height}px`,dl:r.image_url};
     }else if(t.ep==='print-extract'){
-      const r=await api('/print-extract',{method:'POST',form:fd});
+      const r=await runJob('print-extract',fd);
       out.innerHTML=`<div style="text-align:center"><img src="${r.image_url}" style="background:#fff;border-radius:10px;padding:8px;max-width:100%"/><p><a class="chip" href="${r.white_url||r.image_url}" download>下载(白底)</a> <a class="chip" href="${r.image_url}" download>下载(透明)</a></p><p class="muted" style="font-size:12px">白底:预览/分享;透明:套版/印刷(印在彩色衣服上请用透明版)</p></div>`;
       st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='generate'){fd.append('prompt',gv('f_prompt')||'a cute cat print');fd.append('size','1024x1024');

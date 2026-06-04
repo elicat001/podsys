@@ -122,6 +122,26 @@ def test_orchestrator_falls_back_on_ai_failure(monkeypatch):
     assert out.mode == "RGBA"
 
 
+def test_print_extract_ai_goes_background(client, auth_headers, png, monkeypatch):
+    """有 key → AI 路径改后台作业:端点立即返回 pending+job_id,作业完成后带结果(image_url/white_url)。"""
+    import app.routers.print_extract as pr
+    monkeypatch.setattr(pr.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(pr.settings, "print_extract_ai", True)
+    fake = Image.new("RGBA", (32, 32), (1, 2, 3, 255))
+    monkeypatch.setattr(pr, "extract_print_design",
+                        lambda src: (fake, {"method": "ai_flatten", "engine": "ai", "size": [32, 32]}))
+    resp = client.post("/api/print-extract", headers=auth_headers,
+                       files={"file": ("d.png", png(), "image/png")})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body.get("status") == "pending" and "job_id" in body
+    # TestClient 同步执行 BackgroundTasks → 作业应已完成
+    job = client.get(f"/api/jobs/{body['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert job["result"]["engine"] == "ai"
+    assert "image_url" in job["result"] and "white_url" in job["result"]
+
+
 def test_orchestrator_ai_flag_off_stays_local(monkeypatch):
     from app.services import print_extract as pe
     monkeypatch.setattr(pe.settings, "openai_api_key", "sk-test")
