@@ -48,7 +48,11 @@ def test_vectorize_ok_and_charges_two(client, auth_headers, png):
     assert got.status_code == 200, got.text
     text = got.text
     assert "<svg" in text
-    assert "<rect" in text
+    # 必须是真矢量描摹(vtracer/cv2 出平滑 <path>),绝不能退化成像素块 <rect>+crispEdges
+    # (旧版"放大一股像素风"的根因,已移除)。
+    assert "<path" in text
+    assert "<rect" not in text
+    assert "crispEdges" not in text
 
     after = _balance(client, auth_headers)
     assert before - after == 2

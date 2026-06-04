@@ -61,15 +61,33 @@ def _edit_endpoint(raw: bytes, prompt: str, size: str, db: Session, user: User, 
 
 
 @router.post("/upscale")
-def upscale(
+async def upscale(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     scale: float = Form(2.0),
     user: User = Depends(charge_for("process")),
     db: Session = Depends(get_db),
 ):
-    """超分提质(真·放大输入图,非整条流水线)。返回放大后的图。"""
-    src = _read_image(file.file.read(), db, user, "process")
+    """超分提质(真·放大输入图)。本地 AI 超分(onnx,慢)→ 后台作业;Lanczos(快)→ 同步。"""
+    raw = await file.read()
+    src = _read_image(raw, db, user, "process")
     scale = max(1.0, min(scale, 4.0))
+
+    if settings.upscale_provider == "onnx":  # AI 超分慢(CPU 几十秒~分钟)→ 后台作业,前端轮询
+        uid = user.id
+        rgb = src.convert("RGB")
+
+        def _work(jid: str) -> dict:
+            out = get_upscale_provider().upscale(rgb, scale=scale)
+            out.save(storage.output_path(jid, "upscaled.png"), format="PNG")
+            url = storage.output_url(jid, "upscaled.png")
+            save_asset_in_background(uid, out, "超分提质", url)
+            return {"image_url": url, "width": out.width, "height": out.height}
+
+        jid = submit_ai_job(background_tasks, db, "upscale", uid, _work, refund_op="process")
+        return JSONResponse({"job_id": jid, "status": "pending"})
+
+    # Lanczos:快,同步(原逻辑)
     try:
         out = get_upscale_provider().upscale(src.convert("RGB"), scale=scale)
     except Exception as exc:  # noqa: BLE001

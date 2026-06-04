@@ -1,4 +1,4 @@
-"""转矢量图路由:位图 → SVG(纯离线 Pillow,op=process 扣 2)。
+"""转矢量图路由:位图 → SVG(本地 vtracer/cv2 真矢量描摹,op=process 扣 2)。
 
 计费/错误范式同 image_tools.py:charge_for 预扣 → 读图失败或参数非法 → refund + 400。
 """
@@ -22,14 +22,15 @@ router = APIRouter(prefix="/api/vectorize", tags=["vectorize"])
 def vectorize(
     file: UploadFile = File(...),
     colors: int = Form(8),
+    preset: str = Form("auto"),
     user: User = Depends(charge_for("process")),
     db: Session = Depends(get_db),
 ):
-    """位图转 SVG。读图失败或 colors 越界 → 退点 + 400。"""
+    """位图转 SVG。preset:精细度档位 auto/logo/illustration/photo。读图失败或 colors 越界 → 退点 + 400。"""
     raw = file.file.read()
     src = _read_image(raw, db, user, "process")
     try:
-        svg, rect_count = to_svg(src, colors=colors)
+        svg, rect_count = to_svg(src, colors=colors, preset=preset)
     except ValueError as exc:
         refund(db, user, "process")
         raise HTTPException(status_code=400, detail=str(exc)) from exc

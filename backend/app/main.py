@@ -51,6 +51,17 @@ app = FastAPI(title="PODStudio API", version="0.3.0")
 settings.ensure_dirs()
 init_db()
 
+
+@app.middleware("http")
+async def _no_cache_html(request, call_next):
+    """前端是单文件静态页且频繁迭代;禁掉 HTML 文档缓存,避免浏览器服旧页
+    (这是"改完代码必须硬刷新才生效"的根因)。只作用于 HTML,不动 /files 图片与 JSON API。"""
+    response = await call_next(request)
+    if response.headers.get("content-type", "").startswith("text/html"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+
 app.include_router(auth_router.router)
 app.include_router(assets_router.router)
 app.include_router(design_router.router)

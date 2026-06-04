@@ -304,6 +304,7 @@ window.openTool=(id)=>{
   if(t.kw)extra.push(`<label>关键词</label><input id="f_kw" placeholder="cat lover, gift"/>`);
   if(t.id==='videogen')extra.push(`<label>画幅</label><select id="f_aspect"><option value="square">1:1</option><option value="portrait">9:16 TK竖版</option><option value="landscape">16:9</option></select>`);
   if(t.id==='compress')extra.push(`<label>目标宽(px)</label><input id="f_w" type="number" value="1200"/>`);
+  if(t.id==='vectorize')extra.push(`<label>精细度</label><select id="f_preset"><option value="auto" selected>自动（推荐·高保真,自动判别）</option><option value="logo">极简（纯色 logo/图标,文件最小）</option><option value="fine">极致细节（毛发/照片级,放大百倍清晰）</option></select><div class="muted" style="margin-top:5px;font-size:12px">💡 近原生分辨率描摹,<b>保留毛发/细线条、放大无锯齿、可无损缩放</b>。细节越多的图,SVG 文件越大(精细档可达十几 MB)、出图越慢(约 10~30 秒),请耐心等待 ✨</div>`);
   if(t.id==='variants')extra.push(`<label>裂变张数</label><select id="f_n"><option value="1">1 张</option><option value="2" selected>2 张</option><option value="3">3 张</option><option value="4">4 张</option></select><div class="muted" style="margin-top:5px;font-size:12px;line-height:1.5">💡 每张约 <b>60~90 秒</b>(并行出图),张数越多稍慢一些,请稍候片刻 ✨</div>`);
   const needFile=t.id!=='generate';
   $('#modal').innerHTML=`<div class="top"><span class="ic">${t.ic}</span><h3>${t.name}</h3><span class="x" onclick="closeModal()">✕</span></div>
@@ -331,6 +332,7 @@ async function runTool(t){
   const out=$('#out'),st=$('#rstat');
   if(t.id!=='generate'&&!curFile){st.textContent='请先选择图片';return;}
   $('#run').disabled=true;out.innerHTML='<div class="spin"></div>';st.textContent='处理中…';
+  const _t0=Date.now();const tick=setInterval(()=>{st.textContent='处理中… '+(((Date.now()-_t0)/1000)|0)+'s';},1000);
   try{
     let res;
     const fd=new FormData();if(curFile)fd.append('file',curFile);
@@ -340,22 +342,22 @@ async function runTool(t){
       const pick={print:r.print_url,mockup:r.mockup_url,production:r.production_url};
       const img=pick[t.show]||r.print_url;
       res={img,extra:t.show==='print'?'透明印花(可直接用于套版)':`生产图 ${r.production_meta.width_px}×${r.production_meta.height_px}px`,dl:r.production_url};
-    }else if(t.ep==='image-tools/upscale'){fd.append('scale','2');
-      const r=await api('/image-tools/upscale',{method:'POST',form:fd});res={img:r.image_url,extra:`放大到 ${r.width}×${r.height}px`,dl:r.image_url};
+    }else if(t.ep==='image-tools/upscale'){fd.append('scale','4');
+      const r=await runJob('image-tools/upscale',fd);res={img:r.image_url,extra:`放大到 ${r.width}×${r.height}px`,dl:r.image_url};
     }else if(t.ep==='print-extract'){
       const r=await runJob('print-extract',fd);
       out.innerHTML=`<div style="text-align:center"><img src="${r.image_url}" style="background:#fff;border-radius:10px;padding:8px;max-width:100%"/><p><a class="chip" href="${r.white_url||r.image_url}" download>下载(白底)</a> <a class="chip" href="${r.image_url}" download>下载(透明)</a></p><p class="muted" style="font-size:12px">白底:预览/分享;透明:套版/印刷(印在彩色衣服上请用透明版)</p></div>`;
-      st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
+      clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='generate'){fd.append('prompt',gv('f_prompt')||'a cute cat print');fd.append('size','1024x1024');
-      const r=await runJob('generate',fd);res={img:r.image_url,extra:r.hint||''};
-    }else if(t.ep==='vectorize'){fd.append('colors','8');const r=await api('/vectorize',{method:'POST',form:fd});res={img:r.svg_url,extra:r.rect_count+' 矢量块',dl:r.svg_url};
+      const r=await runJob('generate',fd);res={img:r.image_url,extra:r.hint||'',dl:r.image_url};
+    }else if(t.ep==='vectorize'){fd.append('colors','12');fd.append('preset',gv('f_preset')||'auto');const r=await api('/vectorize',{method:'POST',form:fd});res={img:r.svg_url,extra:r.rect_count+' 个矢量形状',dl:r.svg_url};
     }else if(t.ep==='ip-guard/scan'){const r=await api('/ip-guard/scan',{method:'POST',form:fd});
       out.innerHTML=`<div style="text-align:center"><div style="font-size:34px;font-family:var(--disp)" class="chip ${r.risk}">${({high:'高风险',review:'需复核',safe:'安全'}[r.risk]||r.risk)}</div><p class="muted">命中 ${r.match_count} 条 · ${esc(r.advice||'')}</p></div>`;
-      st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
+      clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='studio/title'){fd.append('keywords',gv('f_kw'));fd.append('category','apparel');
       const r=await api('/studio/title',{method:'POST',form:fd});
       out.innerHTML=`<div><h4 style="font-family:var(--disp)">${esc(r.title)}</h4><p class="muted">${(r.keywords||[]).map(k=>'<span class=chip>'+esc(k)+'</span>').join('')}</p>${r.degraded?'<p class="muted">（占位:配置 OpenAI key 后走真实生成）</p>':''}</div>`;
-      st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
+      clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='video/generate'){fd.append('style','kenburns');fd.append('aspect',gv('f_aspect')||'square');
       const r=await api('/video/generate',{method:'POST',form:fd});res={img:r.video_url,extra:`${r.width}×${r.height} · ${r.frames}帧`,dl:r.video_url};
     }else if(t.ep==='image-tools/compress'){fd.append('target_w',gv('f_w')||'1200');fd.append('fmt','jpeg');
@@ -365,13 +367,13 @@ async function runTool(t){
       if(t.prompt)fd.append('prompt',gv('f_prompt')||'enhance');
       if(t.style)fd.append('style',gv('f_style')||'flat');
       if(t.text)fd.append('text',gv('f_text')||'TEXT');
-      const r=await runJob(t.ep,fd);res={img:r.image_url||(r.images&&r.images[0]),imgs:r.images,extra:r.images?r.images.length+' 张变体':''};
+      const r=await runJob(t.ep,fd);res={img:r.image_url||(r.images&&r.images[0]),imgs:r.images,dl:r.image_url||(r.images&&r.images[0]),extra:r.images?r.images.length+' 张变体':''};
     }
     out.innerHTML=(res.imgs&&res.imgs.length)
       ?`<div style="width:100%"><div style="display:grid;grid-template-columns:repeat(${Math.min(res.imgs.length,3)},1fr);gap:10px">${res.imgs.map((u,i)=>`<div style="text-align:center"><img src="${u}"/><p style="margin:6px 0 0"><a class="chip" href="${u}" download>下载 ${i+1}</a></p></div>`).join('')}</div>${res.extra?'<p class="muted" style="text-align:center;margin-top:10px">'+esc(res.extra)+'</p>':''}</div>`
       :(res.img?`<div style="text-align:center"><img src="${res.img}"/>${res.extra?'<p class="muted">'+esc(res.extra)+'</p>':''}${res.dl?'<p><a class="chip" href="'+res.dl+'" download>下载</a></p>':''}</div>`:'<span class="muted">完成,无图产物</span>');
-    st.textContent='完成 ✓';refreshCredits();
-  }catch(e){out.innerHTML='<span class="muted" style="color:var(--bad)">'+esc(e.message)+'</span>';st.textContent='失败';refreshCredits();}
+    clearInterval(tick);st.textContent='完成 ✓';refreshCredits();
+  }catch(e){clearInterval(tick);out.innerHTML='<span class="muted" style="color:var(--bad)">'+esc(e.message)+'</span>';st.textContent='失败';refreshCredits();}
   $('#run').disabled=false;
 }
 
