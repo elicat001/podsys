@@ -20,7 +20,7 @@
 ## 技术栈
 
 - 后端:Python 3 + FastAPI + Uvicorn
-- 图像:Pillow 打底 + **本地引擎**(rembg 抠图 / FSRCNN 超分 / vtracer 转矢量 / OpenCV);可切换 OpenAI 兼容网关或第三方 API
+- 图像:Pillow 打底 + **本地引擎**(rembg 抠图 / Real-ESRGAN 超分 / vtracer 转矢量 / OpenCV);可切换 OpenAI 兼容网关或第三方 API
 - 前端:静态 HTML/JS(MVP);后续可换 Next.js + Fabric.js 编辑器
 - 存储:本地文件(MVP);后续 S3/MinIO/OSS
 
@@ -49,7 +49,7 @@ uvicorn app.main:app --reload
 
 跑测试(用 TestClient,不需要起服务):`.\.venv\Scripts\python.exe -m pytest -q`
 
-> 📌 **可选的本地超分模型**:更清晰的"无损放大"需要把 `FSRCNN_x4.pb` 放到 `backend/models/`。
+> 📌 **可选的本地超分模型**:真"提质放大"需把 Real-ESRGAN 模型 `realesr_x4v3.onnx`(~4.7MB)放到 `backend/models/`。
 > 这个文件**不在仓库里**,缺失时自动降级 Lanczos(仍可用)。
 > 下载地址与放置/启用说明见 [`backend/models/README.md`](backend/models/README.md)。
 
@@ -66,10 +66,12 @@ uvicorn app.main:app --reload
 
 **放大 `POD_UPSCALE_PROVIDER`:**
 - `pillow` —— 代码默认。Lanczos 重采样,纯 CPU、无需模型。
-- `fsrcnn` —— 本地快速超分(FSRCNN x4,毫秒级,比 Lanczos 略清晰),需 `backend/models/FSRCNN_x4.pb`(不入库,见 [`backend/models/README.md`](backend/models/README.md);**缺失自动降级 Lanczos**)。
+- `realesrgan` —— 本地 AI 超分『真提质』(Real-ESRGAN SRVGG x4 onnx,去噪+复原细节,~几秒),需 `backend/models/realesr_x4v3.onnx`(不入库,见 [`backend/models/README.md`](backend/models/README.md);**缺失自动降级 Lanczos**)。
 - ⚠️ **放大绝不要用 gpt-image**:它是生成模型,会**重绘像素、改动印花**,毁掉生产文件。
 
 **文生图 / 图生图 / 改图**:`POST /api/generate` / `POST /api/edit`,走网关 gpt-image(模型 id 由 `POD_OPENAI_IMAGE_MODEL` 配置,网关支持 `gpt-image-2`),需 key。
+
+**标题提取**:`POST /api/studio/title`,走网关**文本模型**(`POD_OPENAI_TEXT_MODEL`,默认 `gpt-5.4-mini`);传图则**识图**生成吸引人的 SEO 标题,无 key/失败自动降级本地规则引擎(不扣点)。
 
 > 另有一批**全本地、不依赖网关**的能力:印花提取(`/api/print-extract`,无 key 时本地保真兜底)、
 > 转矢量图(`/api/vectorize`,vtracer)、套图 mockup、导出生产文件等 —— 离线即可用。

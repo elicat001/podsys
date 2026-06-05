@@ -41,7 +41,7 @@ backend/app/
 ├── ai/                # 可插拔 AI Provider(策略模式)
 │   ├── base.py        # Protocol 接口:MattingProvider / UpscaleProvider
 │   ├── matting.py     # 抠图实现:pillow(默认) / rembg / api / gptimage
-│   ├── upscale.py     # 放大实现:pillow(Lanczos,默认) / realesrgan(占位)
+│   ├── upscale.py     # 放大实现:pillow(Lanczos,默认) / realesrgan(Real-ESRGAN SRVGG onnx,真提质)
 │   └── openai_image.py# OpenAI gpt-image-1 客户端
 ├── routers/           # 接口层(薄,只做参数校验 + 调 service)
 ├── services/          # 业务逻辑层(extract/mockup/export/workflow/billing/...)
@@ -137,7 +137,7 @@ frontend/              # 静态页面
 - 生产前三件套:换 `POD_JWT_SECRET`、关 `POD_DEV_BILLING`、收紧 `POD_REGISTER_RATE_LIMIT`。
 - `services/phash.py` 用了 Pillow 已弃用的 `getdata()`(Pillow 14 移除),是测试 warning 主因,可顺手清理。
 - 存储/DB 是本地文件 + SQLite,上量需换 S3/MinIO + Postgres(接口已预留)。
-- `ai/upscale.py` 的 `realesrgan` 是占位未实现;真要高质量放大需接 Real-ESRGAN。
+- `ai/upscale.py` 的 `realesrgan` 已接 Real-ESRGAN(SRVGG general-x4v3,onnx,~几秒真提质);模型 `models/realesr_x4v3.onnx` 不入库,缺失自动降级 Lanczos。
 
 ## ⚠️ 额外注意事项 / 易踩的坑(代码里真实存在,docs 未必写)
 
