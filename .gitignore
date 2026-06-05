@@ -14,8 +14,9 @@ backend/models/*
 *.onnx
 *.pb
 
-# 本地 IDE/启动配置(含机器相关绝对路径,不入库)
+# 本地 IDE/启动配置 + Claude Code 本地权限白名单(含机器相关绝对路径,每人各自维护,不入库)
 .claude/launch.json
+.claude/settings.local.json
 
 # 本地开发工具链(只在本机用,不入库)
 backend/pyproject.toml
