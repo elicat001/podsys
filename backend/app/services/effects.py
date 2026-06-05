@@ -233,18 +233,67 @@ def fuse(img: Image.Image, prompt: str) -> Image.Image:
 
 
 # ---------- 标题:由图像主色 + 关键词派生(非写死) ----------
+# 本地电商标题:风格/受众/场合 SEO 修饰词库 + 品类话术 + 多模板(纯规则,无云、无模型)
+_TITLE_STYLES = ["Funny", "Cute", "Aesthetic", "Vintage", "Retro", "Trendy",
+                 "Minimalist", "Graphic", "Cool", "Unique", "Cottagecore", "Y2K"]
+_TITLE_AUDIENCE = ["for Men", "for Women", "Unisex", "for Teens", "for Her", "for Him"]
+_TITLE_OCCASION = ["Birthday Gift", "Christmas Gift", "Holiday Gift Idea",
+                   "Funny Gift", "Aesthetic Gift", "Gift Idea"]
+# 品类 → 产品名(第一个为主名,其余进标签作同义搜索词)
+_TITLE_CAT = {
+    "apparel": ("T-Shirt", "Tee", "Graphic Tee"),
+    "phone": ("Phone Case", "Case", "Phone Cover"),
+    "home": ("Home Decor", "Wall Art", "Poster"),
+    "mug": ("Mug", "Coffee Mug", "Cup"),
+    "bag": ("Tote Bag", "Canvas Tote", "Bag"),
+    "sticker": ("Sticker", "Vinyl Sticker", "Decal"),
+}
+
+
 def smart_title(img: Image.Image | None, keywords: str = "", category: str = "apparel") -> dict:
+    """本地电商标题(无云、无模型):多模板 + SEO 修饰词 + 品类话术 + 主色调,按关键词
+    确定性派生(同输入同输出,不同输入产出不同模板/词)。
+
+    仍是规则拼接(不"理解"内容),但比单一模板更像真实 listing 标题、搜索词覆盖更全。
+    """
     kw = [k.strip() for k in (keywords or "").replace("，", ",").split(",") if k.strip()]
-    tone = "Vibrant"
+    seed = _seed("|".join(kw) + "|" + category)
+
+    prod = _TITLE_CAT.get(category, (category.replace("_", " ").title(),))
+    product = prod[0]
+
+    # 主色调(给了图才用):白底/低饱和 → Minimalist/Bold Black;彩色 → 具体色名
+    tone = None
     if img is not None:
-        small = img.convert("RGB").resize((1, 1))
-        r, g, b = small.getpixel((0, 0))
-        h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-        tone = ["Crimson", "Amber", "Golden", "Verdant", "Teal", "Azure", "Indigo", "Violet", "Rosy"][int(h * 9) % 9]
-        if s < 0.2:
-            tone = "Monochrome" if v < .5 else "Minimal"
-    head = " ".join(kw[:3]).title() if kw else "Custom Print"
-    cat = {"apparel": "Tee", "phone": "Phone Case", "home": "Decor"}.get(category, category.title())
-    title = f"{tone} {head} {cat} — Trendy Aesthetic Gift"
-    tags = list(dict.fromkeys(kw + [tone.lower(), category, "pod", "gift", "trendy"]))[:8]
-    return {"title": title[:120], "keywords": tags}
+        try:
+            r, g, b = img.convert("RGB").resize((1, 1)).getpixel((0, 0))
+            h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+            if s < 0.18:
+                tone = "Minimalist" if v >= 0.5 else "Bold Black"
+            else:
+                tone = ["Red", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Pink"][int(h * 8) % 8]
+        except Exception:  # noqa: BLE001
+            tone = None
+
+    subject = " ".join(k.title() for k in kw[:3]) if kw else "Custom Graphic"
+    style = _TITLE_STYLES[seed % len(_TITLE_STYLES)]
+    style2 = _TITLE_STYLES[(seed // 11) % len(_TITLE_STYLES)]
+    if style2 == style:  # 避免 "Retro ... Retro" / "Y2K Y2K" 同词重复
+        style2 = _TITLE_STYLES[(seed // 11 + 1) % len(_TITLE_STYLES)]
+    aud = _TITLE_AUDIENCE[(seed // 13) % len(_TITLE_AUDIENCE)]
+    occ = _TITLE_OCCASION[(seed // 17) % len(_TITLE_OCCASION)]
+    lead = tone or style  # 有色调用色调当前缀,否则风格词
+
+    templates = [
+        f"{lead} {subject} {product} - {style2} Graphic {aud}, {occ}",
+        f"{subject} {product} | {style} {style2} Design {aud}",
+        f"{style} {subject} Graphic {product} - Unique {occ} {aud}",
+        f"{subject} {product}, {lead} {style2} Print - {occ}",
+    ]
+    title = " ".join(templates[seed % len(templates)].split())[:140]
+
+    # 标签:用户词 + 色调 + 风格 + 品类同义词 + 通用 SEO,去重(小写)取前 12
+    extra = ([tone.lower()] if tone else []) + [style.lower(), style2.lower(),
+             *[p.lower() for p in prod], category, "gift", "pod design"]
+    tags = list(dict.fromkeys([t for t in (kw + extra) if t]))[:12]
+    return {"title": title, "keywords": tags}

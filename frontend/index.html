@@ -311,7 +311,7 @@ window.openTool=(id)=>{
     <div class="body">
       <div>${needFile?`<div class="drop" id="drop">点击或拖入图片<input type="file" id="file" accept="image/*" hidden></div>`:''}
         ${extra.join('')}
-        <button class="btn" id="run" style="width:100%;margin-top:16px">运行 · 扣${({generate:5,'design-tools/variants':4,'design-tools/fuse':4,'design-tools/restyle':4,'design-tools/meme':4,'image-tools/expand':4,'image-tools/dewatermark':4,'studio/tryon':4,'studio/pet-costume':4,'studio/group-photo':4,'video/generate':3}[t.ep]||(t.id==='title'?0:2))}点</button>
+        <button class="btn" id="run" style="width:100%;margin-top:16px">运行 · 扣${({generate:5,'design-tools/variants':4,'design-tools/fuse':4,'design-tools/restyle':4,'design-tools/meme':4,'image-tools/expand':4,'image-tools/dewatermark':4,'studio/tryon':4,'studio/pet-costume':4,'studio/group-photo':4,'video/generate':3,'studio/title':1}[t.ep]||2)}点</button>
         <div class="muted" id="rstat" style="margin-top:10px"></div></div>
       <div class="out" id="out"><span class="muted">结果预览</span></div>
     </div>`;
@@ -356,7 +356,7 @@ async function runTool(t){
       clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='studio/title'){fd.append('keywords',gv('f_kw'));fd.append('category','apparel');
       const r=await api('/studio/title',{method:'POST',form:fd});
-      out.innerHTML=`<div><h4 style="font-family:var(--disp)">${esc(r.title)}</h4><p class="muted">${(r.keywords||[]).map(k=>'<span class=chip>'+esc(k)+'</span>').join('')}</p>${r.degraded?'<p class="muted">（占位:配置 OpenAI key 后走真实生成）</p>':''}</div>`;
+      out.innerHTML=`<div><h4 style="font-family:var(--disp)">${esc(r.title)}</h4><p class="muted">${(r.keywords||[]).map(k=>'<span class=chip>'+esc(k)+'</span>').join('')}</p></div>`;
       clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='video/generate'){fd.append('style','kenburns');fd.append('aspect',gv('f_aspect')||'square');
       const r=await api('/video/generate',{method:'POST',form:fd});res={img:r.video_url,extra:`${r.width}×${r.height} · ${r.frames}帧`,dl:r.video_url};

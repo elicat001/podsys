@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = ""                 # 留空走官方;可填代理/Azure 兼容网关
     openai_image_model: str = "gpt-image-1"
+    openai_text_model: str = "gpt-5.4-mini"   # 文本模型(标题/文案)。与图片模型分开;本网关有 gpt-5.4-mini 等
+    openai_text_stream: bool = True           # 本网关 chat 接口需 stream=true 才吐内容(不流式返回空)。官方 OpenAI 置 false 也可
     openai_timeout: float = 120.0             # OpenAI 调用超时(秒)。文生图较慢(20~40s),放宽防被掐断
     openai_max_retries: int = 2               # 网关抖动自动重试次数(SDK 指数退避)。调小=抽风时快速失败、不干等几分钟
 
