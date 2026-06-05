@@ -190,11 +190,11 @@ async function api(path,{method='GET',json,form}={}){
   const ct=r.headers.get('content-type')||'';const data=ct.includes('json')?await r.json():await r.text();
   if(!r.ok)throw new Error((data&&data.detail)||r.statusText);return data;}
 async function refreshCredits(){try{const d=await api('/billing/balance');$('#credits').innerHTML='余额 <b>'+d.credits+'</b> 点';}catch(e){}}
-// 固定 5 秒轮询(首次立即查,之后每 5s 一次),直到 maxWait(7 分钟,> 后端最坏 AI 耗时,
+// 固定 5 秒轮询(首次立即查,之后每 5s 一次),直到 maxWait(8 分钟,> 后端最坏 AI 耗时(250s单次),
 // 确保慢网关的 AI 真出图而不是中途被前端放弃)。每任务 0.2 次/秒,只查本地一条作业记录,近零开销。
-async function poll(jid,interval=5000,maxWait=420000){let waited=0;while(waited<maxWait){const j=await api('/jobs/'+jid);if(j.status==='done')return j;if(j.status==='error')throw new Error(j.error||'作业失败');await new Promise(r=>setTimeout(r,interval));waited+=interval;}throw new Error('网关出图较慢未在 7 分钟内完成,请稍后重试;若后台已生成可到「我的空间」查看')}
+async function poll(jid,interval=5000,maxWait=480000){let waited=0;while(waited<maxWait){const j=await api('/jobs/'+jid);if(j.status==='done')return j;if(j.status==='error')throw new Error(j.error||'作业失败');await new Promise(r=>setTimeout(r,interval));waited+=interval;}throw new Error('网关出图较慢未在 8 分钟内完成,请稍后重试;若后台已生成可到「我的空间」查看')}
 // AI 端点双模式:有 key 时后端返回 {job_id,status:pending}(耗时,改后台作业,避免 Failed to fetch)→ 轮询;
-// 无 key 时后端同步返回结果对象。统一成结果对象返回。给 AI 作业 7 分钟预算(慢网关单次 gpt 可达 ~180s)。
+// 无 key 时后端同步返回结果对象。统一成结果对象返回。给 AI 作业 8 分钟预算(慢网关单次 gpt 超时上限 250s)。
 async function runJob(ep,fd){const r=await api('/'+ep,{method:'POST',form:fd});
   if(r&&r.status==='pending'&&r.job_id){const j=await poll(r.job_id);return j.result||{};}
   return r;}
@@ -406,7 +406,10 @@ async function runTool(t){
       const r=await runJob('image-tools/upscale',fd);res={img:r.image_url,extra:`提质完成 · ${r.width}×${r.height}px(原尺寸)`,dl:r.image_url};
     }else if(t.ep==='print-extract'){
       const r=await runJob('print-extract',fd);
-      out.innerHTML=`<div style="text-align:center"><img src="${r.image_url}" style="background:#fff;border-radius:10px;padding:8px;max-width:100%"/><p><a class="chip" href="${r.white_url||r.image_url}" download>下载(白底)</a> <a class="chip" href="${r.image_url}" download>下载(透明)</a></p><p class="muted" style="font-size:12px">白底:预览/分享;透明:套版/印刷(印在彩色衣服上请用透明版)</p></div>`;
+      const eng=r.engine==='local'
+        ? '<p class="muted" style="font-size:12px;color:var(--amber2)">⚠️ 本次为<b>本地算法</b>结果(未走 AI 重绘,可能因网关超时回退)。想要 AI 效果请<b>重试</b>。</p>'
+        : '<p class="muted" style="font-size:12px">✨ AI 重绘提取</p>';
+      out.innerHTML=`<div style="text-align:center"><img src="${r.image_url}" style="background:#fff;border-radius:10px;padding:8px;max-width:100%"/><p><a class="chip" href="${r.white_url||r.image_url}" download>下载(白底)</a> <a class="chip" href="${r.image_url}" download>下载(透明)</a></p>${eng}<p class="muted" style="font-size:12px">白底:预览/分享;透明:套版/印刷(印在彩色衣服上请用透明版)</p></div>`;
       clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='generate'){fd.append('prompt',gv('f_prompt')||'a cute cat print');fd.append('size','1024x1024');
       const r=await runJob('generate',fd);res={img:r.image_url,extra:r.hint||'',dl:r.image_url};
