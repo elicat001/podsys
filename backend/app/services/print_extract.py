@@ -62,14 +62,32 @@ def _upscale_to_target(img: Image.Image) -> Image.Image:
     return get_upscale_provider().upscale(img, scale).convert("RGBA")
 
 
+def _cutout_bg(img: Image.Image) -> tuple[Image.Image, bool]:
+    """把 AI 重绘的白底图去背景成透明。用抠图 Provider(服务器=rembg 神经分割,
+    **语义抠主体、不靠颜色阈值**,所以浅色主体(米色狗/浅色卡通)也不会被腐蚀)。
+
+    返回 (图, 是否成功)。失败 → 返回原不透明图(白底版仍可下载,不致整体失败)。
+    """
+    from ..ai.matting import get_matting_provider  # 惰性 import(rembg 重依赖)
+    try:
+        return get_matting_provider().cutout(img).convert("RGBA"), True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("印花透明抠图失败,保留白底版: %s", exc)
+        return img.convert("RGBA"), False
+
+
 def _extract_ai(image: Image.Image) -> tuple[Image.Image, dict]:
     """AI 重绘提取。无 key → OpenAIImageClient() 构造即抛 RuntimeError;调用失败 → 抛异常。
     由 `extract_print_design` 捕获后降级到本地。"""
     from ..ai.openai_image import OpenAIImageClient  # 惰性 import(重依赖,且离线不应触发)
 
     out = OpenAIImageClient().edit(_downscale(image), _FLATTEN_PROMPT).convert("RGBA")
+    # 顺序很关键:先放大,再抠透明。Real-ESRGAN 超分内部 convert("RGB") 会丢 alpha,
+    # 故抠透明必须放在**最后一步**,否则透明会被超分抹掉(变回白底)。
     out = _upscale_to_target(out)
-    return out, {"method": "ai_flatten", "engine": "ai", "size": list(out.size)}
+    out, transparent = _cutout_bg(out)    # 神经抠图去背景 → 干净透明(不腐蚀浅色主体)
+    return out, {"method": "ai_flatten", "engine": "ai",
+                 "transparent": transparent, "size": list(out.size)}
 
 
 def extract_print_design(image: Image.Image) -> tuple[Image.Image, dict]:

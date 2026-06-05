@@ -44,8 +44,8 @@ class Settings(BaseSettings):
     openai_image_model: str = "gpt-image-1"
     openai_text_model: str = "gpt-5.4-mini"   # 文本模型(标题/文案)。与图片模型分开;本网关有 gpt-5.4-mini 等
     openai_text_stream: bool = True           # 本网关 chat 接口需 stream=true 才吐内容(不流式返回空)。官方 OpenAI 置 false 也可
-    openai_timeout: float = 120.0             # OpenAI 调用超时(秒)。文生图较慢(20~40s),放宽防被掐断
-    openai_max_retries: int = 2               # 网关抖动自动重试次数(SDK 指数退避)。调小=抽风时快速失败、不干等几分钟
+    openai_timeout: float = 180.0             # 单次调用超时(秒)。本网关 gpt-image 实测单次常 ~80-150s,85s 太紧会被掐断→静默回退本地算法(浅色主体被腐蚀=用户报的"白底/像本地")。放宽到 180s 让 AI 真正出图
+    openai_max_retries: int = 1               # 重试次数。该网关失败时是"挂满整个超时"型,重试会成倍堆时间;1 次(共2次尝试)覆盖瞬时抖动又不至于卡到 9 分钟。需更稳可在 .env 调 POD_OPENAI_MAX_RETRIES=2
 
     # print extraction
     autocrop_padding: int = 8                # px padding around detected content

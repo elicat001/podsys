@@ -190,11 +190,11 @@ async function api(path,{method='GET',json,form}={}){
   const ct=r.headers.get('content-type')||'';const data=ct.includes('json')?await r.json():await r.text();
   if(!r.ok)throw new Error((data&&data.detail)||r.statusText);return data;}
 async function refreshCredits(){try{const d=await api('/billing/balance');$('#credits').innerHTML='余额 <b>'+d.credits+'</b> 点';}catch(e){}}
-// 固定 5 秒轮询(首次立即查,之后每 5s 一次),直到 maxWait(默认 6 分钟)。
-// 每任务 0.2 次/秒、每次只是按主键查一条作业记录,几乎零开销;只打本地 /jobs/{id}、不碰中转站。
-async function poll(jid,interval=5000,maxWait=360000){let waited=0;while(waited<maxWait){const j=await api('/jobs/'+jid);if(j.status==='done')return j;if(j.status==='error')throw new Error(j.error||'作业失败');await new Promise(r=>setTimeout(r,interval));waited+=interval;}throw new Error('超时')}
+// 固定 5 秒轮询(首次立即查,之后每 5s 一次),直到 maxWait(7 分钟,> 后端最坏 AI 耗时,
+// 确保慢网关的 AI 真出图而不是中途被前端放弃)。每任务 0.2 次/秒,只查本地一条作业记录,近零开销。
+async function poll(jid,interval=5000,maxWait=420000){let waited=0;while(waited<maxWait){const j=await api('/jobs/'+jid);if(j.status==='done')return j;if(j.status==='error')throw new Error(j.error||'作业失败');await new Promise(r=>setTimeout(r,interval));waited+=interval;}throw new Error('网关出图较慢未在 7 分钟内完成,请稍后重试;若后台已生成可到「我的空间」查看')}
 // AI 端点双模式:有 key 时后端返回 {job_id,status:pending}(耗时,改后台作业,避免 Failed to fetch)→ 轮询;
-// 无 key 时后端同步返回结果对象。统一成结果对象返回。给 AI 作业 ~6 分钟预算(单张 gpt-image 可达 ~200s)。
+// 无 key 时后端同步返回结果对象。统一成结果对象返回。给 AI 作业 7 分钟预算(慢网关单次 gpt 可达 ~180s)。
 async function runJob(ep,fd){const r=await api('/'+ep,{method:'POST',form:fd});
   if(r&&r.status==='pending'&&r.job_id){const j=await poll(r.job_id);return j.result||{};}
   return r;}
@@ -233,7 +233,8 @@ const TOOLS=[
    {id:'ipguard',ic:'🛡️',name:'侵权风险过滤',desc:'TRO+艺术家版权库深度检索',ep:'ip-guard/scan'},
  ]},
  {cat:'套图 & 标题',items:[
-   {id:'mockup',ic:'👕',name:'商品套图',desc:'印花套到商品上',ep:'process',show:'mockup'},
+   {id:'mockup',ic:'👕',name:'商品套图',desc:'印花套到商品上(配色变体·真实质感)',ep:'mockup/render',mockup:true},
+   {id:'mockupbatch',ic:'🗂️',name:'批量套图',desc:'多产品×多配色一次出整组',ep:'mockup/batch',mockupbatch:true},
    {id:'title',ic:'🏷️',name:'标题提取',desc:'生成电商标题',ep:'studio/title',kw:true},
    {id:'tryon',ic:'🧍',name:'模特试衣',desc:'服饰图生成上身图',ep:'studio/tryon',ai:1},
  ]},
@@ -242,7 +243,7 @@ const TOOLS=[
    {id:'group',ic:'👨‍👩‍👧',name:'合照',desc:'智能生成合照',ep:'studio/group-photo',prompt:true,ai:1},
  ]},
  {cat:'履约 / 视频',items:[
-   {id:'production',ic:'🏭',name:'生产图',desc:'高分辨率生产文件',ep:'process',show:'production'},
+   {id:'production',ic:'🏭',name:'生产图',desc:'设计稿→印厂格式(PNG/JPG/TIFF/PDF)',ep:'export/production'},
    {id:'videogen',ic:'🎬',name:'展示视频',desc:'运镜/轮播生成 GIF 短片',ep:'video/generate'},
  ]},
 ];
@@ -295,6 +296,9 @@ VIEWS.design=(el)=>{
 
 /* ===== universal TOOL runner modal ===== */
 let curFile=null;
+const CLR={white:'白',black:'黑',heather:'灰',navy:'藏青',sand:'沙',red:'红'};
+let MOCKUP_TPLS=null;
+async function loadMockupTpls(){if(!MOCKUP_TPLS)MOCKUP_TPLS=await api('/templates');return MOCKUP_TPLS;}
 window.openTool=(id)=>{
   const t=TOOLS.flatMap(c=>c.items).find(x=>x.id===id);if(!t)return;curFile=null;
   const extra=[];
@@ -306,12 +310,32 @@ window.openTool=(id)=>{
   if(t.id==='compress')extra.push(`<label>目标宽(px)</label><input id="f_w" type="number" value="1200"/>`);
   if(t.id==='vectorize')extra.push(`<label>精细度</label><select id="f_preset"><option value="auto" selected>自动（推荐·高保真,自动判别）</option><option value="logo">极简（纯色 logo/图标,文件最小）</option><option value="fine">极致细节（毛发/照片级,放大百倍清晰）</option></select><div class="muted" style="margin-top:5px;font-size:12px">💡 近原生分辨率描摹,<b>保留毛发/细线条、放大无锯齿、可无损缩放</b>。细节越多的图,SVG 文件越大(精细档可达十几 MB)、出图越慢(约 10~30 秒),请耐心等待 ✨</div>`);
   if(t.id==='variants')extra.push(`<label>裂变张数</label><select id="f_n"><option value="1">1 张</option><option value="2" selected>2 张</option><option value="3">3 张</option><option value="4">4 张</option></select><div class="muted" style="margin-top:5px;font-size:12px;line-height:1.5">💡 每张约 <b>60~90 秒</b>(并行出图),张数越多稍慢一些,请稍候片刻 ✨</div>`);
+  if(t.id==='production')extra.push(`
+    <div class="muted" style="font-size:12px;line-height:1.6;background:rgba(255,170,60,.08);border:1px solid rgba(255,170,60,.25);border-radius:8px;padding:8px 10px;margin-bottom:10px">
+      🏭 本工具只做<b>「给工厂的最终格式转换」</b>:把<b>已经做好的设计稿</b>排版成印厂可用文件。<br>
+      请先用「<b>印花提取</b>」/「<b>一键抠图</b>」把设计做成<b>透明底 PNG</b>,再上传这里导出 ✨</div>
+    <label>成品尺寸</label>
+    <select id="f_size"><option value="30x40" selected>30 × 40 cm(默认)</option><option value="21x29.7">A4(21 × 29.7 cm)</option><option value="custom">自定义…</option></select>
+    <div id="f_custom" style="display:none;gap:8px;margin-top:8px">
+      <input id="f_wcm" type="number" min="1" max="100" value="30" placeholder="宽 cm" style="width:48%"/>
+      <input id="f_hcm" type="number" min="1" max="100" value="40" placeholder="高 cm" style="width:48%"/></div>
+    <label style="margin-top:10px">分辨率 DPI</label>
+    <select id="f_dpi"><option value="150">150(打样/预览)</option><option value="300" selected>300(标准印刷)</option><option value="600">600(高保真/精细小图)</option></select>
+    <div class="muted" style="margin-top:5px;font-size:11px;line-height:1.6">💡 300 是印刷标准清晰度。清晰度还取决于<b>上传稿的真实分辨率</b>——稿子太小先用「图像提质」放大,否则标多高 DPI 都糊。</div>
+    <label style="margin-top:10px">底色(仅 JPG/PDF 用)</label>
+    <select id="f_bg"><option value="white" selected>白底</option><option value="black">黑底</option></select>
+    <div class="muted" style="margin-top:5px;font-size:11px;line-height:1.6">💡 印花稿本身是 <b>PNG/TIFF 透明底</b>(送印用这个)。JPG/PDF 不支持透明,才需压个底色,仅打样/预览用。</div>`);
+  if(t.mockup)extra.push(`<label>产品模板</label><select id="m_tpl"><option>加载中…</option></select>
+    <label style="margin-top:10px">配色</label><select id="m_color"></select>`);
+  if(t.mockupbatch)extra.push(`<label>产品(可多选)</label><div id="m_tpls" style="display:flex;gap:8px;flex-wrap:wrap">加载中…</div>
+    <label style="margin-top:10px">配色(可多选,留空=各自默认)</label><div id="m_cols" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+    <div class="muted" style="margin-top:6px;font-size:12px">💡 产品 × 配色,一次最多 12 张</div>`);
   const needFile=t.id!=='generate';
   $('#modal').innerHTML=`<div class="top"><span class="ic">${t.ic}</span><h3>${t.name}</h3><span class="x" onclick="closeModal()">✕</span></div>
     <div class="body">
       <div>${needFile?`<div class="drop" id="drop">点击或拖入图片<input type="file" id="file" accept="image/*" hidden></div>`:''}
         ${extra.join('')}
-        <button class="btn" id="run" style="width:100%;margin-top:16px">运行 · 扣${({generate:5,'design-tools/variants':4,'design-tools/fuse':4,'design-tools/restyle':4,'design-tools/meme':4,'image-tools/expand':4,'image-tools/dewatermark':4,'studio/tryon':4,'studio/pet-costume':4,'studio/group-photo':4,'video/generate':3,'studio/title':1}[t.ep]||2)}点</button>
+        <button class="btn" id="run" style="width:100%;margin-top:16px">运行 · 扣${({generate:5,'design-tools/variants':4,'design-tools/fuse':4,'design-tools/restyle':4,'design-tools/meme':4,'image-tools/expand':4,'image-tools/dewatermark':4,'studio/tryon':4,'studio/pet-costume':4,'studio/group-photo':4,'video/generate':3,'studio/title':1,'export/production':1,'mockup/render':1}[t.ep]||2)}点</button>
         <div class="muted" id="rstat" style="margin-top:10px"></div></div>
       <div class="out" id="out"><span class="muted">结果预览</span></div>
     </div>`;
@@ -323,6 +347,16 @@ window.openTool=(id)=>{
     f.onchange=()=>{curFile=f.files[0];showThumb()};}
   $('#run').onclick=()=>runTool(t);
   if(t.id==='variants'){const sel=$('#f_n'),sync=()=>{$('#run').textContent='运行 · 扣'+(4*(+sel.value||2))+'点';};sel.onchange=sync;sync();}
+  if(t.id==='production'){const sz=$('#f_size');sz.onchange=()=>{$('#f_custom').style.display=sz.value==='custom'?'flex':'none';};}
+  if(t.mockup){loadMockupTpls().then(tpls=>{const ts=$('#m_tpl');if(!ts)return;ts.innerHTML=tpls.map(x=>`<option value="${x.id}">${esc(x.label)}</option>`).join('');
+    const fillC=()=>{const tp=tpls.find(x=>x.id===ts.value)||tpls[0];$('#m_color').innerHTML=tp.colors.map(c=>`<option value="${c}" ${c===tp.default_color?'selected':''}>${CLR[c]||c}</option>`).join('');};
+    ts.onchange=fillC;fillC();});}
+  if(t.mockupbatch){loadMockupTpls().then(tpls=>{const tb=$('#m_tpls');if(!tb)return;
+    tb.innerHTML=tpls.map((x,i)=>`<label class="chip" style="cursor:pointer;font-weight:400"><input type="checkbox" value="${x.id}" ${i===0?'checked':''} style="margin-right:4px">${esc(x.label)}</label>`).join('');
+    const allc=[...new Set(tpls.flatMap(x=>x.colors))];
+    $('#m_cols').innerHTML=allc.map(c=>`<label class="chip" style="cursor:pointer;font-weight:400"><input type="checkbox" value="${c}" style="margin-right:4px">${CLR[c]||c}</label>`).join('');
+    const sync=()=>{const nt=[...document.querySelectorAll('#m_tpls input:checked')].length;const nc=[...document.querySelectorAll('#m_cols input:checked')].length||1;$('#run').textContent='运行 · 扣'+Math.min(12,nt*nc)+'点';};
+    tb.onchange=sync;$('#m_cols').onchange=sync;sync();});}
 };
 function showThumb(){if(!curFile)return;const r=new FileReader();r.onload=()=>{$('#drop').innerHTML='已选择<img src="'+r.result+'">';};r.readAsDataURL(curFile);}
 window.closeModal=()=>$('#mask').classList.remove('show');
@@ -342,6 +376,32 @@ async function runTool(t){
       const pick={print:r.print_url,mockup:r.mockup_url,production:r.production_url};
       const img=pick[t.show]||r.print_url;
       res={img,extra:t.show==='print'?'透明印花(可直接用于套版)':`生产图 ${r.production_meta.width_px}×${r.production_meta.height_px}px`,dl:r.production_url};
+    }else if(t.ep==='export/production'){ // 给工厂的最终格式转换:多格式导出
+      const sv=$('#f_size').value;let wcm=30,hcm=40;
+      if(sv==='custom'){wcm=+$('#f_wcm').value||30;hcm=+$('#f_hcm').value||40;}
+      else{const p=sv.split('x');wcm=+p[0];hcm=+p[1];}
+      fd.append('width_cm',wcm);fd.append('height_cm',hcm);fd.append('dpi',gv('f_dpi')||'300');
+      fd.append('formats','png,jpg,tiff,pdf');fd.append('bg',gv('f_bg')||'white');
+      const r=await api('/export/production',{method:'POST',form:fd});
+      const m=r.meta,prev=r.files.png||r.files.jpg;
+      const lbl={png:'PNG 透明印花稿',jpg:'JPG 白底打样',tiff:'TIFF 无损',pdf:'PDF'};
+      out.innerHTML=`<div style="text-align:center">
+        ${prev?`<img src="${prev}" style="background:repeating-conic-gradient(#2a2a2a 0% 25%,#222 0% 50%) 50%/20px 20px;border-radius:10px;padding:6px;max-width:100%"/>`:''}
+        <p class="muted" style="font-size:12px">成品 ${m.width_px}×${m.height_px}px · ${m.width_cm}×${m.height_cm}cm @ ${m.dpi}DPI</p>
+        <p style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">${Object.keys(r.files).map(f=>`<a class="chip" href="${r.files[f]}" download>⬇ ${lbl[f]||f.toUpperCase()}</a>`).join('')}</p></div>`;
+      clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
+    }else if(t.ep==='mockup/render'){ // 单张套图(配色变体)
+      fd.append('template',gv('m_tpl')||'tshirt');fd.append('color',gv('m_color')||'');
+      const r=await api('/mockup/render',{method:'POST',form:fd});
+      res={img:r.image_url,extra:`${r.template}${r.color?' · '+(CLR[r.color]||r.color):''}`,dl:r.image_url};
+    }else if(t.ep==='mockup/batch'){ // 批量套图:多产品×多配色
+      const tps=[...document.querySelectorAll('#m_tpls input:checked')].map(c=>c.value);
+      const cls=[...document.querySelectorAll('#m_cols input:checked')].map(c=>c.value);
+      if(!tps.length){clearInterval(tick);st.textContent='请至少选一个产品';$('#run').disabled=false;return;}
+      fd.append('templates',tps.join(','));fd.append('colors',cls.join(','));
+      const r=await api('/mockup/batch',{method:'POST',form:fd});
+      out.innerHTML=`<div style="width:100%"><div style="display:grid;grid-template-columns:repeat(${Math.min(r.count,3)},1fr);gap:10px">${r.items.map(it=>`<div style="text-align:center"><img src="${it.url}"/><p style="margin:6px 0 0;font-size:12px" class="muted">${esc(it.template)} · ${esc(CLR[it.color]||it.color||'默认')}</p><p style="margin:2px 0 0"><a class="chip" href="${it.url}" download>下载</a></p></div>`).join('')}</div><p class="muted" style="text-align:center;margin-top:10px">${r.count} 张套图</p></div>`;
+      clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='image-tools/upscale'){fd.append('scale','1');
       const r=await runJob('image-tools/upscale',fd);res={img:r.image_url,extra:`提质完成 · ${r.width}×${r.height}px(原尺寸)`,dl:r.image_url};
     }else if(t.ep==='print-extract'){

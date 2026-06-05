@@ -1,0 +1,143 @@
+"""商品套图(/api/mockup)测试:单张/批量、配色、按张扣点、退点、越权/参数校验。
+
+纯本地 Pillow,无 AI。验证管线与计费,不验证视觉效果。
+"""
+from __future__ import annotations
+
+import io
+
+from PIL import Image
+
+from app.db import Base, engine
+from app.services import mockup
+
+Base.metadata.create_all(engine)
+
+
+def _balance(client, headers) -> int:
+    r = client.get("/api/auth/me", headers=headers)
+    assert r.status_code == 200, r.text
+    return r.json()["credits"]
+
+
+def _files(png):
+    return {"file": ("design.png", png(), "image/png")}
+
+
+# ---- 模板列表带配色 -------------------------------------------------------
+def test_templates_expose_colors(client):
+    r = client.get("/api/templates")
+    assert r.status_code == 200, r.text
+    items = r.json()
+    ts = next(t for t in items if t["id"] == "tshirt")
+    assert "colors" in ts and "white" in ts["colors"] and "black" in ts["colors"]
+    assert ts["default_color"] == "white"
+
+
+# ---- 单张套图 -------------------------------------------------------------
+def test_render_unauth_401(client, png):
+    r = client.post("/api/mockup/render", files=_files(png))
+    assert r.status_code == 401
+
+
+def test_render_with_color(client, auth_headers, png):
+    before = _balance(client, auth_headers)
+    r = client.post("/api/mockup/render", headers=auth_headers,
+                    files=_files(png), data={"template": "tshirt", "color": "black"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["template"] == "tshirt" and body["color"] == "black"
+    dl = client.get(body["image_url"])
+    assert dl.status_code == 200 and len(dl.content) > 0
+    assert _balance(client, auth_headers) == before - 1  # asset=1
+
+
+def test_render_default_color(client, auth_headers, png):
+    r = client.post("/api/mockup/render", headers=auth_headers,
+                    files=_files(png), data={"template": "tote"})
+    assert r.status_code == 200, r.text
+    assert r.json()["color"] is None
+
+
+def test_render_bad_template_refund_400(client, auth_headers, png):
+    before = _balance(client, auth_headers)
+    r = client.post("/api/mockup/render", headers=auth_headers,
+                    files=_files(png), data={"template": "spaceship"})
+    assert r.status_code == 400
+    assert _balance(client, auth_headers) == before
+
+
+def test_render_bad_color_refund_400(client, auth_headers, png):
+    before = _balance(client, auth_headers)
+    r = client.post("/api/mockup/render", headers=auth_headers,
+                    files=_files(png), data={"template": "tshirt", "color": "neon"})
+    assert r.status_code == 400
+    assert _balance(client, auth_headers) == before
+
+
+# ---- 批量套图 -------------------------------------------------------------
+def test_batch_cartesian_and_charge(client, auth_headers, png):
+    before = _balance(client, auth_headers)
+    r = client.post("/api/mockup/batch", headers=auth_headers, files=_files(png),
+                    data={"templates": "tshirt,tote", "colors": "white,black"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["count"] == 4  # 2 模板 × 2 配色
+    seen = {(it["template"], it["color"]) for it in body["items"]}
+    assert seen == {("tshirt", "white"), ("tshirt", "black"),
+                    ("tote", "white"), ("tote", "black")}
+    for it in body["items"]:
+        assert client.get(it["url"]).status_code == 200
+    assert _balance(client, auth_headers) == before - 4  # 按张 asset×4
+
+
+def test_batch_default_colors(client, auth_headers, png):
+    r = client.post("/api/mockup/batch", headers=auth_headers, files=_files(png),
+                    data={"templates": "tshirt,canvas"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["count"] == 2
+    assert all(it["color"] for it in body["items"])  # 默认色已落实
+
+
+def test_batch_over_limit_400(client, auth_headers, png):
+    before = _balance(client, auth_headers)
+    # 4 模板 × 6 配色 = 24 > MAX_BATCH(12)
+    r = client.post("/api/mockup/batch", headers=auth_headers, files=_files(png),
+                    data={"templates": "tshirt,tote,canvas,phonecase",
+                          "colors": "white,black,heather,navy,sand,red"})
+    assert r.status_code == 400
+    assert _balance(client, auth_headers) == before  # 越限在扣点前拦截
+
+
+def test_batch_bad_template_400(client, auth_headers, png):
+    before = _balance(client, auth_headers)
+    r = client.post("/api/mockup/batch", headers=auth_headers, files=_files(png),
+                    data={"templates": "tshirt,ufo"})
+    assert r.status_code == 400
+    assert _balance(client, auth_headers) == before
+
+
+def test_batch_insufficient_credits_402(client, auth_headers, png):
+    # 把余额打到不足以付 4 张:先消耗到 <4
+    bal = _balance(client, auth_headers)
+    # 单张消耗到只剩 3 点
+    while bal > 3:
+        client.post("/api/mockup/render", headers=auth_headers, files=_files(png),
+                    data={"template": "tshirt"})
+        bal -= 1
+    r = client.post("/api/mockup/batch", headers=auth_headers, files=_files(png),
+                    data={"templates": "tshirt,tote", "colors": "white,black"})  # 需 4 点
+    assert r.status_code == 402
+    assert _balance(client, auth_headers) == bal  # 预扣失败已全退,余额不变
+
+
+# ---- service 直测:配色确实改变了产品本体像素 ----------------------------
+def test_service_color_changes_body():
+    design = Image.new("RGBA", (200, 200), (0, 200, 0, 255))
+    white = mockup.render_mockup(design, "tshirt", "white")
+    black = mockup.render_mockup(design, "tshirt", "black")
+    # 取胸口印区之外、肩部一点的像素(本体但非印花),白衣应明显比黑衣亮
+    px_w = white.convert("RGB").getpixel((500, 250))
+    px_b = black.convert("RGB").getpixel((500, 250))
+    assert sum(px_w) > sum(px_b) + 200

@@ -3,13 +3,56 @@ from __future__ import annotations
 
 from PIL import Image, ImageDraw
 
+from app.config import settings
 from app.services.design_extract import extract_design, extract_on_fabric
+from app.services.print_extract import extract_print_design
 
 
 def _design_on_white(bg=(255, 255, 255)) -> Image.Image:
     img = Image.new("RGB", (200, 200), bg)
     ImageDraw.Draw(img).rectangle([70, 70, 130, 130], fill=(220, 40, 40))  # 居中红色图案
     return img
+
+
+# ---------- AI 重绘 → 抠图去背景 → 透明(端到端) ----------
+
+def test_ai_extract_path_outputs_transparent(monkeypatch):
+    """端到端(mock gpt):AI 引擎拿到『近白底重绘图』后,最终 design 必须是真透明,
+    而非白底——这正是用户报的『下载透明仍是白底』要根治的路径。"""
+    # 模拟 gpt-image edit 的返回:主体画在近白底上(不透明 RGBA)
+    fake = Image.new("RGB", (400, 400), (238, 236, 232))
+    ImageDraw.Draw(fake).ellipse([120, 120, 280, 280], fill=(170, 60, 40))
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def edit(self, image, prompt, **k):
+            return fake.convert("RGBA")
+
+    # 模拟 Real-ESRGAN:超分时 convert("RGB") 会丢 alpha——若抠透明在放大之前做,
+    # 透明会被抹掉。这个假上采样器复现该失败模式,确保流水线顺序正确(抠透明必须最后做)。
+    class _AlphaDroppingUpscaler:
+        name = "fake"
+
+        def upscale(self, image, scale=1.0):
+            rgb = image.convert("RGB")  # 丢 alpha(同真 Real-ESRGAN)
+            tw, th = max(1, int(image.width * scale)), max(1, int(image.height * scale))
+            return rgb.resize((tw, th), Image.LANCZOS)
+
+    monkeypatch.setattr("app.ai.openai_image.OpenAIImageClient", _FakeClient)
+    monkeypatch.setattr("app.services.print_extract.get_upscale_provider", lambda: _AlphaDroppingUpscaler())
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "print_extract_ai", True)
+
+    design, meta = extract_print_design(Image.new("RGB", (300, 300), (200, 200, 200)))
+    assert meta["engine"] == "ai"
+    assert design.mode == "RGBA"
+    a = design.getchannel("A")
+    lo, hi = a.getextrema()
+    assert lo == 0 and hi == 255            # 确有透明像素(背景)+ 不透明像素(主体)
+    assert a.getpixel((3, 3)) == 0          # 角落背景 → 透明
+    assert a.getpixel((a.size[0] // 2, a.size[1] // 2)) == 255  # 主体 → 不透明
 
 
 # ---------- 本地去布料(纯函数,离线) ----------

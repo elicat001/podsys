@@ -46,6 +46,8 @@ from .routers import space as space_router
 from .routers import video_cases as video_cases_router
 from .routers import templates as templates_router
 from .routers import print_extract as print_extract_router
+from .routers import export as export_router
+from .routers import mockup as mockup_router
 
 app = FastAPI(title="PODStudio API", version="0.3.0")
 settings.ensure_dirs()
@@ -86,6 +88,8 @@ app.include_router(space_router.router)
 app.include_router(video_cases_router.router)
 app.include_router(templates_router.router)
 app.include_router(print_extract_router.router)
+app.include_router(export_router.router)
+app.include_router(mockup_router.router)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
 
