@@ -10,12 +10,12 @@ openai>=1.55
 pytest>=8.0
 # 本地抠图引擎(默认 POD_MATTING_PROVIDER=rembg 时必需;首次运行会下载 ~170MB U2Net 模型)
 rembg>=2.0.59
-onnxruntime>=1.18    # rembg 的推理后端(U2Net)
+onnxruntime>=1.18    # rembg 的推理后端(U2Net)+ 图像提质 Real-ESRGAN(models/realesr_x4v3.onnx,~4.7MB,不入库,缺失降级 Lanczos)
 # 印花提取的本地去布料(洪水填充)用到;通常随 rembg 一起装上
 numpy>=1.26
 scipy>=1.11
-# cv2:矢量化降级引擎(轮廓追踪)+ 快速超分 FSRCNN(dnn_superres,在 contrib 版里)。
-# 用 contrib-headless(含 dnn_superres + 全部 base 功能);别同时装 opencv-python(会冲突坏 cv2)。
+# cv2:矢量化(轮廓追踪)+ 图像提质(去噪/detailEnhance)。用 contrib-headless(全功能超集);
+# 别同时装 opencv-python(会冲突坏 cv2)。
 opencv-contrib-python-headless>=4.8
 # 转矢量图主引擎:vtracer 工业级彩色描摹(平滑贝塞尔曲线 + 去碎块);缺失时降级到 cv2 轮廓追踪
 vtracer>=0.6

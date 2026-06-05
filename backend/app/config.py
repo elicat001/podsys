@@ -30,8 +30,9 @@ class Settings(BaseSettings):
 
     # AI providers — swap implementation without touching call sites
     matting_provider: str = "pillow"        # pillow | rembg | api | gptimage
-    upscale_provider: str = "pillow"         # pillow(Lanczos) | fsrcnn(本地快速超分,略清晰)
-    upscale_fsrcnn_model: str = "FSRCNN_x4.pb"   # FSRCNN 模型(cv2.dnn_superres,毫秒级,略清晰);缺失则降级 Lanczos
+    upscale_provider: str = "pillow"         # pillow(Lanczos 兜底) | realesrgan(本地AI·真提质·~几秒)
+    upscale_realesrgan_model: str = "realesr_x4v3.onnx"  # Real-ESRGAN 精简版(SRVGG x4,onnx,真提质);缺失降级 Lanczos
+    upscale_sr_max_input: int = 768          # AI 超分输入长边上限:大图先缩(控耗时;~768→几秒)
 
     # third-party API config (used when *_provider == "api")
     matting_api_url: str = ""
@@ -54,8 +55,8 @@ class Settings(BaseSettings):
     print_extract_ai: bool = True
 
     @property
-    def upscale_fsrcnn_path(self) -> Path:
-        return _BACKEND_DIR / "models" / self.upscale_fsrcnn_model
+    def upscale_realesrgan_path(self) -> Path:
+        return _BACKEND_DIR / "models" / self.upscale_realesrgan_model
 
     @property
     def uploads_dir(self) -> Path:

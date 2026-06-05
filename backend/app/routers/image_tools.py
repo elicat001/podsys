@@ -62,16 +62,18 @@ def _edit_endpoint(raw: bytes, prompt: str, size: str, db: Session, user: User, 
 async def upscale(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    scale: float = Form(2.0),
+    scale: float = Form(1.0),
     user: User = Depends(charge_for("process")),
     db: Session = Depends(get_db),
 ):
-    """超分提质(真·放大输入图)。本地 AI 超分(onnx,慢)→ 后台作业;Lanczos(快)→ 同步。"""
+    """图像提质:本地 AI 超分(Real-ESRGAN)去噪 + 复原细节,**默认保持原尺寸不放大**(scale=1);
+    scale>1 时放大。AI 提质 ~几秒 → 后台作业;pillow → 同步;无模型自动降级 Lanczos。
+    """
     raw = await file.read()
     src = _read_image(raw, db, user, "process")
     scale = max(1.0, min(scale, 4.0))
 
-    if settings.upscale_provider == "onnx":  # AI 超分慢(CPU 几十秒~分钟)→ 后台作业,前端轮询
+    if settings.upscale_provider == "realesrgan":  # AI 提质 ~几秒 → 后台作业,前端轮询
         uid = user.id
         rgb = src.convert("RGB")
 
@@ -79,22 +81,22 @@ async def upscale(
             out = get_upscale_provider().upscale(rgb, scale=scale)
             out.save(storage.output_path(jid, "upscaled.png"), format="PNG")
             url = storage.output_url(jid, "upscaled.png")
-            save_asset_in_background(uid, out, "超分提质", url)
+            save_asset_in_background(uid, out, "提质", url)
             return {"image_url": url, "width": out.width, "height": out.height}
 
         jid = submit_ai_job(background_tasks, db, "upscale", uid, _work, refund_op="process")
         return JSONResponse({"job_id": jid, "status": "pending"})
 
-    # Lanczos:快,同步(原逻辑)
+    # pillow(Lanczos):快,同步
     try:
         out = get_upscale_provider().upscale(src.convert("RGB"), scale=scale)
     except Exception as exc:  # noqa: BLE001
         refund(db, user, "process")
-        raise HTTPException(status_code=500, detail="超分失败") from exc
+        raise HTTPException(status_code=500, detail="提质失败") from exc
     job_id = storage.new_job_id()
     out.save(storage.output_path(job_id, "upscaled.png"), format="PNG")
     url = storage.output_url(job_id, "upscaled.png")
-    save_as_asset(db, user.id, out, "超分提质", url, source="generated")
+    save_as_asset(db, user.id, out, "提质", url, source="generated")
     return JSONResponse({"job_id": job_id, "image_url": url, "width": out.width, "height": out.height})
 
 

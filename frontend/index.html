@@ -223,7 +223,7 @@ const TOOLS=[
    {id:'seamless',ic:'🔲',name:'四方连续图',desc:'无缝连续印花,服饰家纺',ep:'design-tools/seamless'},
  ]},
  {cat:'图案处理',items:[
-   {id:'upscale',ic:'🔍',name:'超分提质',desc:'真·放大输入图(2x)',ep:'image-tools/upscale'},
+   {id:'upscale',ic:'🔍',name:'图像提质',desc:'AI去噪+复原细节,同尺寸提质(不放大)',ep:'image-tools/upscale'},
    {id:'expand',ic:'⤢',name:'扩图',desc:'外延构图调整',ep:'image-tools/expand',ai:1},
    {id:'dewatermark',ic:'💧',name:'去水印',desc:'批量去水印',ep:'image-tools/dewatermark',ai:1},
    {id:'vectorize',ic:'📐',name:'转矢量图',desc:'位图转 SVG',ep:'vectorize'},
@@ -342,8 +342,8 @@ async function runTool(t){
       const pick={print:r.print_url,mockup:r.mockup_url,production:r.production_url};
       const img=pick[t.show]||r.print_url;
       res={img,extra:t.show==='print'?'透明印花(可直接用于套版)':`生产图 ${r.production_meta.width_px}×${r.production_meta.height_px}px`,dl:r.production_url};
-    }else if(t.ep==='image-tools/upscale'){fd.append('scale','4');
-      const r=await runJob('image-tools/upscale',fd);res={img:r.image_url,extra:`放大到 ${r.width}×${r.height}px`,dl:r.image_url};
+    }else if(t.ep==='image-tools/upscale'){fd.append('scale','1');
+      const r=await runJob('image-tools/upscale',fd);res={img:r.image_url,extra:`提质完成 · ${r.width}×${r.height}px(原尺寸)`,dl:r.image_url};
     }else if(t.ep==='print-extract'){
       const r=await runJob('print-extract',fd);
       out.innerHTML=`<div style="text-align:center"><img src="${r.image_url}" style="background:#fff;border-radius:10px;padding:8px;max-width:100%"/><p><a class="chip" href="${r.white_url||r.image_url}" download>下载(白底)</a> <a class="chip" href="${r.image_url}" download>下载(透明)</a></p><p class="muted" style="font-size:12px">白底:预览/分享;透明:套版/印刷(印在彩色衣服上请用透明版)</p></div>`;

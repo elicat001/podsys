@@ -166,6 +166,27 @@ def dewatermark(img: Image.Image) -> Image.Image:
     return blended.filter(ImageFilter.UnsharpMask(radius=2, percent=80))
 
 
+# ---------- 提质/复原(同尺寸,不放大):去噪 + 细节增强 ----------
+def restore_quality(img: Image.Image) -> Image.Image:
+    """图像『提质』(保持原尺寸,不放大):**温和的边缘保持细节增强**(detailEnhance),
+    让边缘/纹理更清晰一点,**绝不强去噪**(强去噪会把好图的细节抹成塑料感→变糊变劣质)。
+
+    cv2 不可用时退回 Pillow 反锐化掩模。
+    ⚠️ 诚实边界:对『本来就清晰的好图』,classical 方法只能轻微锐化、提不出真质;
+    真『提质』(去噪+复原细节)需要强 AI 模型(慢)。
+    """
+    rgb = img.convert("RGB")
+    try:
+        import cv2
+        import numpy as np
+        bgr = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
+        # detailEnhance:边缘保持的细节增强(不抹细节);sigma_r 小=更保细节
+        out = cv2.detailEnhance(bgr, sigma_s=10, sigma_r=0.15)
+        return Image.fromarray(cv2.cvtColor(out, cv2.COLOR_BGR2RGB))
+    except Exception:  # noqa: BLE001  无 cv2 → Pillow 轻反锐化
+        return rgb.filter(ImageFilter.UnsharpMask(radius=2, percent=120, threshold=3))
+
+
 # ---------- 文生图:程序化图案(prompt 决定配色与构图,真实可区分) ----------
 def procedural_pattern(prompt: str, size: int = 1024) -> Image.Image:
     sd = _seed(prompt)
