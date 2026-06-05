@@ -406,10 +406,7 @@ async function runTool(t){
       const r=await runJob('image-tools/upscale',fd);res={img:r.image_url,extra:`提质完成 · ${r.width}×${r.height}px(原尺寸)`,dl:r.image_url};
     }else if(t.ep==='print-extract'){
       const r=await runJob('print-extract',fd);
-      const eng=r.engine==='local'
-        ? '<p class="muted" style="font-size:12px;color:var(--amber2)">⚠️ 本次为<b>本地算法</b>结果(未走 AI 重绘,可能因网关超时回退)。想要 AI 效果请<b>重试</b>。</p>'
-        : '<p class="muted" style="font-size:12px">✨ AI 重绘提取</p>';
-      out.innerHTML=`<div style="text-align:center"><img src="${r.image_url}" style="background:#fff;border-radius:10px;padding:8px;max-width:100%"/><p><a class="chip" href="${r.white_url||r.image_url}" download>下载(白底)</a> <a class="chip" href="${r.image_url}" download>下载(透明)</a></p>${eng}<p class="muted" style="font-size:12px">白底:预览/分享;透明:套版/印刷(印在彩色衣服上请用透明版)</p></div>`;
+      out.innerHTML=`<div style="text-align:center"><img src="${r.image_url}" style="background:#fff;border-radius:10px;padding:8px;max-width:100%"/><p><a class="chip" href="${r.white_url||r.image_url}" download>下载(白底)</a> <a class="chip" href="${r.image_url}" download>下载(透明)</a></p><p class="muted" style="font-size:12px">白底:预览/分享;透明:套版/印刷(印在彩色衣服上请用透明版)</p></div>`;
       clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='generate'){fd.append('prompt',gv('f_prompt')||'a cute cat print');fd.append('size','1024x1024');
       const r=await runJob('generate',fd);res={img:r.image_url,extra:r.hint||'',dl:r.image_url};

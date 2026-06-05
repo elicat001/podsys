@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from ..ai.upscale import get_upscale_provider
 from ..config import settings
@@ -62,18 +62,49 @@ def _upscale_to_target(img: Image.Image) -> Image.Image:
     return get_upscale_provider().upscale(img, scale).convert("RGBA")
 
 
-def _cutout_bg(img: Image.Image) -> tuple[Image.Image, bool]:
-    """把 AI 重绘的白底图去背景成透明。用抠图 Provider(服务器=rembg 神经分割,
-    **语义抠主体、不靠颜色阈值**,所以浅色主体(米色狗/浅色卡通)也不会被腐蚀)。
+def _border_bg_color(rgb: Image.Image) -> tuple[int, int, int]:
+    """取四边像素中位色作为背景色估计(AI 重绘把印花放在干净底上,边缘=底色)。"""
+    w, h = rgb.size
+    px = rgb.load()
+    rs: list[int] = []; gs: list[int] = []; bs: list[int] = []
+    for x in range(0, w, max(1, w // 64)):
+        for y in (0, h - 1):
+            p = px[x, y]; rs.append(p[0]); gs.append(p[1]); bs.append(p[2])
+    for y in range(0, h, max(1, h // 64)):
+        for x in (0, w - 1):
+            p = px[x, y]; rs.append(p[0]); gs.append(p[1]); bs.append(p[2])
+    rs.sort(); gs.sort(); bs.sort(); m = len(rs) // 2
+    return (rs[m], gs[m], bs[m])
 
-    返回 (图, 是否成功)。失败 → 返回原不透明图(白底版仍可下载,不致整体失败)。
+
+def _white_bg_to_transparent(img: Image.Image, tol: int = 55,
+                             min_bg_frac: float = 0.02, max_bg_frac: float = 0.97) -> Image.Image:
+    """把『连通到画面边缘的底色背景』抠成透明,**完整保留设计**(含满铺花型/装饰图)。
+
+    为什么用这个而不是 rembg:rembg 做语义"抠主体",对满铺/装饰类印花(枕套花纹、窗帘)
+    会把整片设计当背景删光(实测仅剩残影)。这里只去掉"连通到边缘的底色",设计内部一律保留:
+    1. 取四边中位色当底色;2. 从四边 flood-fill(容差 tol)标记连通背景;3. 该区域 alpha→0。
+    防呆:背景占比 <min 或 >max(没有真正可抠的底)→ 原样返回不透明,绝不弄巧成拙。
     """
-    from ..ai.matting import get_matting_provider  # 惰性 import(rembg 重依赖)
-    try:
-        return get_matting_provider().cutout(img).convert("RGBA"), True
-    except Exception as exc:  # noqa: BLE001
-        log.warning("印花透明抠图失败,保留白底版: %s", exc)
-        return img.convert("RGBA"), False
+    base = img.convert("RGBA")
+    w, h = base.size
+    rgb = base.convert("RGB")
+    bg = _border_bg_color(rgb)
+    pad = Image.new("RGB", (w + 2, h + 2), bg)
+    pad.paste(rgb, (1, 1))
+    seed = (255, 0, 255)
+    ImageDraw.floodfill(pad, (0, 0), seed, thresh=tol)
+    filled = pad.crop((1, 1, w + 1, h + 1))
+    r, g, b = filled.split()
+    mask = ImageChops.multiply(
+        ImageChops.multiply(r.point(lambda v: 255 if v == seed[0] else 0),
+                            g.point(lambda v: 255 if v == seed[1] else 0)),
+        b.point(lambda v: 255 if v == seed[2] else 0))
+    if not (min_bg_frac <= mask.histogram()[255] / float(w * h) <= max_bg_frac):
+        return base  # 没有明显可抠的底色 → 保持不透明
+    mask = mask.filter(ImageFilter.GaussianBlur(0.6))
+    base.putalpha(ImageChops.subtract(base.split()[3], mask))
+    return base
 
 
 def _extract_ai(image: Image.Image) -> tuple[Image.Image, dict]:
@@ -85,9 +116,8 @@ def _extract_ai(image: Image.Image) -> tuple[Image.Image, dict]:
     # 顺序很关键:先放大,再抠透明。Real-ESRGAN 超分内部 convert("RGB") 会丢 alpha,
     # 故抠透明必须放在**最后一步**,否则透明会被超分抹掉(变回白底)。
     out = _upscale_to_target(out)
-    out, transparent = _cutout_bg(out)    # 神经抠图去背景 → 干净透明(不腐蚀浅色主体)
-    return out, {"method": "ai_flatten", "engine": "ai",
-                 "transparent": transparent, "size": list(out.size)}
+    out = _white_bg_to_transparent(out)   # 去掉连通边缘的白底 → 透明,设计完整保留(含满铺花型)
+    return out, {"method": "ai_flatten", "engine": "ai", "size": list(out.size)}
 
 
 def extract_print_design(image: Image.Image) -> tuple[Image.Image, dict]:

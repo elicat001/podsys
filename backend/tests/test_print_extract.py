@@ -5,7 +5,24 @@ from PIL import Image, ImageDraw
 
 from app.config import settings
 from app.services.design_extract import extract_design, extract_on_fabric
-from app.services.print_extract import extract_print_design
+from app.services.print_extract import _white_bg_to_transparent, extract_print_design
+
+
+def test_white_key_keeps_design_removes_edge_bg():
+    """白底→透明:去掉连通边缘的底色,**完整保留设计**(尤其满铺/装饰类不能被删光)。"""
+    # 满铺式:中央一大片彩色设计 + 四周白边(类比枕套花纹)
+    img = Image.new("RGB", (240, 240), (252, 252, 252))
+    d = ImageDraw.Draw(img)
+    d.rectangle([40, 40, 200, 200], fill=(60, 160, 90))      # 大片绿色设计
+    d.ellipse([90, 90, 150, 150], fill=(250, 250, 250))      # 设计内部的白(被绿包围,不连边缘)
+    out = _white_bg_to_transparent(img)
+    a = out.getchannel("A")
+    assert a.getpixel((3, 3)) == 0          # 边缘白 → 透明
+    assert a.getpixel((120, 60)) == 255     # 绿色设计 → 保留不透明
+    assert a.getpixel((120, 120)) == 255    # 设计内部白(不连边缘)→ 保留(不被删)
+    # 保留的设计应占相当比例(不能像 rembg 那样删光)
+    op = sum(a.histogram()[240:256]) / float(240 * 240)
+    assert op > 0.3, f"设计被删太多,仅剩 {op:.0%}"
 
 
 def _design_on_white(bg=(255, 255, 255)) -> Image.Image:
