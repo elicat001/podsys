@@ -300,7 +300,7 @@ window.openTool=(id)=>{
   const extra=[];
   if(t.prompt)extra.push(`<label>描述 / Prompt</label><input id="f_prompt" placeholder="例:一只可爱的柯基,卡通贴纸风格,纯白背景"/><div class="muted" style="margin-top:5px;font-size:12px;line-height:1.5">💡 描述越具体,效果越好:<b>主体 + 风格 + 背景</b>。AI 出图大约需要 <b>20~60 秒</b>,请稍候片刻 ✨</div>`);
   if(t.style)extra.push(`<label>目标风格</label><input id="f_style" placeholder="Temu 2D flat"/>`);
-  if(t.text)extra.push(`<label>文案</label><input id="f_text" placeholder="梗文案"/>`);
+  if(t.text)extra.push(`<label>文案</label><input id="f_text" placeholder="留空 = AI 自动看图配梗文案"/><div class="muted" style="margin-top:4px;font-size:12px">💡 不填:AI 看图自动想一句有梗的双关文案;填了:用你的文案排版。</div>`);
   if(t.kw)extra.push(`<label>关键词</label><input id="f_kw" placeholder="cat lover, gift"/>`);
   if(t.id==='videogen')extra.push(`<label>画幅</label><select id="f_aspect"><option value="square">1:1</option><option value="portrait">9:16 TK竖版</option><option value="landscape">16:9</option></select>`);
   if(t.id==='compress')extra.push(`<label>目标宽(px)</label><input id="f_w" type="number" value="1200"/>`);
@@ -366,7 +366,7 @@ async function runTool(t){
       if(t.id==='variants')fd.append('n',gv('f_n')||'2');
       if(t.prompt)fd.append('prompt',gv('f_prompt')||'enhance');
       if(t.style)fd.append('style',gv('f_style')||'flat');
-      if(t.text)fd.append('text',gv('f_text')||'TEXT');
+      if(t.text)fd.append('text',gv('f_text')||'');  // 留空 → 后端自动看图配梗文案
       const r=await runJob(t.ep,fd);res={img:r.image_url||(r.images&&r.images[0]),imgs:r.images,dl:r.image_url||(r.images&&r.images[0]),extra:r.images?r.images.length+' 张变体':''};
     }
     out.innerHTML=(res.imgs&&res.imgs.length)

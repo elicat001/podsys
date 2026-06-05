@@ -203,7 +203,7 @@ async def restyle(
 async def meme(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    text: str = Form(...),
+    text: str = Form(""),  # 留空 → 自动看图生成有梗文案(meme_prompt 内分流)
     prompt: str = Form(""),
     user: User = Depends(charge_for("edit")),
     db: Session = Depends(get_db),

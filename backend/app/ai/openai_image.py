@@ -27,6 +27,16 @@ def _png_bytes(img: Image.Image) -> bytes:
     return buf.getvalue()
 
 
+def _cap_for_edit(img: Image.Image, max_side: int = 1024) -> Image.Image:
+    """gpt-image edit/生成输出最大 1024×1536,发更大的原图纯浪费上传+网关处理时间
+    (实测大图比小图慢数倍)。把最长边缩到 ≤ max_side(Lanczos),显著提速,产出质量不受影响。"""
+    m = max(img.size)
+    if m <= max_side:
+        return img
+    s = max_side / m
+    return img.resize((max(1, round(img.width * s)), max(1, round(img.height * s))), Image.LANCZOS)
+
+
 def _file_tuple(img: Image.Image, name: str = "image.png"):
     return (name, _png_bytes(img), "image/png")
 
@@ -80,13 +90,15 @@ class OpenAIImageClient:
     def edit(self, image: Image.Image, prompt: str,
              mask: Image.Image | None = None, size: str = "auto",
              background: str = "auto") -> Image.Image:
+        image = _cap_for_edit(image)  # 缩到 ≤1024:省上传+网关耗时(输出本就≤1024,质量不变)
         kwargs = dict(
             model=self.model,
             image=_file_tuple(image),
             prompt=prompt, n=1, size=self._size(size), background=background,
         )
         if mask is not None:
-            kwargs["mask"] = _file_tuple(mask, "mask.png")
+            # mask 必须与图同尺寸(图缩了 mask 也要跟着缩)
+            kwargs["mask"] = _file_tuple(mask.resize(image.size, Image.LANCZOS), "mask.png")
         resp = self.client.images.edit(**kwargs)
         return self._decode(resp)
 

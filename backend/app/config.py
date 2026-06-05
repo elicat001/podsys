@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     openai_base_url: str = ""                 # 留空走官方;可填代理/Azure 兼容网关
     openai_image_model: str = "gpt-image-1"
     openai_timeout: float = 120.0             # OpenAI 调用超时(秒)。文生图较慢(20~40s),放宽防被掐断
-    openai_max_retries: int = 4               # 网关瞬时抖动(502/超时/连接错误)自动重试次数(SDK 指数退避)
+    openai_max_retries: int = 2               # 网关抖动自动重试次数(SDK 指数退避)。调小=抽风时快速失败、不干等几分钟
 
     # print extraction
     autocrop_padding: int = 8                # px padding around detected content

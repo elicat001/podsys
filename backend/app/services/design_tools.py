@@ -67,14 +67,26 @@ def restyle_prompt(style: str) -> str:
 
 
 def meme_prompt(text: str, extra: str = "") -> str:
-    """梗图印花 prompt:在图上加梗文案排版。"""
+    """梗图印花 prompt。给了文案→排上去;没给→让模型看图自己想一句『有梗的双关/玩梗』文案。
+
+    实测:必须明确要 pun/wordplay + riff 图中内容,gpt-image 才能出真有梗的文案
+    (例:对"指向远方"的人物图自动生成 "CURRENTLY MAKING A POINT" 的双关),
+    否则只会给"得体但不好笑"的口号。"""
     text = (text or "").strip()
     extra = (extra or "").strip()
-    base = (
-        f'Add a bold, well-laid-out meme caption that reads "{text}" onto this image, '
-        "integrating the typography into a trendy meme-style POD print design with clean, "
-        "legible text placement."
-    )
+    if text:
+        base = (
+            f'Add a bold, well-laid-out meme caption that reads "{text}" onto this image, '
+            "integrating the typography into a trendy meme-style POD print design with clean, "
+            "legible text placement."
+        )
+    else:
+        base = (
+            "Look at this image and add ONE genuinely funny, witty caption built on a clever pun or "
+            "wordplay that riffs on what is actually happening in it — internet-meme style, the kind that "
+            "goes viral on POD t-shirts. Make people chuckle; avoid generic slogans. Render it as bold, "
+            "legible meme typography integrated cleanly into the design."
+        )
     return f"{base} {extra}".strip() if extra else base
 
 
