@@ -26,18 +26,26 @@ from .design_extract import extract_design
 
 log = logging.getLogger(__name__)
 
-# 提取 prompt:通用『忠实提取印花到干净背景』。两类输入都覆盖——
+# 提取 prompt:通用『忠实提取印花到干净背景』。覆盖三类输入——
 #   - 图案衫(NEO 骷髅/文字/表情包):抠出那块图案,去掉衣服/人/褶皱/背景;
-#   - 满铺布料(窗帘/抱枕):展平成平整花型,去褶皱/阴影/透视。
-# 强调忠实:保原 motif/文字/配色/比例,禁止重设计/重排/风格化/增删元素。
+#   - 满铺布料(窗帘/抱枕):展平成平整花型,去褶皱/阴影/透视;
+#   - 硬质产品(水杯/瓶子/袋子):抠出印上去的 logo/文字/图形,**忽略瓶身透明/反光/瓶内液体**。
+# 关键:产品无关 + 强制『实心、不透明、高对比、印刷级』——否则会把磨砂/半透明质感一起复刻
+# (踩过坑:水杯白字白底+雾感→几乎不可见,用户报『效果差/文字没提出来』)。
+# 仍强调忠实:保原 motif/文字/配色/比例,禁止重设计/重排/风格化/增删元素。
 _FLATTEN_PROMPT = (
-    "Extract the printed design from this photo of a garment, fabric or home-textile "
-    "product. Remove the product itself, any person, all fabric folds, wrinkles, drape "
-    "shadows, lighting gradients, perspective distortion and the background scene. "
-    "Reproduce the print FAITHFULLY and flat: keep the exact same artwork, motifs, text, "
-    "colors, layout and proportions, evenly lit and straightened, on a clean plain white "
-    "background. Do NOT redesign, restyle, stylize, add or remove anything — output only "
-    "the original print itself, flattened."
+    "Extract ONLY the printed or applied design (logos, lettering, text, graphics, "
+    "patterns) from this product photo. The product may be apparel, fabric, a mug, a "
+    "bottle, a bag or any item. Completely ignore and remove the product itself and its "
+    "shape, material, color, transparency, reflections, any liquid or contents inside it, "
+    "the person, hands, fabric folds, drape, shadows, lighting gradients, perspective "
+    "distortion and the background scene. Reproduce the design FAITHFULLY as clean, SOLID, "
+    "fully OPAQUE, high-contrast, print-ready flat artwork: keep the exact same text "
+    "wording, logos, motifs, colors, layout and proportions, evenly lit and straightened, "
+    "on a pure white background (centered for a single motif, or filled edge-to-edge for "
+    "an all-over repeating pattern). Do NOT redesign, restyle, add or remove anything, and "
+    "do NOT make it translucent, frosted or blurry — output only the original print as "
+    "crisp graphics."
 )
 _EDIT_MAX_SIDE = 1024   # 发给 gpt-image 前等比缩小(输出本就 ≤1024,发原图纯浪费上传/网关时间)
 

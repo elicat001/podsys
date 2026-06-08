@@ -34,6 +34,15 @@ def test_templates_expose_colors(client):
     assert ts["default_color"] == "white"
 
 
+def test_mug_template_listed(client):
+    """水杯模板出现在列表里(前端下拉数据驱动,加模板即自动可选)。"""
+    r = client.get("/api/templates")
+    assert r.status_code == 200, r.text
+    mug = next((t for t in r.json() if t["id"] == "mug"), None)
+    assert mug is not None and mug["label"] == "水杯"
+    assert mug["default_color"] == "white" and set(mug["colors"]) == {"white", "black"}
+
+
 # ---- 单张套图 -------------------------------------------------------------
 def test_render_unauth_401(client, png):
     r = client.post("/api/mockup/render", files=_files(png))
@@ -57,6 +66,17 @@ def test_render_default_color(client, auth_headers, png):
                     files=_files(png), data={"template": "tote"})
     assert r.status_code == 200, r.text
     assert r.json()["color"] is None
+
+
+def test_render_mug_offline_local_engine(client, auth_headers, png):
+    """水杯套图:离线(conftest 强制无 key)走本地引擎,产物可下载,engine=local。"""
+    r = client.post("/api/mockup/render", headers=auth_headers,
+                    files=_files(png), data={"template": "mug", "color": "black"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["template"] == "mug" and body["color"] == "black"
+    assert body["engine"] == "local"  # 测试环境强制离线 → 回退本地合成
+    assert client.get(body["image_url"]).status_code == 200
 
 
 def test_render_bad_template_refund_400(client, auth_headers, png):

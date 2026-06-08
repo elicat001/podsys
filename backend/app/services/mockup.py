@@ -9,9 +9,12 @@
 仍为纯 Pillow、无外部素材;生产环境可把 `_draw_body` 换成真实产品照 + 标定印区。
 """
 from __future__ import annotations
+
 from dataclasses import dataclass, field
+
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
+from ..config import settings
 
 # 可选服装配色(印在彩色产品上的常用色)。
 GARMENT_COLORS: dict[str, tuple[int, int, int]] = {
@@ -49,6 +52,8 @@ BUILTIN: dict[str, Template] = {
     "phonecase": Template("phonecase", "手机壳", (700, 1300), (240, 240, 245), (30, 30, 34),
                           (110, 150, 590, 1150), "black",
                           ("black", "white", "navy", "red")),
+    "mug": Template("mug", "水杯", (1000, 900), (248, 248, 248), (245, 245, 245),
+                    (335, 330, 605, 615), "white", ("white", "black")),
 }
 
 
@@ -75,6 +80,11 @@ def _draw_body(d: ImageDraw.ImageDraw, t: Template, fill, outline=None) -> None:
             d.arc([530, 120, 670, 360], 0, 180, fill=(160, 150, 130), width=14)
     elif t.id == "phonecase":
         d.rounded_rectangle([70, 90, 630, 1210], radius=80, fill=fill)
+    elif t.id == "mug":
+        # 杯身(圆角矩形);把手只画在可视层(mask 不需要,印区只在杯身正面)
+        d.rounded_rectangle([270, 250, 650, 700], radius=26, fill=fill, outline=outline)
+        if outline is not None:
+            d.arc([620, 330, 820, 620], -78, 78, fill=(176, 176, 180), width=26)
     else:  # canvas
         d.rectangle([60, 60, w - 60, h - 60], fill=fill, outline=outline, width=6)
 
@@ -153,6 +163,54 @@ def render_mockup(print_img: Image.Image, template_id: str = "tshirt",
     return out.convert("RGBA")
 
 
+# ---- AI 套图(有 key 走 gpt-image edit,失败/无 key 回退本地 Pillow 合成)----
+# 每个模板对应的产品描述(供 gpt-image edit 生成真实感产品图);{color} 处填材质色。
+_AI_SUBJECT: dict[str, str] = {
+    "tshirt": "a {color} cotton t-shirt, the design printed on the chest",
+    "tote": "a {color} canvas tote bag, the design printed on the front",
+    "canvas": "a framed decorative canvas wall art that shows the design",
+    "phonecase": "a {color} phone case, the design printed on the back",
+    "mug": "a {color} glossy ceramic mug, the design printed/wrapped on the mug body",
+}
+_COLOR_EN: dict[str, str] = {
+    "white": "white", "black": "black", "heather": "heather grey",
+    "navy": "navy blue", "sand": "sand beige", "red": "red",
+}
+
+
+def _ai_prompt(template_id: str, color: str | None) -> str:
+    subject = _AI_SUBJECT.get(template_id, _AI_SUBJECT["tshirt"])
+    cword = _COLOR_EN.get(color or "", "white")
+    return (
+        "Create a photorealistic e-commerce product mockup: place the provided design "
+        f"onto {subject.format(color=cword)}. Keep the design's original colors, text and "
+        "proportions intact and correctly placed on the product. Professional studio "
+        "product photography, soft natural lighting, clean light-grey background, "
+        "the product centered and filling the frame, high detail."
+    )
+
+
+def render_mockup_ai(print_img: Image.Image, template_id: str = "tshirt",
+                     color: str | None = None) -> Image.Image:
+    """用 gpt-image edit 把印花套到真实感产品上(需配置 key)。无 key 会抛 RuntimeError。"""
+    from ..ai.openai_image import OpenAIImageClient  # 惰性 import,避免拖慢离线启动
+    return OpenAIImageClient().edit(print_img, _ai_prompt(template_id, color))
+
+
+def render_product(print_img: Image.Image, template_id: str = "tshirt",
+                   color: str | None = None) -> tuple[Image.Image, str]:
+    """套图派发:有 key→AI 真实感产品图,AI 失败/无 key→本地 Pillow 合成兜底。
+
+    返回 (图, engine),engine ∈ 'ai'|'local',供上层透明告知用了哪条引擎。
+    """
+    if settings.openai_api_key:
+        try:
+            return render_mockup_ai(print_img, template_id, color), "ai"
+        except Exception:  # noqa: BLE001 — 网关超时/配额/无 key 等一律降级,不影响出图
+            pass
+    return render_mockup(print_img, template_id, color), "local"
+
+
 def render_batch(print_img: Image.Image, template_ids: list[str]) -> dict[str, Image.Image]:
     """一次把同一印花贴到多个产品模板(各用其默认配色)。"""
     return {tid: render_mockup(print_img, tid) for tid in template_ids}
@@ -165,5 +223,6 @@ def render_variants(print_img: Image.Image,
     for tid, color in combos:
         t = BUILTIN.get(tid) or BUILTIN["tshirt"]
         c = color or t.default_color
-        res.append((t.id, c, render_mockup(print_img, tid, c)))
+        img, _engine = render_product(print_img, tid, c)
+        res.append((t.id, c, img))
     return res

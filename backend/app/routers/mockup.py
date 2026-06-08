@@ -3,7 +3,9 @@
 - /render 单张套图(印花 → 指定产品+配色),`charge_for("asset")`(1 点)。
 - /batch  批量套图(多模板 × 多配色,一次出一整组),**按张扣点**(asset × N,失败全退)。
 
-纯本地 Pillow,无 AI。读图/参数失败 → 400(退点)。产物入库(我的空间/搜图可见)。
+引擎:有 key 走 gpt-image 真实感产品图(返回 engine=ai),AI 失败/无 key 自动回退本地
+Pillow 合成(engine=local)——离线可跑、不会因 AI 抖动而失败。读图/参数失败 → 400(退点)。
+产物入库(我的空间/搜图可见)。
 """
 from __future__ import annotations
 
@@ -49,13 +51,14 @@ async def render(
         refund(db, user, "asset")
         raise HTTPException(status_code=400, detail="未知配色")
 
-    img = mockup.render_mockup(src, template, color or None)
+    img, engine = mockup.render_product(src, template, color or None)
     job_id = storage.new_job_id()
     name = f"mockup_{template}_{color or 'default'}.png"
     img.save(storage.output_path(job_id, name), format="PNG")
     url = storage.output_url(job_id, name)
     save_as_asset(db, user.id, img, f"套图 {template}", url, source="generated")
-    return {"job_id": job_id, "image_url": url, "template": template, "color": color or None}
+    return {"job_id": job_id, "image_url": url, "template": template,
+            "color": color or None, "engine": engine}
 
 
 @router.post("/batch")

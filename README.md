@@ -37,8 +37,8 @@ pip install -r requirements.txt      # 装依赖(含 rembg/onnxruntime/opencv,�
 copy .env.example .env               # 复制环境变量模板,再按下面说明编辑 .env
 
 # 启动(开发热重载)
-uvicorn app.main:app --reload
-# 打开 http://127.0.0.1:8000
+uvicorn app.main:app --reload --port 10000
+# 打开 http://127.0.0.1:10000
 ```
 
 > ⚙️ **强烈建议立刻在 `.env` 填好 `POD_OPENAI_API_KEY`**(用兼容网关再填 `POD_OPENAI_BASE_URL`):

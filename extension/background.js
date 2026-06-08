@@ -1,6 +1,6 @@
 // PODStudio 采集助手 — service worker (MVP 骨架)
 // 把采集到的图片转发到本地/远程的 PODStudio /api/process。
-const POD_API = "http://127.0.0.1:8000";
+const POD_API = "http://127.0.0.1:10000";
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "SEND_TO_POD") {

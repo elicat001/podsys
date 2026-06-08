@@ -143,7 +143,7 @@ frontend/              # 静态页面
 
 ### 配置文件有"误导"——别被带偏
 - **`.env.example` 默认 `POD_MATTING_PROVIDER=gptimage`(需 key),但实际运行的 `backend/.env` 是 `pillow`(离线)。** 改配置/调试时以**实际 `.env`** 为准,默认就是纯离线 pillow 模式。
-- **`.claude/launch.json` 是本地私有配置**(含机器相关绝对路径),已修正为本项目路径(`D:/podsys`、端口 8000)并加入 `.gitignore`(不入库,各人填各自路径)。启动一律用 `backend/.venv/Scripts/python.exe -m uvicorn app.main:app`。
+- **`.claude/launch.json` 是本地私有配置**(含机器相关绝对路径),已修正为本项目路径(`D:/podsys`、端口 10000)并加入 `.gitignore`(不入库,各人填各自路径)。启动一律用 `backend/.venv/Scripts/python.exe -m uvicorn app.main:app --port 10000`(项目约定端口 **10000**)。
 - **数据库/`.env` 路径已锚定到 `backend/`(`config.py` 用 `__file__` 定位),不再依赖启动目录。** 唯一的开发库永远是 `backend/data/podstudio.db`。
   - 历史坑:早期 `data_dir=Path("data")` 是相对启动目录的,从项目根目录启动会在根目录新建一个**空库**,导致"已登录用户突然变成『用户不存在』(401)"。已修复,勿改回相对路径。
   - 若项目根目录出现遗留的 `./data/podstudio.db`(空库),是历史误启动产生的,可安全删除,不要和 `backend/data/` 的真库混淆。
@@ -197,6 +197,6 @@ frontend/              # 静态页面
 
 ## 验证主流程是否正常(冒烟)
 
-启动:`cd backend && ./.venv/Scripts/python.exe -m uvicorn app.main:app --port 8000`
+启动:`cd backend && ./.venv/Scripts/python.exe -m uvicorn app.main:app --port 10000`
 流程:注册 `/api/auth/register` → 拿 token → `POST /api/process`(带图)→ 检查返回的
 print/mockup/production 三个 URL 可访问(HTTP 200),production 为 30×40cm@300DPI(3543×4724)。
