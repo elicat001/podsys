@@ -4,19 +4,19 @@
 """
 from __future__ import annotations
 
-import io
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
-from PIL import Image
 from sqlalchemy.orm import Session
 
 from .. import storage
 from ..ai.openai_image import OpenAIImageClient
+from ..config import settings
 from ..db import get_db
 from ..models_db import User
 from ..services.billing import charge_for, refund
 from ..services.image_tools import compress_image
+from ..services.jobs import submit_ai_job, save_asset_in_background
 from ..services.library import save_as_asset
 from ..ai.upscale import get_upscale_provider
 from ..web_utils import read_image_or_refund as _read_image
@@ -60,60 +60,108 @@ def _edit_endpoint(raw: bytes, prompt: str, size: str, db: Session, user: User, 
 
 @router.post("/upscale")
 async def upscale(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    scale: float = Form(2.0),
+    scale: float = Form(1.0),
     user: User = Depends(charge_for("process")),
     db: Session = Depends(get_db),
 ):
-    """超分提质(真·放大输入图,非整条流水线)。返回放大后的图。"""
-    src = _read_image(await file.read(), db, user, "process")
+    """图像提质:本地 AI 超分(Real-ESRGAN)去噪 + 复原细节,**默认保持原尺寸不放大**(scale=1);
+    scale>1 时放大。AI 提质 ~几秒 → 后台作业;pillow → 同步;无模型自动降级 Lanczos。
+    """
+    raw = await file.read()
+    src = _read_image(raw, db, user, "process")
     scale = max(1.0, min(scale, 4.0))
+
+    if settings.upscale_provider == "realesrgan":  # AI 提质 ~几秒 → 后台作业,前端轮询
+        uid = user.id
+        rgb = src.convert("RGB")
+
+        def _work(jid: str) -> dict:
+            out = get_upscale_provider().upscale(rgb, scale=scale)
+            out.save(storage.output_path(jid, "upscaled.png"), format="PNG")
+            url = storage.output_url(jid, "upscaled.png")
+            save_asset_in_background(uid, out, "提质", url)
+            return {"image_url": url, "width": out.width, "height": out.height}
+
+        jid = submit_ai_job(background_tasks, db, "upscale", uid, _work, refund_op="process")
+        return JSONResponse({"job_id": jid, "status": "pending"})
+
+    # pillow(Lanczos):快,同步
     try:
         out = get_upscale_provider().upscale(src.convert("RGB"), scale=scale)
     except Exception as exc:  # noqa: BLE001
         refund(db, user, "process")
-        raise HTTPException(status_code=500, detail="超分失败") from exc
+        raise HTTPException(status_code=500, detail="提质失败") from exc
     job_id = storage.new_job_id()
     out.save(storage.output_path(job_id, "upscaled.png"), format="PNG")
     url = storage.output_url(job_id, "upscaled.png")
-    save_as_asset(db, user.id, out, "超分提质", url, source="generated")
+    save_as_asset(db, user.id, out, "提质", url, source="generated")
     return JSONResponse({"job_id": job_id, "image_url": url, "width": out.width, "height": out.height})
 
 
 @router.post("/expand")
 async def expand(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     prompt: str = Form(""),
     size: str = Form("auto"),
     user: User = Depends(charge_for("edit")),
     db: Session = Depends(get_db),
 ):
-    """扩图(outpaint via gpt-image edit)。无 key → 502 + 退点。"""
+    """扩图(outpaint):有 key 走 gpt-image(后台作业),无 key 走本地离线引擎。"""
     raw = await file.read()
     full_prompt = f"{_EXPAND_PROMPT} {prompt}".strip()
     from ..services.effects import outpaint_reflect
+    if settings.openai_api_key:  # gpt-image 耗时 -> 后台作业,前端轮询
+        src = _read_image(raw, db, user, "edit")
+        uid = user.id
+
+        def _work(jid: str) -> dict:
+            out_img = OpenAIImageClient().edit(src, full_prompt, size=size)
+            out_img.save(storage.output_path(jid, "result.png"), format="PNG")
+            url = storage.output_url(jid, "result.png")
+            save_asset_in_background(uid, out_img, "图案处理", url)
+            return {"image_url": url}
+
+        jid = submit_ai_job(background_tasks, db, "expand", uid, _work, refund_op="edit")
+        return JSONResponse({"job_id": jid, "status": "pending"})
     job_id = _edit_endpoint(raw, full_prompt, size, db, user, offline=lambda im: outpaint_reflect(im, 1.5))
     return JSONResponse({"job_id": job_id, "image_url": storage.output_url(job_id, "result.png")})
 
 
 @router.post("/dewatermark")
 async def dewatermark(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     prompt: str = Form(""),
     size: str = Form("auto"),
     user: User = Depends(charge_for("edit")),
     db: Session = Depends(get_db),
 ):
-    """去水印(gpt-image edit)。无 key → 502 + 退点。"""
+    """去水印:有 key 走 gpt-image(后台作业),无 key 走本地离线引擎。"""
     raw = await file.read()
     full_prompt = f"{_DEWATERMARK_PROMPT} {prompt}".strip()
     from ..services.effects import dewatermark as _dw
+    if settings.openai_api_key:  # gpt-image 耗时 -> 后台作业,前端轮询
+        src = _read_image(raw, db, user, "edit")
+        uid = user.id
+
+        def _work(jid: str) -> dict:
+            out_img = OpenAIImageClient().edit(src, full_prompt, size=size)
+            out_img.save(storage.output_path(jid, "result.png"), format="PNG")
+            url = storage.output_url(jid, "result.png")
+            save_asset_in_background(uid, out_img, "图案处理", url)
+            return {"image_url": url}
+
+        jid = submit_ai_job(background_tasks, db, "dewatermark", uid, _work, refund_op="edit")
+        return JSONResponse({"job_id": jid, "status": "pending"})
     job_id = _edit_endpoint(raw, full_prompt, size, db, user, offline=_dw)
     return JSONResponse({"job_id": job_id, "image_url": storage.output_url(job_id, "result.png")})
 
 
 @router.post("/compress")
-async def compress(
+def compress(
     file: UploadFile = File(...),
     target_w: int = Form(0),
     target_h: int = Form(0),
@@ -126,7 +174,7 @@ async def compress(
 
     返回压缩后文件 + 原始/压缩后字节数 + 尺寸/格式。
     """
-    raw = await file.read()
+    raw = file.file.read()
     original_bytes = len(raw)
     src = _read_image(raw, db, user, "process")
     try:

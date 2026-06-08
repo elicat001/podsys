@@ -13,13 +13,13 @@ from . import storage
 from .services.extract import extract_print
 from .services.mockup import render_mockup, list_templates
 from .services.export import export_production
-from .services.generate import text_to_image, image_to_image
+from .services.generate import text_to_image, image_to_image, refine_prompt
 from .services.collectors import detect_platform, upgrade_to_hires
 from .services.billing import charge_for, refund
 from .auth import current_user
 from .models_db import User
 from .db import init_db, get_db, SessionLocal
-from .services.jobs import create_job, run_job
+from .services.jobs import create_job, run_job, submit_ai_job, save_asset_in_background
 from .services.library import save_as_asset
 from sqlalchemy.orm import Session
 from .routers import auth as auth_router
@@ -45,10 +45,24 @@ from .routers import product_admin as product_admin_router
 from .routers import space as space_router
 from .routers import video_cases as video_cases_router
 from .routers import templates as templates_router
+from .routers import print_extract as print_extract_router
+from .routers import export as export_router
+from .routers import mockup as mockup_router
 
 app = FastAPI(title="PODStudio API", version="0.3.0")
 settings.ensure_dirs()
 init_db()
+
+
+@app.middleware("http")
+async def _no_cache_html(request, call_next):
+    """前端是单文件静态页且频繁迭代;禁掉 HTML 文档缓存,避免浏览器服旧页
+    (这是"改完代码必须硬刷新才生效"的根因)。只作用于 HTML,不动 /files 图片与 JSON API。"""
+    response = await call_next(request)
+    if response.headers.get("content-type", "").startswith("text/html"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
 
 app.include_router(auth_router.router)
 app.include_router(assets_router.router)
@@ -73,6 +87,9 @@ app.include_router(product_admin_router.router)
 app.include_router(space_router.router)
 app.include_router(video_cases_router.router)
 app.include_router(templates_router.router)
+app.include_router(print_extract_router.router)
+app.include_router(export_router.router)
+app.include_router(mockup_router.router)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
 
@@ -92,7 +109,7 @@ def templates() -> list[dict]:
 
 
 @app.post("/api/process")
-async def process(
+def process(
     file: UploadFile = File(...),
     template: str = Form("tshirt"),
     upscale: float = Form(1.0),
@@ -102,7 +119,8 @@ async def process(
     user: User = Depends(charge_for("process")),
     db: Session = Depends(get_db),
 ):
-    raw = await file.read()
+    # 同步阻塞端点:声明为普通 def,FastAPI 在线程池执行,不阻塞事件循环。
+    raw = file.file.read()
     try:
         src = Image.open(io.BytesIO(raw))
         src.load()
@@ -192,24 +210,44 @@ async def process_async(
 
 
 @app.post("/api/generate")
-async def generate(prompt: str = Form(...), size: str = Form("1024x1024"),
+async def generate(background_tasks: BackgroundTasks,
+                   prompt: str = Form(...), size: str = Form("1024x1024"),
                    user: User = Depends(charge_for("generate")),
                    db: Session = Depends(get_db)):
-    """文生图(gpt-image / image2)。"""
+    """文生图(gpt-image / image2)。对偏薄的描述温和补全并透明返回。"""
+    used_prompt, hint = refine_prompt(prompt)
+    if settings.openai_api_key:  # gpt-image 耗时 -> 后台作业,前端轮询 /api/jobs/{id}
+        uid = user.id
+
+        def _work(jid: str) -> dict:
+            img = text_to_image(used_prompt, size=size)
+            img.save(storage.output_path(jid, "generated.png"), format="PNG")
+            url = storage.output_url(jid, "generated.png")
+            save_asset_in_background(uid, img, f"文生图: {prompt[:24]}", url)
+            return {"image_url": url, "prompt_used": used_prompt, "hint": hint}
+
+        jid = submit_ai_job(background_tasks, db, "generate", uid, _work, refund_op="generate")
+        return JSONResponse({"job_id": jid, "status": "pending"})
     try:
-        img = text_to_image(prompt, size=size)
+        img = text_to_image(used_prompt, size=size)
     except Exception as exc:  # noqa: BLE001
         refund(db, user, "generate")  # P0-2: 调用失败退点
-        raise HTTPException(status_code=502, detail="生成失败,请稍后重试") from exc
+        raise HTTPException(status_code=502, detail="生成失败,请换个更具体的描述再试一次") from exc
     job_id = storage.new_job_id()
     out = storage.output_path(job_id, "generated.png")
     img.save(out, format="PNG")
     save_as_asset(db, user.id, img, f"文生图: {prompt[:24]}", storage.output_url(job_id, "generated.png"), source="generated")
-    return JSONResponse({"job_id": job_id, "image_url": storage.output_url(job_id, "generated.png")})
+    return JSONResponse({
+        "job_id": job_id,
+        "image_url": storage.output_url(job_id, "generated.png"),
+        "prompt_used": used_prompt,
+        "hint": hint,
+    })
 
 
 @app.post("/api/edit")
 async def edit(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     prompt: str = Form(...),
     mask: UploadFile | None = File(None),
@@ -218,11 +256,27 @@ async def edit(
     db: Session = Depends(get_db),
 ):
     """图生图 / 改图 / 换装 / 换背景(gpt-image / image2 edit)。"""
+    raw = await file.read()
+    mask_raw = await mask.read() if mask is not None else None
+    if settings.openai_api_key:  # gpt-image 耗时 -> 后台作业,前端轮询
+        uid = user.id
+
+        def _work(jid: str) -> dict:
+            src = Image.open(io.BytesIO(raw)); src.load()
+            mask_img = None
+            if mask_raw is not None:
+                mask_img = Image.open(io.BytesIO(mask_raw)); mask_img.load()
+            out_img = image_to_image(src, prompt, mask=mask_img, size=size)
+            out_img.save(storage.output_path(jid, "edited.png"), format="PNG")
+            return {"image_url": storage.output_url(jid, "edited.png")}
+
+        jid = submit_ai_job(background_tasks, db, "edit", uid, _work, refund_op="edit")
+        return JSONResponse({"job_id": jid, "status": "pending"})
     try:
-        src = Image.open(io.BytesIO(await file.read())); src.load()
+        src = Image.open(io.BytesIO(raw)); src.load()
         mask_img = None
-        if mask is not None:
-            mask_img = Image.open(io.BytesIO(await mask.read())); mask_img.load()
+        if mask_raw is not None:
+            mask_img = Image.open(io.BytesIO(mask_raw)); mask_img.load()
         out_img = image_to_image(src, prompt, mask=mask_img, size=size)
     except HTTPException:
         raise

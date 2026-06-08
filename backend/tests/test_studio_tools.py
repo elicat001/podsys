@@ -70,6 +70,44 @@ def test_title_no_key_empty_keywords_still_ok(client, auth_headers):
     assert r.json()["title"].strip()
 
 
+def test_title_ai_charges_one(client, auth_headers, monkeypatch):
+    """AI 主路径(有 key 且成功)→ 扣 1 点。"""
+    from app.routers import studio_tools as r_studio
+    monkeypatch.setattr(r_studio.studio_tools, "has_openai_key", lambda: True)
+    monkeypatch.setattr(
+        r_studio.studio_tools, "generate_title",
+        lambda **kw: {"title": "AI Title", "keywords": ["a", "b"], "degraded": False},
+    )
+    before = _balance(client, auth_headers)
+    r = client.post(
+        "/api/studio/title",
+        data={"keywords": "cat", "category": "apparel"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["degraded"] is False
+    assert _balance(client, auth_headers) == before - 1  # 走 AI 扣 1 点
+
+
+def test_title_ai_degraded_refunds(client, auth_headers, monkeypatch):
+    """有 key 但 AI 降级到本地兜底 → 退点,余额不变。"""
+    from app.routers import studio_tools as r_studio
+    monkeypatch.setattr(r_studio.studio_tools, "has_openai_key", lambda: True)
+    monkeypatch.setattr(
+        r_studio.studio_tools, "generate_title",
+        lambda **kw: {"title": "Local", "keywords": ["a"], "degraded": True},
+    )
+    before = _balance(client, auth_headers)
+    r = client.post(
+        "/api/studio/title",
+        data={"keywords": "cat", "category": "apparel"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["degraded"] is True
+    assert _balance(client, auth_headers) == before  # 降级退点,实际 0
+
+
 # ---- gpt-image 系:未登录 401 / 登录无 key 502 且退点(余额不变)----------
 def _multipart(png):
     return {"file": ("in.png", png(), "image/png")}

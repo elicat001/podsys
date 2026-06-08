@@ -19,7 +19,8 @@ class InsufficientCredits(Exception):
 
 
 # 各操作的点数定价
-COST: dict[str, int] = {"process": 2, "generate": 5, "edit": 4, "asset": 1, "video": 3}
+# 注:title=1(走 AI 文本/识图,便宜);无 key/AI 失败时端点会退点 -> 本地兜底实际 0
+COST: dict[str, int] = {"process": 2, "generate": 5, "edit": 4, "asset": 1, "video": 3, "title": 1}
 
 
 def cost_of(op: str) -> int:

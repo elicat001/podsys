@@ -6,7 +6,6 @@
 from __future__ import annotations
 import colorsys
 import hashlib
-import math
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps, ImageChops
 
 MAX_PX = 50_000_000
@@ -43,6 +42,56 @@ def colorway_variants(img: Image.Image, n: int = 3) -> list[Image.Image]:
         # 保留原 alpha(若有)
         if base.mode == "RGBA":
             v.putalpha(base.split()[-1])
+        out.append(v)
+    return out
+
+
+def _print_region_mask(img: Image.Image):
+    """定位『印花』区域,返回全幅 L mask(255=印花)。复用 design_extract 的本地检测
+    (cloth-seg 排除人/皮肤 + 去主导材质色),**只读不改它**。
+
+    小图(测试/缩略图)/依赖缺失(rembg/scipy)/未检出/任何异常 → 返回 None,
+    交由调用方回退整图改色。所以即便检测不可用,图裂变也永远能出图,不会崩。"""
+    if min(img.size) < 512:  # 小图:不加载重模型(保测试快 + 纯 pillow 可跑),直接回退
+        return None
+    try:
+        import numpy as np
+
+        from .design_extract import _ANALYZE, _flatten_illumination, _print_alpha, _product_mask
+        small = img.convert("RGB")
+        small.thumbnail((_ANALYZE, _ANALYZE))  # 检测在 1000px 上做(快且对褶皱稳)
+        pm, kind = _product_mask(small)
+        if pm is None:
+            return None
+        arr = np.asarray(small).astype(float)
+        if kind == "garment":
+            arr = _flatten_illumination(arr, pm)
+        alpha = _print_alpha(arr.astype(int), pm, kind)  # 小图尺度的印花 mask(uint8)
+        mask = Image.fromarray(alpha, "L").resize(img.size, Image.BILINEAR)
+        return mask if mask.getbbox() is not None else None
+    except Exception:  # noqa: BLE001  依赖缺失/检测异常 → 回退整图改色
+        return None
+
+
+def print_colorway_variants(img: Image.Image, n: int = 3) -> list[Image.Image]:
+    """无 key 图裂变(主体感知):先定位印花区域,**只给印花换配色,人物/背景保持不变**。
+
+    定位不可用(小图 / 无 rembg/scipy / 未检出)→ 回退 colorway_variants(整图改色,原行为)。
+    """
+    n = max(1, min(n, 6))
+    base = img.convert("RGB")
+    mask = _print_region_mask(base)
+    if mask is None:
+        return colorway_variants(img, n)
+    soft = mask.filter(ImageFilter.GaussianBlur(2))  # 软化 mask 边缘,合成自然
+    src_alpha = img.convert("RGBA").split()[-1] if img.mode == "RGBA" else None
+    hues = [40, 150, 280, 90, 200, 330]
+    out = []
+    for k in range(n):
+        shifted = _hue_shift(base, hues[k % len(hues)])
+        v = Image.composite(shifted, base, soft).convert("RGBA")  # 仅印花处用改色版,其余原图
+        if src_alpha is not None:
+            v.putalpha(src_alpha)
         out.append(v)
     return out
 
@@ -117,6 +166,27 @@ def dewatermark(img: Image.Image) -> Image.Image:
     return blended.filter(ImageFilter.UnsharpMask(radius=2, percent=80))
 
 
+# ---------- 提质/复原(同尺寸,不放大):去噪 + 细节增强 ----------
+def restore_quality(img: Image.Image) -> Image.Image:
+    """图像『提质』(保持原尺寸,不放大):**温和的边缘保持细节增强**(detailEnhance),
+    让边缘/纹理更清晰一点,**绝不强去噪**(强去噪会把好图的细节抹成塑料感→变糊变劣质)。
+
+    cv2 不可用时退回 Pillow 反锐化掩模。
+    ⚠️ 诚实边界:对『本来就清晰的好图』,classical 方法只能轻微锐化、提不出真质;
+    真『提质』(去噪+复原细节)需要强 AI 模型(慢)。
+    """
+    rgb = img.convert("RGB")
+    try:
+        import cv2
+        import numpy as np
+        bgr = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
+        # detailEnhance:边缘保持的细节增强(不抹细节);sigma_r 小=更保细节
+        out = cv2.detailEnhance(bgr, sigma_s=10, sigma_r=0.15)
+        return Image.fromarray(cv2.cvtColor(out, cv2.COLOR_BGR2RGB))
+    except Exception:  # noqa: BLE001  无 cv2 → Pillow 轻反锐化
+        return rgb.filter(ImageFilter.UnsharpMask(radius=2, percent=120, threshold=3))
+
+
 # ---------- 文生图:程序化图案(prompt 决定配色与构图,真实可区分) ----------
 def procedural_pattern(prompt: str, size: int = 1024) -> Image.Image:
     sd = _seed(prompt)
@@ -163,18 +233,67 @@ def fuse(img: Image.Image, prompt: str) -> Image.Image:
 
 
 # ---------- 标题:由图像主色 + 关键词派生(非写死) ----------
+# 本地电商标题:风格/受众/场合 SEO 修饰词库 + 品类话术 + 多模板(纯规则,无云、无模型)
+_TITLE_STYLES = ["Funny", "Cute", "Aesthetic", "Vintage", "Retro", "Trendy",
+                 "Minimalist", "Graphic", "Cool", "Unique", "Cottagecore", "Y2K"]
+_TITLE_AUDIENCE = ["for Men", "for Women", "Unisex", "for Teens", "for Her", "for Him"]
+_TITLE_OCCASION = ["Birthday Gift", "Christmas Gift", "Holiday Gift Idea",
+                   "Funny Gift", "Aesthetic Gift", "Gift Idea"]
+# 品类 → 产品名(第一个为主名,其余进标签作同义搜索词)
+_TITLE_CAT = {
+    "apparel": ("T-Shirt", "Tee", "Graphic Tee"),
+    "phone": ("Phone Case", "Case", "Phone Cover"),
+    "home": ("Home Decor", "Wall Art", "Poster"),
+    "mug": ("Mug", "Coffee Mug", "Cup"),
+    "bag": ("Tote Bag", "Canvas Tote", "Bag"),
+    "sticker": ("Sticker", "Vinyl Sticker", "Decal"),
+}
+
+
 def smart_title(img: Image.Image | None, keywords: str = "", category: str = "apparel") -> dict:
+    """本地电商标题(无云、无模型):多模板 + SEO 修饰词 + 品类话术 + 主色调,按关键词
+    确定性派生(同输入同输出,不同输入产出不同模板/词)。
+
+    仍是规则拼接(不"理解"内容),但比单一模板更像真实 listing 标题、搜索词覆盖更全。
+    """
     kw = [k.strip() for k in (keywords or "").replace("，", ",").split(",") if k.strip()]
-    tone = "Vibrant"
+    seed = _seed("|".join(kw) + "|" + category)
+
+    prod = _TITLE_CAT.get(category, (category.replace("_", " ").title(),))
+    product = prod[0]
+
+    # 主色调(给了图才用):白底/低饱和 → Minimalist/Bold Black;彩色 → 具体色名
+    tone = None
     if img is not None:
-        small = img.convert("RGB").resize((1, 1))
-        r, g, b = small.getpixel((0, 0))
-        h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-        tone = ["Crimson", "Amber", "Golden", "Verdant", "Teal", "Azure", "Indigo", "Violet", "Rosy"][int(h * 9) % 9]
-        if s < 0.2:
-            tone = "Monochrome" if v < .5 else "Minimal"
-    head = " ".join(kw[:3]).title() if kw else "Custom Print"
-    cat = {"apparel": "Tee", "phone": "Phone Case", "home": "Decor"}.get(category, category.title())
-    title = f"{tone} {head} {cat} — Trendy Aesthetic Gift"
-    tags = list(dict.fromkeys(kw + [tone.lower(), category, "pod", "gift", "trendy"]))[:8]
-    return {"title": title[:120], "keywords": tags}
+        try:
+            r, g, b = img.convert("RGB").resize((1, 1)).getpixel((0, 0))
+            h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+            if s < 0.18:
+                tone = "Minimalist" if v >= 0.5 else "Bold Black"
+            else:
+                tone = ["Red", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Pink"][int(h * 8) % 8]
+        except Exception:  # noqa: BLE001
+            tone = None
+
+    subject = " ".join(k.title() for k in kw[:3]) if kw else "Custom Graphic"
+    style = _TITLE_STYLES[seed % len(_TITLE_STYLES)]
+    style2 = _TITLE_STYLES[(seed // 11) % len(_TITLE_STYLES)]
+    if style2 == style:  # 避免 "Retro ... Retro" / "Y2K Y2K" 同词重复
+        style2 = _TITLE_STYLES[(seed // 11 + 1) % len(_TITLE_STYLES)]
+    aud = _TITLE_AUDIENCE[(seed // 13) % len(_TITLE_AUDIENCE)]
+    occ = _TITLE_OCCASION[(seed // 17) % len(_TITLE_OCCASION)]
+    lead = tone or style  # 有色调用色调当前缀,否则风格词
+
+    templates = [
+        f"{lead} {subject} {product} - {style2} Graphic {aud}, {occ}",
+        f"{subject} {product} | {style} {style2} Design {aud}",
+        f"{style} {subject} Graphic {product} - Unique {occ} {aud}",
+        f"{subject} {product}, {lead} {style2} Print - {occ}",
+    ]
+    title = " ".join(templates[seed % len(templates)].split())[:140]
+
+    # 标签:用户词 + 色调 + 风格 + 品类同义词 + 通用 SEO,去重(小写)取前 12
+    extra = ([tone.lower()] if tone else []) + [style.lower(), style2.lower(),
+             *[p.lower() for p in prod], category, "gift", "pod design"]
+    tags = list(dict.fromkeys([t for t in (kw + extra) if t]))[:12]
+    return {"title": title, "keywords": tags}

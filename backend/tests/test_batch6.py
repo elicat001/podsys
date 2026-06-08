@@ -59,6 +59,9 @@ def test_ipguard_verbose_shows_matches(client, auth_headers):
 
 
 # ---------- gpt-image KEY 路径计费(P2-3:之前无 key 无法测的成功/失败分支,用 mock 覆盖) ----------
+# 注:有 key 时 gpt-image 端点改为后台作业(避免 HTTP 超时 Failed to fetch):
+# 提交即返回 {job_id, status:pending},真正出图在后台跑。TestClient 会同步执行
+# BackgroundTasks,故 POST 返回后作业已 done/error,可直接轮询 /api/jobs/{id}。
 def test_tryon_with_key_success_charges(client, auth_headers, monkeypatch):
     from app.config import settings
     from app.ai import openai_image
@@ -70,7 +73,10 @@ def test_tryon_with_key_success_charges(client, auth_headers, monkeypatch):
     r = client.post("/api/studio/tryon", headers=auth_headers,
                     files={"file": ("x.png", _png(), "image/png")})
     assert r.status_code == 200, r.text
-    assert r.json()["image_url"]
+    jid = r.json()["job_id"]  # 后台作业:立即返回 job_id
+    job = client.get(f"/api/jobs/{jid}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert job["result"]["image_url"]
     bal1 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     assert bal1 == bal0 - 4, f"有 key 成功应扣 4(edit): {bal0}->{bal1}"
 
@@ -85,6 +91,9 @@ def test_tryon_with_key_failure_refunds(client, auth_headers, monkeypatch):
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     r = client.post("/api/studio/tryon", headers=auth_headers,
                     files={"file": ("x.png", _png(), "image/png")})
-    assert r.status_code == 502, r.text
+    assert r.status_code == 200, r.text  # 提交成功;失败发生在后台
+    jid = r.json()["job_id"]
+    job = client.get(f"/api/jobs/{jid}", headers=auth_headers).json()
+    assert job["status"] == "error", job
     bal1 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
-    assert bal1 == bal0, f"有 key 失败应退点: {bal0}->{bal1}"
+    assert bal1 == bal0, f"有 key 失败应退点(后台): {bal0}->{bal1}"

@@ -9,7 +9,6 @@ from ..db import get_db
 from ..models_db import Asset, User
 from ..auth import current_user
 from .. import storage
-from ..services import phash
 from ..services.infringement import check_image
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
@@ -23,9 +22,9 @@ def _read_image(raw: bytes) -> Image.Image:
 
 
 @router.post("")
-async def add_asset(file: UploadFile = File(...), source: str = Form("upload"),
-                    user: User = Depends(current_user), db: Session = Depends(get_db)):
-    raw = await file.read()
+def add_asset(file: UploadFile = File(...), source: str = Form("upload"),
+              user: User = Depends(current_user), db: Session = Depends(get_db)):
+    raw = file.file.read()
     img = _read_image(raw)
     # 入库前先做侵权/查重
     chk = check_image(db, img, owner_id=user.id)
@@ -48,8 +47,8 @@ def list_assets(user: User = Depends(current_user), db: Session = Depends(get_db
 
 
 @router.post("/check")
-async def infringement_check(file: UploadFile = File(...),
-                             user: User = Depends(current_user), db: Session = Depends(get_db)):
+def infringement_check(file: UploadFile = File(...),
+                       user: User = Depends(current_user), db: Session = Depends(get_db)):
     """只检测不入库:返回风险评级 + 相似命中。"""
-    img = _read_image(await file.read())
+    img = _read_image(file.file.read())
     return check_image(db, img, owner_id=user.id)

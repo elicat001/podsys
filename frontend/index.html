@@ -190,7 +190,14 @@ async function api(path,{method='GET',json,form}={}){
   const ct=r.headers.get('content-type')||'';const data=ct.includes('json')?await r.json():await r.text();
   if(!r.ok)throw new Error((data&&data.detail)||r.statusText);return data;}
 async function refreshCredits(){try{const d=await api('/billing/balance');$('#credits').innerHTML='余额 <b>'+d.credits+'</b> 点';}catch(e){}}
-async function poll(jid){for(let i=0;i<80;i++){const j=await api('/jobs/'+jid);if(j.status==='done')return j;if(j.status==='error')throw new Error(j.error||'作业失败');await new Promise(r=>setTimeout(r,700));}throw new Error('超时')}
+// 固定 5 秒轮询(首次立即查,之后每 5s 一次),直到 maxWait(8 分钟,> 后端最坏 AI 耗时(250s单次),
+// 确保慢网关的 AI 真出图而不是中途被前端放弃)。每任务 0.2 次/秒,只查本地一条作业记录,近零开销。
+async function poll(jid,interval=5000,maxWait=480000){let waited=0;while(waited<maxWait){const j=await api('/jobs/'+jid);if(j.status==='done')return j;if(j.status==='error')throw new Error(j.error||'作业失败');await new Promise(r=>setTimeout(r,interval));waited+=interval;}throw new Error('网关出图较慢未在 8 分钟内完成,请稍后重试;若后台已生成可到「我的空间」查看')}
+// AI 端点双模式:有 key 时后端返回 {job_id,status:pending}(耗时,改后台作业,避免 Failed to fetch)→ 轮询;
+// 无 key 时后端同步返回结果对象。统一成结果对象返回。给 AI 作业 8 分钟预算(慢网关单次 gpt 超时上限 250s)。
+async function runJob(ep,fd){const r=await api('/'+ep,{method:'POST',form:fd});
+  if(r&&r.status==='pending'&&r.job_id){const j=await poll(r.job_id);return j.result||{};}
+  return r;}
 
 /* ---------- router ---------- */
 const VIEWS={};
@@ -204,7 +211,7 @@ $('#nav').onclick=e=>{const a=e.target.closest('a');if(a)go(a.dataset.v)};
 /* ---------- tool registry (对标灵图 作图矩阵) ---------- */
 const TOOLS=[
  {cat:'印花提取',items:[
-   {id:'extract',ic:'✂️',name:'印花提取',desc:'抠图+裁剪,输出透明印花',ep:'process',show:'print'},
+   {id:'extract',ic:'✂️',name:'印花提取',desc:'提取衣服/图上的印花,输出透明PNG',ep:'print-extract'},
    {id:'matting',ic:'🪄',name:'一键抠图',desc:'去背景,输出透明 PNG',ep:'process',show:'print'},
  ]},
  {cat:'印花设计',items:[
@@ -216,7 +223,7 @@ const TOOLS=[
    {id:'seamless',ic:'🔲',name:'四方连续图',desc:'无缝连续印花,服饰家纺',ep:'design-tools/seamless'},
  ]},
  {cat:'图案处理',items:[
-   {id:'upscale',ic:'🔍',name:'超分提质',desc:'真·放大输入图(2x)',ep:'image-tools/upscale'},
+   {id:'upscale',ic:'🔍',name:'图像提质',desc:'AI去噪+复原细节,同尺寸提质(不放大)',ep:'image-tools/upscale'},
    {id:'expand',ic:'⤢',name:'扩图',desc:'外延构图调整',ep:'image-tools/expand',ai:1},
    {id:'dewatermark',ic:'💧',name:'去水印',desc:'批量去水印',ep:'image-tools/dewatermark',ai:1},
    {id:'vectorize',ic:'📐',name:'转矢量图',desc:'位图转 SVG',ep:'vectorize'},
@@ -226,7 +233,8 @@ const TOOLS=[
    {id:'ipguard',ic:'🛡️',name:'侵权风险过滤',desc:'TRO+艺术家版权库深度检索',ep:'ip-guard/scan'},
  ]},
  {cat:'套图 & 标题',items:[
-   {id:'mockup',ic:'👕',name:'商品套图',desc:'印花套到商品上',ep:'process',show:'mockup'},
+   {id:'mockup',ic:'👕',name:'商品套图',desc:'印花套到商品上(配色变体·真实质感)',ep:'mockup/render',mockup:true},
+   {id:'mockupbatch',ic:'🗂️',name:'批量套图',desc:'多产品×多配色一次出整组',ep:'mockup/batch',mockupbatch:true},
    {id:'title',ic:'🏷️',name:'标题提取',desc:'生成电商标题',ep:'studio/title',kw:true},
    {id:'tryon',ic:'🧍',name:'模特试衣',desc:'服饰图生成上身图',ep:'studio/tryon',ai:1},
  ]},
@@ -235,7 +243,7 @@ const TOOLS=[
    {id:'group',ic:'👨‍👩‍👧',name:'合照',desc:'智能生成合照',ep:'studio/group-photo',prompt:true,ai:1},
  ]},
  {cat:'履约 / 视频',items:[
-   {id:'production',ic:'🏭',name:'生产图',desc:'高分辨率生产文件',ep:'process',show:'production'},
+   {id:'production',ic:'🏭',name:'生产图',desc:'设计稿→印厂格式(PNG/JPG/TIFF/PDF)',ep:'export/production'},
    {id:'videogen',ic:'🎬',name:'展示视频',desc:'运镜/轮播生成 GIF 短片',ep:'video/generate'},
  ]},
 ];
@@ -288,21 +296,46 @@ VIEWS.design=(el)=>{
 
 /* ===== universal TOOL runner modal ===== */
 let curFile=null;
+const CLR={white:'白',black:'黑',heather:'灰',navy:'藏青',sand:'沙',red:'红'};
+let MOCKUP_TPLS=null;
+async function loadMockupTpls(){if(!MOCKUP_TPLS)MOCKUP_TPLS=await api('/templates');return MOCKUP_TPLS;}
 window.openTool=(id)=>{
   const t=TOOLS.flatMap(c=>c.items).find(x=>x.id===id);if(!t)return;curFile=null;
   const extra=[];
-  if(t.prompt)extra.push(`<label>描述 / Prompt</label><input id="f_prompt" placeholder="例:水彩风格猫咪印花"/>`);
+  if(t.prompt)extra.push(`<label>描述 / Prompt</label><input id="f_prompt" placeholder="例:一只可爱的柯基,卡通贴纸风格,纯白背景"/><div class="muted" style="margin-top:5px;font-size:12px;line-height:1.5">💡 描述越具体,效果越好:<b>主体 + 风格 + 背景</b>。AI 出图大约需要 <b>20~60 秒</b>,请稍候片刻 ✨</div>`);
   if(t.style)extra.push(`<label>目标风格</label><input id="f_style" placeholder="Temu 2D flat"/>`);
-  if(t.text)extra.push(`<label>文案</label><input id="f_text" placeholder="梗文案"/>`);
+  if(t.text)extra.push(`<label>文案</label><input id="f_text" placeholder="留空 = AI 自动看图配梗文案"/><div class="muted" style="margin-top:4px;font-size:12px">💡 不填:AI 看图自动想一句有梗的双关文案;填了:用你的文案排版。</div>`);
   if(t.kw)extra.push(`<label>关键词</label><input id="f_kw" placeholder="cat lover, gift"/>`);
   if(t.id==='videogen')extra.push(`<label>画幅</label><select id="f_aspect"><option value="square">1:1</option><option value="portrait">9:16 TK竖版</option><option value="landscape">16:9</option></select>`);
   if(t.id==='compress')extra.push(`<label>目标宽(px)</label><input id="f_w" type="number" value="1200"/>`);
+  if(t.id==='vectorize')extra.push(`<label>精细度</label><select id="f_preset"><option value="auto" selected>自动（推荐·高保真,自动判别）</option><option value="logo">极简（纯色 logo/图标,文件最小）</option><option value="fine">极致细节（毛发/照片级,放大百倍清晰）</option></select><div class="muted" style="margin-top:5px;font-size:12px">💡 近原生分辨率描摹,<b>保留毛发/细线条、放大无锯齿、可无损缩放</b>。细节越多的图,SVG 文件越大(精细档可达十几 MB)、出图越慢(约 10~30 秒),请耐心等待 ✨</div>`);
+  if(t.id==='variants')extra.push(`<label>裂变张数</label><select id="f_n"><option value="1">1 张</option><option value="2" selected>2 张</option><option value="3">3 张</option><option value="4">4 张</option></select><div class="muted" style="margin-top:5px;font-size:12px;line-height:1.5">💡 每张约 <b>60~90 秒</b>(并行出图),张数越多稍慢一些,请稍候片刻 ✨</div>`);
+  if(t.id==='production')extra.push(`
+    <div class="muted" style="font-size:12px;line-height:1.6;background:rgba(255,170,60,.08);border:1px solid rgba(255,170,60,.25);border-radius:8px;padding:8px 10px;margin-bottom:10px">
+      🏭 本工具只做<b>「给工厂的最终格式转换」</b>:把<b>已经做好的设计稿</b>排版成印厂可用文件。<br>
+      请先用「<b>印花提取</b>」/「<b>一键抠图</b>」把设计做成<b>透明底 PNG</b>,再上传这里导出 ✨</div>
+    <label>成品尺寸</label>
+    <select id="f_size"><option value="30x40" selected>30 × 40 cm(默认)</option><option value="21x29.7">A4(21 × 29.7 cm)</option><option value="custom">自定义…</option></select>
+    <div id="f_custom" style="display:none;gap:8px;margin-top:8px">
+      <input id="f_wcm" type="number" min="1" max="100" value="30" placeholder="宽 cm" style="width:48%"/>
+      <input id="f_hcm" type="number" min="1" max="100" value="40" placeholder="高 cm" style="width:48%"/></div>
+    <label style="margin-top:10px">分辨率 DPI</label>
+    <select id="f_dpi"><option value="150">150(打样/预览)</option><option value="300" selected>300(标准印刷)</option><option value="600">600(高保真/精细小图)</option></select>
+    <div class="muted" style="margin-top:5px;font-size:11px;line-height:1.6">💡 300 是印刷标准清晰度。清晰度还取决于<b>上传稿的真实分辨率</b>——稿子太小先用「图像提质」放大,否则标多高 DPI 都糊。</div>
+    <label style="margin-top:10px">底色(仅 JPG/PDF 用)</label>
+    <select id="f_bg"><option value="white" selected>白底</option><option value="black">黑底</option></select>
+    <div class="muted" style="margin-top:5px;font-size:11px;line-height:1.6">💡 印花稿本身是 <b>PNG/TIFF 透明底</b>(送印用这个)。JPG/PDF 不支持透明,才需压个底色,仅打样/预览用。</div>`);
+  if(t.mockup)extra.push(`<label>产品模板</label><select id="m_tpl"><option>加载中…</option></select>
+    <label style="margin-top:10px">配色</label><select id="m_color"></select>`);
+  if(t.mockupbatch)extra.push(`<label>产品(可多选)</label><div id="m_tpls" style="display:flex;gap:8px;flex-wrap:wrap">加载中…</div>
+    <label style="margin-top:10px">配色(可多选,留空=各自默认)</label><div id="m_cols" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+    <div class="muted" style="margin-top:6px;font-size:12px">💡 产品 × 配色,一次最多 12 张</div>`);
   const needFile=t.id!=='generate';
   $('#modal').innerHTML=`<div class="top"><span class="ic">${t.ic}</span><h3>${t.name}</h3><span class="x" onclick="closeModal()">✕</span></div>
     <div class="body">
       <div>${needFile?`<div class="drop" id="drop">点击或拖入图片<input type="file" id="file" accept="image/*" hidden></div>`:''}
         ${extra.join('')}
-        <button class="btn" id="run" style="width:100%;margin-top:16px">运行 · 扣${({generate:5,'design-tools/variants':4,'design-tools/fuse':4,'design-tools/restyle':4,'design-tools/meme':4,'image-tools/expand':4,'image-tools/dewatermark':4,'studio/tryon':4,'studio/pet-costume':4,'studio/group-photo':4,'video/generate':3}[t.ep]||(t.id==='title'?0:2))}点</button>
+        <button class="btn" id="run" style="width:100%;margin-top:16px">运行 · 扣${({generate:5,'design-tools/variants':4,'design-tools/fuse':4,'design-tools/restyle':4,'design-tools/meme':4,'image-tools/expand':4,'image-tools/dewatermark':4,'studio/tryon':4,'studio/pet-costume':4,'studio/group-photo':4,'video/generate':3,'studio/title':1,'export/production':1,'mockup/render':1}[t.ep]||2)}点</button>
         <div class="muted" id="rstat" style="margin-top:10px"></div></div>
       <div class="out" id="out"><span class="muted">结果预览</span></div>
     </div>`;
@@ -313,6 +346,17 @@ window.openTool=(id)=>{
     d.ondrop=e=>{e.preventDefault();curFile=e.dataTransfer.files[0];showThumb()};
     f.onchange=()=>{curFile=f.files[0];showThumb()};}
   $('#run').onclick=()=>runTool(t);
+  if(t.id==='variants'){const sel=$('#f_n'),sync=()=>{$('#run').textContent='运行 · 扣'+(4*(+sel.value||2))+'点';};sel.onchange=sync;sync();}
+  if(t.id==='production'){const sz=$('#f_size');sz.onchange=()=>{$('#f_custom').style.display=sz.value==='custom'?'flex':'none';};}
+  if(t.mockup){loadMockupTpls().then(tpls=>{const ts=$('#m_tpl');if(!ts)return;ts.innerHTML=tpls.map(x=>`<option value="${x.id}">${esc(x.label)}</option>`).join('');
+    const fillC=()=>{const tp=tpls.find(x=>x.id===ts.value)||tpls[0];$('#m_color').innerHTML=tp.colors.map(c=>`<option value="${c}" ${c===tp.default_color?'selected':''}>${CLR[c]||c}</option>`).join('');};
+    ts.onchange=fillC;fillC();});}
+  if(t.mockupbatch){loadMockupTpls().then(tpls=>{const tb=$('#m_tpls');if(!tb)return;
+    tb.innerHTML=tpls.map((x,i)=>`<label class="chip" style="cursor:pointer;font-weight:400"><input type="checkbox" value="${x.id}" ${i===0?'checked':''} style="margin-right:4px">${esc(x.label)}</label>`).join('');
+    const allc=[...new Set(tpls.flatMap(x=>x.colors))];
+    $('#m_cols').innerHTML=allc.map(c=>`<label class="chip" style="cursor:pointer;font-weight:400"><input type="checkbox" value="${c}" style="margin-right:4px">${CLR[c]||c}</label>`).join('');
+    const sync=()=>{const nt=[...document.querySelectorAll('#m_tpls input:checked')].length;const nc=[...document.querySelectorAll('#m_cols input:checked')].length||1;$('#run').textContent='运行 · 扣'+Math.min(12,nt*nc)+'点';};
+    tb.onchange=sync;$('#m_cols').onchange=sync;sync();});}
 };
 function showThumb(){if(!curFile)return;const r=new FileReader();r.onload=()=>{$('#drop').innerHTML='已选择<img src="'+r.result+'">';};r.readAsDataURL(curFile);}
 window.closeModal=()=>$('#mask').classList.remove('show');
@@ -322,6 +366,7 @@ async function runTool(t){
   const out=$('#out'),st=$('#rstat');
   if(t.id!=='generate'&&!curFile){st.textContent='请先选择图片';return;}
   $('#run').disabled=true;out.innerHTML='<div class="spin"></div>';st.textContent='处理中…';
+  const _t0=Date.now();const tick=setInterval(()=>{st.textContent='处理中… '+(((Date.now()-_t0)/1000)|0)+'s';},1000);
   try{
     let res;
     const fd=new FormData();if(curFile)fd.append('file',curFile);
@@ -331,31 +376,64 @@ async function runTool(t){
       const pick={print:r.print_url,mockup:r.mockup_url,production:r.production_url};
       const img=pick[t.show]||r.print_url;
       res={img,extra:t.show==='print'?'透明印花(可直接用于套版)':`生产图 ${r.production_meta.width_px}×${r.production_meta.height_px}px`,dl:r.production_url};
-    }else if(t.ep==='image-tools/upscale'){fd.append('scale','2');
-      const r=await api('/image-tools/upscale',{method:'POST',form:fd});res={img:r.image_url,extra:`放大到 ${r.width}×${r.height}px`,dl:r.image_url};
+    }else if(t.ep==='export/production'){ // 给工厂的最终格式转换:多格式导出
+      const sv=$('#f_size').value;let wcm=30,hcm=40;
+      if(sv==='custom'){wcm=+$('#f_wcm').value||30;hcm=+$('#f_hcm').value||40;}
+      else{const p=sv.split('x');wcm=+p[0];hcm=+p[1];}
+      fd.append('width_cm',wcm);fd.append('height_cm',hcm);fd.append('dpi',gv('f_dpi')||'300');
+      fd.append('formats','png,jpg,tiff,pdf');fd.append('bg',gv('f_bg')||'white');
+      const r=await api('/export/production',{method:'POST',form:fd});
+      const m=r.meta,prev=r.files.png||r.files.jpg;
+      const lbl={png:'PNG 透明印花稿',jpg:'JPG 白底打样',tiff:'TIFF 无损',pdf:'PDF'};
+      out.innerHTML=`<div style="text-align:center">
+        ${prev?`<img src="${prev}" style="background:repeating-conic-gradient(#2a2a2a 0% 25%,#222 0% 50%) 50%/20px 20px;border-radius:10px;padding:6px;max-width:100%"/>`:''}
+        <p class="muted" style="font-size:12px">成品 ${m.width_px}×${m.height_px}px · ${m.width_cm}×${m.height_cm}cm @ ${m.dpi}DPI</p>
+        <p style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">${Object.keys(r.files).map(f=>`<a class="chip" href="${r.files[f]}" download>⬇ ${lbl[f]||f.toUpperCase()}</a>`).join('')}</p></div>`;
+      clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
+    }else if(t.ep==='mockup/render'){ // 单张套图(配色变体)
+      fd.append('template',gv('m_tpl')||'tshirt');fd.append('color',gv('m_color')||'');
+      const r=await api('/mockup/render',{method:'POST',form:fd});
+      res={img:r.image_url,extra:`${r.template}${r.color?' · '+(CLR[r.color]||r.color):''}`,dl:r.image_url};
+    }else if(t.ep==='mockup/batch'){ // 批量套图:多产品×多配色
+      const tps=[...document.querySelectorAll('#m_tpls input:checked')].map(c=>c.value);
+      const cls=[...document.querySelectorAll('#m_cols input:checked')].map(c=>c.value);
+      if(!tps.length){clearInterval(tick);st.textContent='请至少选一个产品';$('#run').disabled=false;return;}
+      fd.append('templates',tps.join(','));fd.append('colors',cls.join(','));
+      const r=await api('/mockup/batch',{method:'POST',form:fd});
+      out.innerHTML=`<div style="width:100%"><div style="display:grid;grid-template-columns:repeat(${Math.min(r.count,3)},1fr);gap:10px">${r.items.map(it=>`<div style="text-align:center"><img src="${it.url}"/><p style="margin:6px 0 0;font-size:12px" class="muted">${esc(it.template)} · ${esc(CLR[it.color]||it.color||'默认')}</p><p style="margin:2px 0 0"><a class="chip" href="${it.url}" download>下载</a></p></div>`).join('')}</div><p class="muted" style="text-align:center;margin-top:10px">${r.count} 张套图</p></div>`;
+      clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
+    }else if(t.ep==='image-tools/upscale'){fd.append('scale','1');
+      const r=await runJob('image-tools/upscale',fd);res={img:r.image_url,extra:`提质完成 · ${r.width}×${r.height}px(原尺寸)`,dl:r.image_url};
+    }else if(t.ep==='print-extract'){
+      const r=await runJob('print-extract',fd);
+      out.innerHTML=`<div style="text-align:center"><img src="${r.image_url}" style="background:#fff;border-radius:10px;padding:8px;max-width:100%"/><p><a class="chip" href="${r.white_url||r.image_url}" download>下载(白底)</a> <a class="chip" href="${r.image_url}" download>下载(透明)</a></p><p class="muted" style="font-size:12px">白底:预览/分享;透明:套版/印刷(印在彩色衣服上请用透明版)</p></div>`;
+      clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='generate'){fd.append('prompt',gv('f_prompt')||'a cute cat print');fd.append('size','1024x1024');
-      const r=await api('/generate',{method:'POST',form:fd});res={img:r.image_url};
-    }else if(t.ep==='vectorize'){fd.append('colors','8');const r=await api('/vectorize',{method:'POST',form:fd});res={img:r.svg_url,extra:r.rect_count+' 矢量块',dl:r.svg_url};
+      const r=await runJob('generate',fd);res={img:r.image_url,extra:r.hint||'',dl:r.image_url};
+    }else if(t.ep==='vectorize'){fd.append('colors','12');fd.append('preset',gv('f_preset')||'auto');const r=await runJob('vectorize',fd);res={img:r.svg_url,extra:r.rect_count+' 个矢量形状',dl:r.svg_url};
     }else if(t.ep==='ip-guard/scan'){const r=await api('/ip-guard/scan',{method:'POST',form:fd});
       out.innerHTML=`<div style="text-align:center"><div style="font-size:34px;font-family:var(--disp)" class="chip ${r.risk}">${({high:'高风险',review:'需复核',safe:'安全'}[r.risk]||r.risk)}</div><p class="muted">命中 ${r.match_count} 条 · ${esc(r.advice||'')}</p></div>`;
-      st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
+      clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='studio/title'){fd.append('keywords',gv('f_kw'));fd.append('category','apparel');
       const r=await api('/studio/title',{method:'POST',form:fd});
-      out.innerHTML=`<div><h4 style="font-family:var(--disp)">${esc(r.title)}</h4><p class="muted">${(r.keywords||[]).map(k=>'<span class=chip>'+esc(k)+'</span>').join('')}</p>${r.degraded?'<p class="muted">（占位:配置 OpenAI key 后走真实生成）</p>':''}</div>`;
-      st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
+      out.innerHTML=`<div><h4 style="font-family:var(--disp)">${esc(r.title)}</h4><p class="muted">${(r.keywords||[]).map(k=>'<span class=chip>'+esc(k)+'</span>').join('')}</p></div>`;
+      clearInterval(tick);st.textContent='完成 ✓';$('#run').disabled=false;refreshCredits();return;
     }else if(t.ep==='video/generate'){fd.append('style','kenburns');fd.append('aspect',gv('f_aspect')||'square');
       const r=await api('/video/generate',{method:'POST',form:fd});res={img:r.video_url,extra:`${r.width}×${r.height} · ${r.frames}帧`,dl:r.video_url};
     }else if(t.ep==='image-tools/compress'){fd.append('target_w',gv('f_w')||'1200');fd.append('fmt','jpeg');
       const r=await api('/image-tools/compress',{method:'POST',form:fd});res={img:r.image_url,extra:`${r.width}px · ${(r.output_bytes/1024).toFixed(0)}KB`,dl:r.image_url};
-    }else{ // 其余 gpt-image 类
+    }else{ // 其余 gpt-image 类(有 key 走后台作业+轮询,无 key 同步)
+      if(t.id==='variants')fd.append('n',gv('f_n')||'2');
       if(t.prompt)fd.append('prompt',gv('f_prompt')||'enhance');
       if(t.style)fd.append('style',gv('f_style')||'flat');
-      if(t.text)fd.append('text',gv('f_text')||'TEXT');
-      const r=await api('/'+t.ep,{method:'POST',form:fd});res={img:r.image_url||(r.images&&r.images[0]),extra:r.images?r.images.length+' 张变体':''};
+      if(t.text)fd.append('text',gv('f_text')||'');  // 留空 → 后端自动看图配梗文案
+      const r=await runJob(t.ep,fd);res={img:r.image_url||(r.images&&r.images[0]),imgs:r.images,dl:r.image_url||(r.images&&r.images[0]),extra:r.images?r.images.length+' 张变体':''};
     }
-    out.innerHTML=res.img?`<div style="text-align:center"><img src="${res.img}"/>${res.extra?'<p class="muted">'+esc(res.extra)+'</p>':''}${res.dl?'<p><a class="chip" href="'+res.dl+'" download>下载</a></p>':''}</div>`:'<span class="muted">完成,无图产物</span>';
-    st.textContent='完成 ✓';refreshCredits();
-  }catch(e){out.innerHTML='<span class="muted" style="color:var(--bad)">'+esc(e.message)+'</span>';st.textContent='失败';refreshCredits();}
+    out.innerHTML=(res.imgs&&res.imgs.length)
+      ?`<div style="width:100%"><div style="display:grid;grid-template-columns:repeat(${Math.min(res.imgs.length,3)},1fr);gap:10px">${res.imgs.map((u,i)=>`<div style="text-align:center"><img src="${u}"/><p style="margin:6px 0 0"><a class="chip" href="${u}" download>下载 ${i+1}</a></p></div>`).join('')}</div>${res.extra?'<p class="muted" style="text-align:center;margin-top:10px">'+esc(res.extra)+'</p>':''}</div>`
+      :(res.img?`<div style="text-align:center"><img src="${res.img}"/>${res.extra?'<p class="muted">'+esc(res.extra)+'</p>':''}${res.dl?'<p><a class="chip" href="'+res.dl+'" download>下载</a></p>':''}</div>`:'<span class="muted">完成,无图产物</span>');
+    clearInterval(tick);st.textContent='完成 ✓';refreshCredits();
+  }catch(e){clearInterval(tick);out.innerHTML='<span class="muted" style="color:var(--bad)">'+esc(e.message)+'</span>';st.textContent='失败';refreshCredits();}
   $('#run').disabled=false;
 }
 

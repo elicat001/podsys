@@ -21,7 +21,7 @@ def options(user: User = Depends(current_user)):
 
 
 @router.post("/generate")
-async def generate(
+def generate(
     file: UploadFile = File(...),
     file2: UploadFile | None = File(None),
     style: str = Form("kenburns"),
@@ -32,10 +32,10 @@ async def generate(
     db: Session = Depends(get_db),
 ):
     """从 1~2 张图生成商品展示 GIF(扣 video=3)。失败退点。"""
-    images = [read_image_or_refund(await file.read(), db, user, "video")]
+    images = [read_image_or_refund(file.file.read(), db, user, "video")]
     if file2 is not None:
         try:
-            im2 = Image.open(io.BytesIO(await file2.read())); im2.load()
+            im2 = Image.open(io.BytesIO(file2.file.read())); im2.load()
             images.append(im2)
         except Exception:  # noqa: BLE001  第二张坏图忽略,不阻断
             pass

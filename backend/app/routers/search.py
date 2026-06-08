@@ -16,14 +16,14 @@ router = APIRouter(prefix="/api/search", tags=["search"])
 
 
 @router.post("/by-image")
-async def by_image(
+def by_image(
     file: UploadFile = File(...),
     top_k: int = Form(10),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     """上传一张图,返回该用户素材库中最相似的 top_k 条。搜自己库免费,不扣点。"""
-    raw = await file.read()
+    raw = file.file.read()
     try:
         img = Image.open(io.BytesIO(raw))
         img.load()
