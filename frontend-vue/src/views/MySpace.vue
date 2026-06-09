@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client.js'
 import { listJobs, JOB_STATUS, jobThumb, jobDownloads, timeAgo, jobDuration } from '../api/jobs.js'
-import { listMockupTemplates, createMockupTemplate, deleteMockupTemplate } from '../api/team.js'
+import { listMockupTemplates, createMockupTemplate, deleteMockupTemplate, addTemplateImages, deleteTemplateImage } from '../api/team.js'
 import { toolForJob, moduleOfTool } from '../data/tools.js'
 
 const route = useRoute()
@@ -148,6 +148,30 @@ async function delTpl(t) {
   ElMessage.success('已删除'); loadTeam()
 }
 
+// ── 编辑模板(增删其中的图,实时生效)──
+const showEdit = ref(false)
+const editTpl = ref(null)
+const addingImg = ref(false)
+function openEdit(t) { editTpl.value = t; showEdit.value = true }
+function _syncTpl(updated) {
+  editTpl.value = updated
+  const i = teamTpls.value.findIndex((x) => x.id === updated.id)
+  if (i >= 0) teamTpls.value[i] = updated
+}
+async function onAddImgs(e) {
+  const files = Array.from(e.target.files || [])
+  e.target.value = ''
+  if (!files.length) return
+  addingImg.value = true
+  try { _syncTpl(await addTemplateImages(editTpl.value.id, files)) }
+  catch (err) { ElMessage.error(err.message || '添加失败') }
+  finally { addingImg.value = false }
+}
+async function delImg(im) {
+  try { _syncTpl(await deleteTemplateImage(editTpl.value.id, im.id)) }
+  catch (err) { ElMessage.error(err.message || '删除失败') }
+}
+
 function onTab(name) {
   if (name === 'trash') loadTrash()
   else if (name === 'team') loadTeam()
@@ -242,12 +266,15 @@ onUnmounted(() => clearInterval(jobsTimer))
         <div v-if="!teamTpls.length" class="empty muted">还没有套图模板 —— 点「新建套图模板」上传一组产品照</div>
         <div v-else class="tpl-grid">
           <div v-for="t in teamTpls" :key="t.id" class="tpl-card panel">
-            <div class="tpl-thumbs">
+            <div class="tpl-thumbs clickable" @click="openEdit(t)" title="点击管理图片">
               <img v-for="im in t.images.slice(0, 4)" :key="im.id" :src="im.url" />
             </div>
             <div class="tpl-foot">
               <span class="tpl-name">{{ t.name }} <span class="muted">· {{ t.image_count }}张</span></span>
-              <button class="chip del" @click="delTpl(t)">🗑</button>
+              <span class="tpl-acts">
+                <button class="chip" @click="openEdit(t)">管理图片</button>
+                <button class="chip del" @click="delTpl(t)">🗑</button>
+              </span>
             </div>
           </div>
         </div>
@@ -271,6 +298,28 @@ onUnmounted(() => clearInterval(jobsTimer))
           <template #footer>
             <el-button @click="showCreate = false">取消</el-button>
             <el-button type="primary" :loading="creating" @click="createTpl">创建({{ newItems.length }} 张)</el-button>
+          </template>
+        </el-dialog>
+
+        <!-- 管理模板图片(增删实时生效)-->
+        <el-dialog v-model="showEdit" :title="editTpl ? `管理套图模板「${editTpl.name}」` : ''"
+                   width="560px" align-center append-to-body>
+          <div v-if="editTpl">
+            <div class="pick-grid">
+              <div v-for="im in editTpl.images" :key="im.id" class="pick-thumb">
+                <img :src="im.url" />
+                <button class="rm" @click="delImg(im)" title="删除这张">×</button>
+              </div>
+              <label v-if="editTpl.images.length < TPL_MAX_IMAGES" class="pick-add" :class="{ busy: addingImg }">
+                <input type="file" accept="image/*" multiple hidden @change="onAddImgs" />
+                <span class="big">＋</span>
+                <span class="muted small">{{ editTpl.images.length }}/{{ TPL_MAX_IMAGES }}</span>
+              </label>
+            </div>
+            <p class="muted small" style="margin-top: 8px">点 ＋ 添加图片、点 × 删除单张,实时保存(至少保留 1 张)。</p>
+          </div>
+          <template #footer>
+            <el-button type="primary" @click="showEdit = false">完成</el-button>
           </template>
         </el-dialog>
       </el-tab-pane>
@@ -578,5 +627,17 @@ onUnmounted(() => clearInterval(jobsTimer))
 }
 .pick-add .big {
   font-size: 22px;
+}
+.pick-add.busy {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.tpl-thumbs.clickable {
+  cursor: pointer;
+}
+.tpl-acts {
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 </style>

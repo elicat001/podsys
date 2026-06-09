@@ -82,6 +82,51 @@ async def create_template(name: str = Form(...), files: list[UploadFile] = File(
     return _serialize(tpl)
 
 
+@router.post("/mockup-templates/{tid}/images")
+async def add_images(tid: int, files: list[UploadFile] = File(...),
+                     user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """给已有套图模板追加产品照(总数不超过 MAX_IMAGES)。"""
+    tpl = _own_template(db, tid, user)
+    cur = len(tpl.images)
+    if not files:
+        raise HTTPException(status_code=400, detail="请选择要添加的图片")
+    if cur + len(files) > MAX_IMAGES:
+        raise HTTPException(status_code=400, detail=f"模板最多 {MAX_IMAGES} 张(当前 {cur} 张)")
+    job_id = storage.new_job_id()  # 本次追加的图放一个新目录
+    next_idx = max((im.idx for im in tpl.images), default=-1) + 1
+    for i, f in enumerate(files):
+        raw = await f.read()
+        try:
+            Image.open(io.BytesIO(raw)).load()
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            raise HTTPException(status_code=400, detail=f"第 {i + 1} 张图无法读取: {exc}") from exc
+        name_i = f"product_{i}.png"
+        Image.open(io.BytesIO(raw)).convert("RGB").save(storage.output_path(job_id, name_i), format="PNG")
+        db.add(MockupTemplateImage(template_id=tpl.id, path=storage.output_url(job_id, name_i), idx=next_idx + i))
+    db.commit(); db.refresh(tpl)
+    return _serialize(tpl)
+
+
+@router.delete("/mockup-templates/{tid}/images/{img_id}")
+def delete_image(tid: int, img_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """删除模板里的某张图(连带删盘)。模板至少保留 1 张(要清空请删整个模板)。"""
+    tpl = _own_template(db, tid, user)
+    im = db.get(MockupTemplateImage, img_id)
+    if im is None or im.template_id != tpl.id:
+        raise HTTPException(status_code=404, detail="图片不存在")
+    if len(tpl.images) <= 1:
+        raise HTTPException(status_code=400, detail="模板至少保留 1 张图;要清空请删除整个模板")
+    p = storage.path_from_url(im.path)
+    try:
+        if p and p.is_file():
+            p.unlink()
+    except Exception:  # noqa: BLE001
+        pass
+    db.delete(im); db.commit(); db.refresh(tpl)
+    return _serialize(tpl)
+
+
 @router.delete("/mockup-templates/{tid}")
 def delete_template(tid: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """删除套图模板(连带其产品照文件)。同组织可删(团队资源)。"""

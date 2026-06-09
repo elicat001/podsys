@@ -31,6 +31,34 @@ def test_template_crud(client, auth_headers, png):
     assert not any(x["id"] == tid for x in client.get("/api/team/mockup-templates", headers=auth_headers).json())
 
 
+def test_template_add_and_remove_images(client, auth_headers, png):
+    """已建模板可追加图、删单张;至少保留 1 张。"""
+    tid = client.post("/api/team/mockup-templates", headers=auth_headers,
+                      data={"name": "可编辑"}, files=_imgs(png, 1)).json()["id"]
+    # 追加 2 张 → 共 3
+    r = client.post(f"/api/team/mockup-templates/{tid}/images", headers=auth_headers, files=_imgs(png, 2))
+    assert r.status_code == 200 and r.json()["image_count"] == 3, r.text
+    # 删 1 张 → 共 2
+    img_id = r.json()["images"][0]["id"]
+    r2 = client.delete(f"/api/team/mockup-templates/{tid}/images/{img_id}", headers=auth_headers)
+    assert r2.status_code == 200 and r2.json()["image_count"] == 2
+    # 删到只剩 1 张后再删 → 400(至少保留 1 张)
+    imgs = r2.json()["images"]
+    client.delete(f"/api/team/mockup-templates/{tid}/images/{imgs[0]['id']}", headers=auth_headers)
+    last = client.get("/api/team/mockup-templates", headers=auth_headers).json()
+    last = next(t for t in last if t["id"] == tid)
+    assert client.delete(f"/api/team/mockup-templates/{tid}/images/{last['images'][0]['id']}",
+                         headers=auth_headers).status_code == 400
+
+
+def test_template_add_over_cap(client, auth_headers, png):
+    """追加后超过 10 张上限 → 400。"""
+    tid = client.post("/api/team/mockup-templates", headers=auth_headers,
+                      data={"name": "满"}, files=_imgs(png, 8)).json()["id"]
+    assert client.post(f"/api/team/mockup-templates/{tid}/images",
+                       headers=auth_headers, files=_imgs(png, 3)).status_code == 400  # 8+3>10
+
+
 def test_template_requires_auth(client, png):
     r = client.post("/api/team/mockup-templates", data={"name": "x"}, files=_imgs(png, 1))
     assert r.status_code == 401
