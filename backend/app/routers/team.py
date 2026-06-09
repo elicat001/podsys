@@ -20,7 +20,7 @@ from ..models_team import MockupTemplate, MockupTemplateImage
 
 router = APIRouter(prefix="/api/team", tags=["team"])
 
-MAX_IMAGES = 20
+MAX_IMAGES = 10
 
 
 def _serialize(t: MockupTemplate) -> dict:

@@ -104,24 +104,40 @@ async function purge(id) {
 }
 
 // ── 团队资源:套图模板 ───────────────────────────────────────
+const TPL_MAX_IMAGES = 10
 const teamTpls = ref([])
 const showCreate = ref(false)
 const newName = ref('')
-const newFiles = ref([])
+const newItems = ref([])   // [{file, url}] 累加式,带预览
 const creating = ref(false)
 async function loadTeam() {
   try { teamTpls.value = await listMockupTemplates() } catch (e) { /* 静默 */ }
 }
-function onPickTplFiles(e) { newFiles.value = Array.from(e.target.files || []) }
+function onPickTplFiles(e) {
+  // 累加(可多次添加 / 单次多选),去重,封顶 10 张
+  for (const f of Array.from(e.target.files || [])) {
+    if (newItems.value.length >= TPL_MAX_IMAGES) { ElMessage.warning(`最多 ${TPL_MAX_IMAGES} 张`); break }
+    if (newItems.value.some((it) => it.file.name === f.name && it.file.size === f.size)) continue
+    newItems.value.push({ file: f, url: URL.createObjectURL(f) })
+  }
+  e.target.value = ''  // 重置 input,允许再次选(含同名)继续添加
+}
+function removeNewItem(i) {
+  URL.revokeObjectURL(newItems.value[i].url)
+  newItems.value.splice(i, 1)
+}
+function resetCreate() {
+  newItems.value.forEach((it) => URL.revokeObjectURL(it.url))
+  newItems.value = []; newName.value = ''
+}
 async function createTpl() {
   if (!newName.value.trim()) { ElMessage.warning('请填写模板名'); return }
-  if (!newFiles.value.length) { ElMessage.warning('请上传至少一张产品照'); return }
+  if (!newItems.value.length) { ElMessage.warning('请上传至少一张产品照'); return }
   creating.value = true
   try {
-    await createMockupTemplate(newName.value.trim(), newFiles.value)
+    await createMockupTemplate(newName.value.trim(), newItems.value.map((it) => it.file))
     ElMessage.success('套图模板已创建')
-    showCreate.value = false; newName.value = ''; newFiles.value = []
-    loadTeam()
+    showCreate.value = false; resetCreate(); loadTeam()
   } catch (e) { ElMessage.error(e.message || '创建失败') } finally { creating.value = false }
 }
 async function delTpl(t) {
@@ -215,24 +231,6 @@ onUnmounted(() => clearInterval(jobsTimer))
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="回收站" name="trash">
-        <p class="muted small" style="margin: 4px 0 12px">永久删除会真正释放存储空间。</p>
-        <el-table :data="trash" empty-text="回收站为空">
-          <el-table-column prop="id" label="ID" width="70" />
-          <el-table-column prop="name" label="名称" />
-          <el-table-column prop="source" label="来源" width="110" />
-          <el-table-column label="大小" width="100">
-            <template #default="{ row }">{{ fmtBytes(row.size_bytes) }}</template>
-          </el-table-column>
-          <el-table-column label="操作" width="200">
-            <template #default="{ row }">
-              <el-button size="small" @click="restore(row.id)">恢复</el-button>
-              <el-button size="small" type="danger" @click="purge(row.id)">永久删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-tab-pane>
-
       <el-tab-pane label="团队资源" name="team">
         <div class="toolbar">
           <strong>套图模板</strong>
@@ -255,18 +253,44 @@ onUnmounted(() => clearInterval(jobsTimer))
         </div>
 
         <!-- 新建套图模板 -->
-        <el-dialog v-model="showCreate" title="新建套图模板" width="460px" align-center append-to-body>
+        <el-dialog v-model="showCreate" title="新建套图模板" width="500px" align-center append-to-body
+                   @closed="resetCreate">
           <el-input v-model="newName" placeholder="模板名,如:夏季纯棉T恤套图" style="margin-bottom: 14px" />
-          <label class="picker">
-            <input type="file" accept="image/*" multiple hidden @change="onPickTplFiles" />
-            <div class="big">⬆</div>
-            <div>{{ newFiles.length ? `已选 ${newFiles.length} 张产品照(点击重选)` : '点击上传产品照(可多张,已印好图案的产品照)' }}</div>
-          </label>
+          <div class="pick-grid">
+            <div v-for="(it, i) in newItems" :key="i" class="pick-thumb">
+              <img :src="it.url" />
+              <button class="rm" @click="removeNewItem(i)">×</button>
+            </div>
+            <label v-if="newItems.length < TPL_MAX_IMAGES" class="pick-add">
+              <input type="file" accept="image/*" multiple hidden @change="onPickTplFiles" />
+              <span class="big">＋</span>
+              <span class="muted small">{{ newItems.length }}/{{ TPL_MAX_IMAGES }}</span>
+            </label>
+          </div>
+          <p class="muted small" style="margin-top: 8px">可多次添加 / 单次多选,最多 {{ TPL_MAX_IMAGES }} 张;每张产品照里的原印花会被替换。</p>
           <template #footer>
             <el-button @click="showCreate = false">取消</el-button>
-            <el-button type="primary" :loading="creating" @click="createTpl">创建</el-button>
+            <el-button type="primary" :loading="creating" @click="createTpl">创建({{ newItems.length }} 张)</el-button>
           </template>
         </el-dialog>
+      </el-tab-pane>
+
+      <el-tab-pane label="回收站" name="trash">
+        <p class="muted small" style="margin: 4px 0 12px">永久删除会真正释放存储空间。</p>
+        <el-table :data="trash" empty-text="回收站为空">
+          <el-table-column prop="id" label="ID" width="70" />
+          <el-table-column prop="name" label="名称" />
+          <el-table-column prop="source" label="来源" width="110" />
+          <el-table-column label="大小" width="100">
+            <template #default="{ row }">{{ fmtBytes(row.size_bytes) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="200">
+            <template #default="{ row }">
+              <el-button size="small" @click="restore(row.id)">恢复</el-button>
+              <el-button size="small" type="danger" @click="purge(row.id)">永久删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
       </el-tab-pane>
     </el-tabs>
   </div>
@@ -507,5 +531,52 @@ onUnmounted(() => clearInterval(jobsTimer))
 }
 .picker .big {
   font-size: 26px;
+}
+/* 新建模板:多图累加选择 */
+.pick-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.pick-thumb {
+  position: relative;
+  aspect-ratio: 1;
+}
+.pick-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.pick-thumb .rm {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  cursor: pointer;
+  line-height: 1;
+}
+.pick-add {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 1.5px dashed var(--line2);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--mut);
+}
+.pick-add:hover {
+  border-color: var(--brand);
+}
+.pick-add .big {
+  font-size: 22px;
 }
 </style>
