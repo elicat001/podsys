@@ -1,6 +1,6 @@
 """Perceptual hashing — pure Pillow, no numpy/scipy.
 
-dHash (gradient) + aHash (average) give robust near-duplicate detection, which
+dHash (gradient) gives robust near-duplicate detection, which
 covers the real POD risk: 盗图 / 重复铺货. Hamming distance ≈ visual similarity.
 (Semantic IP — logos/characters — would need a model; out of scope by design.)
 """
@@ -20,13 +20,6 @@ def dhash(img: Image.Image, size: int = 8) -> str:
         for col in range(size):
             i = row * (size + 1) + col
             bits.append(1 if px[i] < px[i + 1] else 0)
-    return _bits_to_hex(bits)
-
-
-def ahash(img: Image.Image, size: int = 8) -> str:
-    px = _gray(img, size, size)
-    avg = sum(px) / len(px)
-    bits = [1 if p >= avg else 0 for p in px]
     return _bits_to_hex(bits)
 
 

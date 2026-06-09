@@ -91,7 +91,25 @@ app.include_router(print_extract_router.router)
 app.include_router(export_router.router)
 app.include_router(mockup_router.router)
 
-FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
+# 前端 = Vue 单页应用的构建产物(frontend-vue/dist)。旧的静态 frontend/ 已废弃删除。
+FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend-vue" / "dist"
+
+
+class _SPAStaticFiles(StaticFiles):
+    """静态文件服务 + SPA history 回退:请求路径不是真实文件时(深链如 /tools/extract
+    刷新)返回 index.html,交给 Vue Router 客户端路由,而不是 404。"""
+
+    async def get_response(self, path: str, scope):
+        from starlette.exceptions import HTTPException as StarletteHTTPException
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            # 仅对前端路由回退 index.html;未匹配的 /api /files 仍返回真 404(保留 API 语义)。
+            # 用 scope['path'](完整请求路径,带前导斜杠)判断,比 mount 相对 path 更可靠。
+            req_path = scope.get("path", "")
+            if exc.status_code == 404 and not req_path.startswith(("/api/", "/files/")):
+                return await super().get_response("index.html", scope)
+            raise
 
 
 @app.get("/api/health")
@@ -313,6 +331,10 @@ def get_file(job_id: str, name: str):
     return FileResponse(p)
 
 
-# serve the static frontend at root (mounted last so /api/* wins)
-if FRONTEND_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+# ── 服务前端:Vue 单页应用(history 模式)──
+# nginx 把 / 反代到本服务;这里把构建产物 dist 挂在 "/"(mounted last,/api 与 /files
+# 已在前面注册,优先匹配)。用 _SPAStaticFiles 在 404 时回退 index.html,支持 history
+# 深链刷新。**保留 name="frontend"**:多个测试靠这个名字把自己的路由插到本 mount 之前。
+# dist 不存在(纯离线测试/未构建)时整段跳过——前端缺失不影响 API 与测试。
+if FRONTEND_DIST.exists():
+    app.mount("/", _SPAStaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")

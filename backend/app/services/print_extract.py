@@ -41,11 +41,14 @@ _FLATTEN_PROMPT = (
     "the person, hands, fabric folds, drape, shadows, lighting gradients, perspective "
     "distortion and the background scene. Reproduce the design FAITHFULLY as clean, SOLID, "
     "fully OPAQUE, high-contrast, print-ready flat artwork: keep the exact same text "
-    "wording, logos, motifs, colors, layout and proportions, evenly lit and straightened, "
-    "on a pure white background (centered for a single motif, or filled edge-to-edge for "
-    "an all-over repeating pattern). Do NOT redesign, restyle, add or remove anything, and "
-    "do NOT make it translucent, frosted or blurry — output only the original print as "
-    "crisp graphics."
+    "wording, logos, motifs, colors, layout and proportions. Keep the design's ORIGINAL "
+    "upright orientation exactly as it reads on the product — text must read horizontally "
+    "left-to-right; do NOT rotate, tilt or flip the artwork, even when the product photo is "
+    "tall and narrow (pad with white space around it instead of rotating). Lay it out evenly "
+    "lit and straightened on a pure white background (centered for a single motif, or filled "
+    "edge-to-edge for an all-over repeating pattern). Do NOT redesign, restyle, add or remove "
+    "anything, and do NOT make it translucent, frosted or blurry — output only the original "
+    "print as crisp graphics."
 )
 _EDIT_MAX_SIDE = 1024   # 发给 gpt-image 前等比缩小(输出本就 ≤1024,发原图纯浪费上传/网关时间)
 
@@ -117,7 +120,11 @@ def _white_bg_to_transparent(img: Image.Image, tol: int = 55,
 
 def _extract_ai(image: Image.Image) -> tuple[Image.Image, dict]:
     """AI 重绘提取。无 key → OpenAIImageClient() 构造即抛 RuntimeError;调用失败 → 抛异常。
-    由 `extract_print_design` 捕获后降级到本地。"""
+    由 `extract_print_design` 捕获后降级到本地。
+
+    ⚠️ 方向的已知局限:对**圆柱硬质产品**(瓶子/杯子)的横向 logo,gpt-image 有时会把设计
+    旋转 90°(为填充竖画布)。实测 prompt 文字约束、正方输入+正方输出都压不住它。
+    因此**方向交给前端的『旋转』按钮**让用户一键校正(见前端 ResultView),后端不强拗。"""
     from ..ai.openai_image import OpenAIImageClient  # 惰性 import(重依赖,且离线不应触发)
 
     out = OpenAIImageClient().edit(_downscale(image), _FLATTEN_PROMPT).convert("RGBA")
