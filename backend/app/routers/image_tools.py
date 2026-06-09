@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -16,10 +16,11 @@ from ..db import get_db
 from ..models_db import User
 from ..services.billing import charge_for, refund
 from ..services.image_tools import compress_image
-from ..services.jobs import submit_ai_job, save_asset_in_background
 from ..services.library import save_as_asset
 from ..ai.upscale import get_upscale_provider
+from ..tasks import run_tool
 from ..web_utils import read_image_or_refund as _read_image
+from ..web_utils import submit_celery
 
 router = APIRouter(prefix="/api/image-tools", tags=["image-tools"])
 
@@ -60,7 +61,6 @@ def _edit_endpoint(raw: bytes, prompt: str, size: str, db: Session, user: User, 
 
 @router.post("/upscale")
 async def upscale(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     scale: float = Form(1.0),
     user: User = Depends(charge_for("process")),
@@ -73,19 +73,9 @@ async def upscale(
     src = _read_image(raw, db, user, "process")
     scale = max(1.0, min(scale, 4.0))
 
-    if settings.upscale_provider == "realesrgan":  # AI 提质 ~几秒 → 后台作业,前端轮询
-        uid = user.id
-        rgb = src.convert("RGB")
-
-        def _work(jid: str) -> dict:
-            out = get_upscale_provider().upscale(rgb, scale=scale)
-            out.save(storage.output_path(jid, "upscaled.png"), format="PNG")
-            url = storage.output_url(jid, "upscaled.png")
-            save_asset_in_background(uid, out, "提质", url)
-            return {"image_url": url, "width": out.width, "height": out.height}
-
-        jid = submit_ai_job(background_tasks, db, "upscale", uid, _work, refund_op="process")
-        return JSONResponse({"job_id": jid, "status": "pending"})
+    if settings.upscale_provider == "realesrgan":  # AI 提质 ~几秒 → Celery 后台作业,前端轮询
+        return JSONResponse(submit_celery(run_tool, db, user, kind="upscale", tool_id="upscale",
+                                          op="process", raw=raw, params={"scale": scale}))
 
     # pillow(Lanczos):快,同步
     try:
@@ -102,7 +92,6 @@ async def upscale(
 
 @router.post("/expand")
 async def expand(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     prompt: str = Form(""),
     size: str = Form("auto"),
@@ -113,26 +102,16 @@ async def expand(
     raw = await file.read()
     full_prompt = f"{_EXPAND_PROMPT} {prompt}".strip()
     from ..services.effects import outpaint_reflect
-    if settings.openai_api_key:  # gpt-image 耗时 -> 后台作业,前端轮询
-        src = _read_image(raw, db, user, "edit")
-        uid = user.id
-
-        def _work(jid: str) -> dict:
-            out_img = OpenAIImageClient().edit(src, full_prompt, size=size)
-            out_img.save(storage.output_path(jid, "result.png"), format="PNG")
-            url = storage.output_url(jid, "result.png")
-            save_asset_in_background(uid, out_img, "图案处理", url)
-            return {"image_url": url}
-
-        jid = submit_ai_job(background_tasks, db, "expand", uid, _work, refund_op="edit")
-        return JSONResponse({"job_id": jid, "status": "pending"})
+    if settings.openai_api_key:  # gpt-image 耗时 -> Celery 后台作业,前端轮询
+        _read_image(raw, db, user, "edit")  # 读图失败 → 400 + 退点
+        return JSONResponse(submit_celery(run_tool, db, user, kind="expand", tool_id="expand",
+                                          op="edit", raw=raw, params={"prompt": full_prompt, "size": size}))
     job_id = _edit_endpoint(raw, full_prompt, size, db, user, offline=lambda im: outpaint_reflect(im, 1.5))
     return JSONResponse({"job_id": job_id, "image_url": storage.output_url(job_id, "result.png")})
 
 
 @router.post("/dewatermark")
 async def dewatermark(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     prompt: str = Form(""),
     size: str = Form("auto"),
@@ -143,19 +122,10 @@ async def dewatermark(
     raw = await file.read()
     full_prompt = f"{_DEWATERMARK_PROMPT} {prompt}".strip()
     from ..services.effects import dewatermark as _dw
-    if settings.openai_api_key:  # gpt-image 耗时 -> 后台作业,前端轮询
-        src = _read_image(raw, db, user, "edit")
-        uid = user.id
-
-        def _work(jid: str) -> dict:
-            out_img = OpenAIImageClient().edit(src, full_prompt, size=size)
-            out_img.save(storage.output_path(jid, "result.png"), format="PNG")
-            url = storage.output_url(jid, "result.png")
-            save_asset_in_background(uid, out_img, "图案处理", url)
-            return {"image_url": url}
-
-        jid = submit_ai_job(background_tasks, db, "dewatermark", uid, _work, refund_op="edit")
-        return JSONResponse({"job_id": jid, "status": "pending"})
+    if settings.openai_api_key:  # gpt-image 耗时 -> Celery 后台作业,前端轮询
+        _read_image(raw, db, user, "edit")  # 读图失败 → 400 + 退点
+        return JSONResponse(submit_celery(run_tool, db, user, kind="dewatermark", tool_id="dewatermark",
+                                          op="edit", raw=raw, params={"prompt": full_prompt, "size": size}))
     job_id = _edit_endpoint(raw, full_prompt, size, db, user, offline=_dw)
     return JSONResponse({"job_id": job_id, "image_url": storage.output_url(job_id, "result.png")})
 

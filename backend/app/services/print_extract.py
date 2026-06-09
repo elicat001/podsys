@@ -20,6 +20,7 @@ import logging
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
+from .. import storage
 from ..ai.upscale import get_upscale_provider
 from ..config import settings
 from .design_extract import extract_design
@@ -150,3 +151,16 @@ def extract_print_design(image: Image.Image) -> tuple[Image.Image, dict]:
     design, meta = extract_design(image)
     meta.setdefault("engine", "local")
     return design, meta
+
+
+def save_print_outputs(job_id: str, design: Image.Image, meta: dict) -> tuple[str, dict]:
+    """存透明版 + 白底版,返回 (透明图 url, 结果 dict)。同步(router)与异步(task)两条路径共用。
+
+    白底版:透明区填白,便于下载/预览(深色看图器里透明会显黑);透明版保留(套版/印刷用)。
+    """
+    url = storage.output_url(job_id, "design.png")
+    design.save(storage.output_path(job_id, "design.png"), format="PNG")
+    white = Image.new("RGB", design.size, (255, 255, 255))
+    white.paste(design, (0, 0), design)
+    white.save(storage.output_path(job_id, "design_white.png"), format="PNG")
+    return url, {"image_url": url, "white_url": storage.output_url(job_id, "design_white.png"), **meta}

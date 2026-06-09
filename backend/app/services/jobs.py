@@ -1,5 +1,12 @@
-"""异步作业(Job)队列与状态管理 — 不依赖 Celery/Redis,基于 BackgroundTasks。"""
+"""异步作业(Job)队列与状态管理。
+
+执行有两条实现并存,都把状态写回同一张 `Job` 表(唯一真相源),时间戳口径一致:
+- **Celery**(`app/tasks.py`):独立 worker,**所有耗时 AI/本地作业端点的主路径**(抗重启、可隔离)。
+- **BackgroundTasks**(`run_job` + `submit`):同进程后台,仅 `/api/process-async`(本地快管线)还在用。
+`create_job` / `run_job` / `get_job` 为两者共用。
+"""
 from __future__ import annotations
+from datetime import datetime, timezone
 from typing import Callable
 from sqlalchemy.orm import Session
 from ..db import SessionLocal
@@ -7,13 +14,18 @@ from ..models_db import Job
 from ..storage import new_job_id
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def create_job(db: Session, kind: str, params: dict | None = None,
-               owner_id: int | None = None) -> Job:
-    """创建一条 pending 作业并落库。"""
+               owner_id: int | None = None, tool_id: str = "") -> Job:
+    """创建一条 pending 作业并落库。tool_id=前端工具 id(用于「我的空间」分组展示)。"""
     job = Job(
         id=new_job_id(),
         kind=kind,
         status="pending",
+        tool_id=tool_id,
         params=params or {},
         result={},
         error="",
@@ -36,6 +48,7 @@ def run_job(job_id: str, fn: Callable[[], dict]) -> None:
         if job is None:
             return
         job.status = "running"
+        job.started_at = _now()
         db.commit()
         try:
             result = fn()
@@ -46,6 +59,7 @@ def run_job(job_id: str, fn: Callable[[], dict]) -> None:
             job.status = "error"
             # P1-1:保留异常类型,无 message 的异常(如 KeyError())也能定位
             job.error = f"{type(exc).__name__}: {exc}".strip()
+        job.finished_at = _now()
         db.commit()
     finally:
         db.close()
@@ -58,55 +72,7 @@ def get_job(db: Session, job_id: str) -> Job | None:
 
 def submit(background_tasks, db: Session, kind: str, fn: Callable[[], dict],
            params: dict | None = None, owner_id: int | None = None) -> str:
-    """便捷封装:建 pending 作业 + 注册后台执行,返回 job_id。供其他端点复用。"""
+    """便捷封装:建 pending 作业 + 注册后台执行,返回 job_id(供仍用 BackgroundTasks 的端点)。"""
     job = create_job(db, kind, params=params, owner_id=owner_id)
     background_tasks.add_task(run_job, job.id, fn)
     return job.id
-
-
-def refund_in_background(owner_id: int, op: str, n: int = 1) -> None:
-    """后台作业失败退点:请求 session 已关,必须用独立 session;按 n 笔退。"""
-    from ..models_db import User
-    from .billing import refund
-    s = SessionLocal()
-    try:
-        u = s.get(User, owner_id)
-        if u is None:
-            return
-        for _ in range(n):
-            refund(s, u, op)
-    finally:
-        s.close()
-
-
-def save_asset_in_background(owner_id: int, image, name: str, url: str,
-                             source: str = "generated") -> None:
-    """后台作业内入库素材:用独立 session(请求 session 已关)。save_as_asset 自身吞错。"""
-    from .library import save_as_asset
-    s = SessionLocal()
-    try:
-        save_as_asset(s, owner_id, image, name, url, source=source)
-    finally:
-        s.close()
-
-
-def submit_ai_job(background_tasks, db: Session, kind: str, owner_id: int,
-                  work: Callable[[str], dict], *, refund_op: str, refund_n: int = 1,
-                  params: dict | None = None) -> str:
-    """建作业 + 后台执行 work(job_id);work 抛错时按 refund_n 笔退 refund_op,再交 run_job 记 error。
-
-    work 接收 job_id(可作产物存储目录),返回结果 dict(存入 job.result)。
-    用于 gpt-image 等耗时端点:HTTP 立即返回 job_id,前端轮询 GET /api/jobs/{id}。
-    """
-    job = create_job(db, kind, params=params, owner_id=owner_id)
-    jid = job.id
-
-    def _wrapped() -> dict:
-        try:
-            return work(jid)
-        except Exception:
-            refund_in_background(owner_id, refund_op, refund_n)
-            raise
-
-    background_tasks.add_task(run_job, jid, _wrapped)
-    return jid

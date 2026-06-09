@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     # auth
     jwt_secret: str = "dev-secret-change-me-please-set-POD_JWT_SECRET-in-prod"
 
+    # 异步作业(Celery)。broker 指向**独立**的 Redis 实例(默认本地 6380,与旁边
+    # Django 项目占用的 6379/db1 物理隔离;生产同样另起一个 6380 实例)。结果存 Job 表,
+    # 不用 Celery result backend。celery_eager=true 时任务在调用进程内同步执行(测试用,
+    # 无需 broker/worker);conftest 会强制开启,保持 pytest 离线确定性。
+    celery_broker_url: str = "redis://127.0.0.1:6380/0"
+    celery_eager: bool = False
+
     # 计费:dev 模式允许自助充值(topup)。生产务必置 false(POD_DEV_BILLING=false)
     dev_billing: bool = True
 

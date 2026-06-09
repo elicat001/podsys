@@ -8,6 +8,11 @@ sqlalchemy>=2.0
 pyjwt>=2.8
 openai>=1.55
 pytest>=8.0
+# 异步作业队列:Celery + 独立 Redis 实例(默认 127.0.0.1:6380,与旁边 Django 项目的
+# 6379/db1 物理隔离)。结果存 Job 表,不用 Celery result backend。测试走 eager 不需 broker。
+# 部署需:① 另起一个 redis-server 实例跑 6380;② 一个 podsys-worker.service 跑 celery worker。
+celery>=5.3
+redis>=5.0
 # 本地抠图引擎(默认 POD_MATTING_PROVIDER=rembg 时必需;首次运行会下载 ~170MB U2Net 模型)
 rembg>=2.0.59
 onnxruntime>=1.18    # rembg 的推理后端(U2Net)+ 图像提质 Real-ESRGAN(models/realesr_x4v3.onnx,~4.7MB,不入库,缺失降级 Lanczos)

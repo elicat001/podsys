@@ -5,6 +5,8 @@ import { ElMessage } from 'element-plus'
 import { useAuth } from '../stores/auth.js'
 import { MODULES, SIDEBARS, moduleOf } from '../data/nav.js'
 import CreditsBadge from '../components/CreditsBadge.vue'
+import RecentJobs from '../components/RecentJobs.vue'
+import ToolDialog from '../components/ToolDialog.vue'
 
 const auth = useAuth()
 const route = useRoute()
@@ -52,6 +54,7 @@ function logout() {
         >{{ m.name }}</router-link>
       </nav>
       <div class="top-right">
+        <RecentJobs />
         <CreditsBadge />
         <span class="email muted" v-if="auth.user">{{ auth.user.email }}</span>
         <button class="btn-ghost sm" @click="logout">退出</button>
@@ -78,6 +81,9 @@ function logout() {
         <router-view />
       </main>
     </div>
+
+    <!-- 全局工具弹窗(作图画廊点卡片即开)-->
+    <ToolDialog />
   </div>
 </template>
 

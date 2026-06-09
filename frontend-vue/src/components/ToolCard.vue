@@ -1,12 +1,14 @@
 <script setup>
-// 作图画廊里的工具卡:图标 + 名称 + 描述 + CSS 前后对比缩略。点卡进工具页。
+// 作图画廊里的工具卡:图标 + 名称 + 描述 + CSS 前后对比缩略。点卡弹出工具弹窗。
 import { useRouter } from 'vue-router'
+import { useToolDialog } from '../stores/toolDialog.js'
 const props = defineProps({ tool: { type: Object, required: true } })
 const router = useRouter()
+const dlg = useToolDialog()
 function open() {
-  const id = props.tool.id
-  const path = id === 'videogen' ? '/app/video/generate' : `/app/design/tool/${id}`
-  router.push(path)
+  // 视频生成有独立整页(多输入/预览),仍走路由;其余工具一律弹窗即开即用。
+  if (props.tool.id === 'videogen') { router.push('/app/video/generate'); return }
+  dlg.open(props.tool)
 }
 // 给每个工具一个稳定的色相,缩略图配色有区分
 const hue = (props.tool.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360

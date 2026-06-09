@@ -240,3 +240,19 @@ export const TOOL_BY_ID = Object.fromEntries(TOOLS.map((t) => [t.id, t]))
 
 // 作图模块下的工具分类(顺序即画廊分区顺序)。视频工具(videogen)归「视频」大模块,不在此。
 export const TOOL_CATS = ['印花提取', '印花设计', '图案处理', '侵权检测', '套图标题', '来图定制', '履约']
+
+// 后端作业的 kind ↔ 前端工具 id 多数同名;少数不同名,这里登记别名。
+// (优先用 job.tool_id;为空时用 kind 经此别名映射,再查 TOOL_BY_ID。)
+const KIND_ALIAS = { process: 'matting', 'pet-costume': 'pet', 'group-photo': 'group', 'print-extract': 'extract' }
+
+// 把一条作业(job)映射回它对应的工具声明,用于「任务中心」展示名称/图标/分组。找不到返回 null。
+export function toolForJob(job) {
+  const key = job.tool_id || KIND_ALIAS[job.kind] || job.kind
+  return TOOL_BY_ID[key] || null
+}
+
+// 工具所属「大模块」:视频类归「视频」,其余作图工具归「作图」。
+export function moduleOfTool(tool) {
+  if (!tool) return '其它'
+  return tool.cat === '视频' ? '视频' : '作图'
+}

@@ -19,8 +19,10 @@ from .services.billing import charge_for, refund
 from .auth import current_user
 from .models_db import User
 from .db import init_db, get_db, SessionLocal
-from .services.jobs import create_job, run_job, submit_ai_job, save_asset_in_background
+from .services.jobs import create_job, run_job
 from .services.library import save_as_asset
+from .tasks import run_tool
+from .web_utils import submit_celery
 from sqlalchemy.orm import Session
 from .routers import auth as auth_router
 from .routers import assets as assets_router
@@ -234,18 +236,11 @@ async def generate(background_tasks: BackgroundTasks,
                    db: Session = Depends(get_db)):
     """文生图(gpt-image / image2)。对偏薄的描述温和补全并透明返回。"""
     used_prompt, hint = refine_prompt(prompt)
-    if settings.openai_api_key:  # gpt-image 耗时 -> 后台作业,前端轮询 /api/jobs/{id}
-        uid = user.id
-
-        def _work(jid: str) -> dict:
-            img = text_to_image(used_prompt, size=size)
-            img.save(storage.output_path(jid, "generated.png"), format="PNG")
-            url = storage.output_url(jid, "generated.png")
-            save_asset_in_background(uid, img, f"文生图: {prompt[:24]}", url)
-            return {"image_url": url, "prompt_used": used_prompt, "hint": hint}
-
-        jid = submit_ai_job(background_tasks, db, "generate", uid, _work, refund_op="generate")
-        return JSONResponse({"job_id": jid, "status": "pending"})
+    if settings.openai_api_key:  # gpt-image 耗时 -> Celery 后台作业,前端轮询 /api/jobs/{id}
+        # 无输入图(纯文生图),只把 prompt/hint/size 传给 worker(见 tasks._work_generate)。
+        return JSONResponse(submit_celery(
+            run_tool, db, user, kind="generate", tool_id="generate", op="generate", raw=None,
+            params={"prompt": used_prompt, "orig": prompt, "hint": hint, "size": size}))
     try:
         img = text_to_image(used_prompt, size=size)
     except Exception as exc:  # noqa: BLE001
@@ -276,20 +271,11 @@ async def edit(
     """图生图 / 改图 / 换装 / 换背景(gpt-image / image2 edit)。"""
     raw = await file.read()
     mask_raw = await mask.read() if mask is not None else None
-    if settings.openai_api_key:  # gpt-image 耗时 -> 后台作业,前端轮询
-        uid = user.id
-
-        def _work(jid: str) -> dict:
-            src = Image.open(io.BytesIO(raw)); src.load()
-            mask_img = None
-            if mask_raw is not None:
-                mask_img = Image.open(io.BytesIO(mask_raw)); mask_img.load()
-            out_img = image_to_image(src, prompt, mask=mask_img, size=size)
-            out_img.save(storage.output_path(jid, "edited.png"), format="PNG")
-            return {"image_url": storage.output_url(jid, "edited.png")}
-
-        jid = submit_ai_job(background_tasks, db, "edit", uid, _work, refund_op="edit")
-        return JSONResponse({"job_id": jid, "status": "pending"})
+    if settings.openai_api_key:  # gpt-image 耗时 -> Celery 后台作业,前端轮询
+        # 输入图(+可选 mask)落盘,worker 自己读(见 tasks._work_edit)。
+        return JSONResponse(submit_celery(
+            run_tool, db, user, kind="edit", tool_id="", op="edit", raw=raw, mask_raw=mask_raw,
+            params={"prompt": prompt, "size": size}))
     try:
         src = Image.open(io.BytesIO(raw)); src.load()
         mask_img = None

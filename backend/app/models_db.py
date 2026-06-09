@@ -49,11 +49,16 @@ class Job(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     kind: Mapped[str] = mapped_column(String(32))     # process|generate|edit|split|publish
+    # 前端工具 id(tools.js),用于「我的空间·任务中心」按 大模块→小模块 分组与展示。
+    # 与 kind 分离:有的工具共用同一后端 ep(如「一键抠图」用 process),靠 tool_id 区分。
+    tool_id: Mapped[str] = mapped_column(String(32), default="")
     status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|running|done|error
     params: Mapped[dict] = mapped_column(JSON, default=dict)
     result: Mapped[dict] = mapped_column(JSON, default=dict)
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)   # 开始执行
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 结束(done/error)
 
 
 class Product(Base):
