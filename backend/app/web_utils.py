@@ -46,9 +46,16 @@ def submit_celery(task, db: Session, user: User, *, kind: str, tool_id: str, op:
     """异步端点的统一收尾:建 Job(存 params)+ 落输入图(若有)+ 入队(broker 挂了退点)。
 
     返回 {job_id, status:"pending"}。闭包不能跨进程,故输入通过 disk(upload_path)+ params 传给 worker。
+    超出存储配额(默认 2GB)→ 退回已扣的 n 笔 + 413(不让继续往满的盘里塞)。
     """
     from . import storage
     from .services.jobs import create_job
+    from .services.quota import usage
+    if usage(db, user.id)["over"]:
+        for _ in range(n):
+            refund(db, user, op)
+        raise HTTPException(status_code=413,
+                            detail="存储空间已用满(上限 2GB),请到「我的空间」清理回收站后重试(点数已退回)")
     job = create_job(db, kind, owner_id=user.id, tool_id=tool_id, params=params or {})
     if raw is not None:
         storage.upload_path(job.id).write_bytes(raw)

@@ -5,11 +5,26 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from ..db import get_db
-from ..models_db import Job, User
+from ..models_db import Asset, Job, User
 from ..auth import current_user
-from ..services.jobs import get_job
+from ..services.jobs import get_job, reap_stuck_jobs
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+
+def _result_urls(result: dict | None) -> list[str]:
+    """从作业结果里抽出所有产物 url(用于关联素材)。覆盖 *_url 字段 + images[] + files{}。"""
+    urls: list[str] = []
+    if not result:
+        return urls
+    for k, v in result.items():
+        if k.endswith("_url") and isinstance(v, str) and v:
+            urls.append(v)
+    if isinstance(result.get("images"), list):
+        urls += [u for u in result["images"] if isinstance(u, str) and u]
+    if isinstance(result.get("files"), dict):
+        urls += [u for u in result["files"].values() if isinstance(u, str) and u]
+    return urls
 
 
 def _iso_utc(dt: datetime | None) -> str | None:
@@ -45,6 +60,7 @@ def _serialize(job: Job) -> dict:
 def list_jobs(kind: str | None = None, limit: int | None = None,
               db: Session = Depends(get_db), user: User = Depends(current_user)):
     """列出当前用户的作业(最近在前),可按 kind 过滤;limit 限制条数(顶栏「最近任务」用)。"""
+    reap_stuck_jobs(db)  # 惰性自愈:顺手把超时僵尸标失败 + 退点(含历史遗留的 running 卡死)
     stmt = select(Job).where(Job.owner_id == user.id)
     if kind:
         stmt = stmt.where(Job.kind == kind)
@@ -63,3 +79,25 @@ def read_job(job_id: str, db: Session = Depends(get_db),
     if job is None or job.owner_id != user.id:
         raise HTTPException(status_code=404, detail="job not found")
     return _serialize(job)
+
+
+@router.delete("/{job_id}")
+def delete_job(job_id: str, db: Session = Depends(get_db),
+               user: User = Depends(current_user)):
+    """删除一条作业:把它产出的素材移入回收站(可恢复),再删作业行。owner 隔离,越权 404。
+
+    素材进回收站(非直接删盘)——给用户后悔的机会;真正释放空间在回收站「永久删除」时(purge 删盘)。
+    """
+    job = get_job(db, job_id)
+    if job is None or job.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="job not found")
+    urls = _result_urls(job.result)
+    if urls:
+        assets = db.execute(
+            select(Asset).where(Asset.owner_id == user.id, Asset.path.in_(urls))
+        ).scalars().all()
+        for a in assets:
+            a.deleted = True
+    db.delete(job)
+    db.commit()
+    return {"id": job_id, "deleted": True}

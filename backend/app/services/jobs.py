@@ -8,6 +8,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Callable
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..db import SessionLocal
 from ..models_db import Job
@@ -16,6 +17,54 @@ from ..storage import new_job_id
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+# 作业卡死阈值:超过这么久还 pending/running 视为僵尸(worker 崩了/进程被打断)。
+# 必须 >> 最慢的 AI 作业(实测印花提取约 4~5min),否则会误杀正常在跑的任务。
+STUCK_MINUTES = 30
+
+# kind → 退点 op(与各 router 的 charge_for/refund_op 对齐)。未列出的默认 "edit"。
+_KIND_REFUND_OP = {
+    "process": "process", "print-extract": "process", "upscale": "process", "vectorize": "process",
+    "generate": "generate",
+}
+
+
+def reap_stuck_jobs(db: Session, minutes: int = STUCK_MINUTES) -> int:
+    """把超时还 pending/running 的僵尸作业标 error + 退点(从未交付结果=应退)。返回清理条数。
+
+    在 `/api/jobs` 列表端点惰性调用——列表自愈,不依赖重启。pending/running 行很少,全量取回
+    Python 侧按 created_at 算龄(避开 SQLite naive datetime 与 aware 比较的坑)。
+    """
+    rows = db.execute(
+        select(Job).where(Job.status.in_(("pending", "running")))
+    ).scalars().all()
+    now = _now()
+    reaped = 0
+    for job in rows:
+        ca = job.created_at
+        if ca is None:
+            continue
+        if ca.tzinfo is None:
+            ca = ca.replace(tzinfo=timezone.utc)
+        if (now - ca).total_seconds() < minutes * 60:
+            continue
+        job.status = "error"
+        job.error = "作业超时或中断,已自动结束(可重试)"
+        job.finished_at = now
+        if job.owner_id is not None:
+            from ..models_db import User
+            from .billing import refund
+            op = _KIND_REFUND_OP.get(job.kind, "edit")
+            n = int((job.params or {}).get("n", 1)) if job.kind == "variants" else 1
+            u = db.get(User, job.owner_id)
+            if u is not None:
+                for _ in range(n):
+                    refund(db, u, op)
+        reaped += 1
+    if reaped:
+        db.commit()
+    return reaped
 
 
 def create_job(db: Session, kind: str, params: dict | None = None,

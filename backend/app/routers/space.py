@@ -8,12 +8,27 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..db import get_db
 from ..models_db import Asset, User
 from ..auth import current_user
 from ..services.quota import usage
 
 router = APIRouter(prefix="/api/space", tags=["space"])
+
+
+def _delete_asset_file(asset: Asset) -> None:
+    """删除素材对应的磁盘文件以真正释放空间。asset.path 形如 /files/{job_id}/{name}。"""
+    p = asset.path or ""
+    if not p.startswith("/files/"):
+        return
+    rel = p[len("/files/"):]  # {job_id}/{name}
+    try:
+        fp = settings.outputs_dir / rel
+        if fp.is_file():
+            fp.unlink()
+    except Exception:  # noqa: BLE001 — 删盘失败不应阻断 DB 清理
+        pass
 
 
 def _serialize(a: Asset) -> dict:
@@ -111,5 +126,6 @@ def restore_asset(asset_id: int, user: User = Depends(current_user), db: Session
 @router.delete("/assets/{asset_id}/purge")
 def purge_asset(asset_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     asset = _own_asset(db, asset_id, user.id)
+    _delete_asset_file(asset)  # 真删盘释放空间(不只是删 DB 行)
     db.delete(asset); db.commit()
     return {"id": asset_id, "purged": True}

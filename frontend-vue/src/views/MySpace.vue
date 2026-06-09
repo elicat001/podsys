@@ -7,59 +7,57 @@ import { listJobs, JOB_STATUS, jobThumb, jobDownloads, timeAgo, jobDuration } fr
 import { toolForJob, moduleOfTool } from '../data/tools.js'
 
 const route = useRoute()
-const overview = ref(null)
-// 支持从「最近任务」/工具弹窗深链 ?tab=jobs 直接落到任务中心
-const tab = ref(route.query.tab === 'jobs' ? 'jobs' : 'assets')
-const assets = ref([])
-const trash = ref([])
-const q = ref('')
-const loading = ref(false)
+const tab = ref(route.query.tab === 'trash' ? 'trash' : 'jobs')
 
-const CARDS = [
-  ['credits', '余额(点)'], ['assets', '素材'], ['products', '商品'],
-  ['shops', '店铺'], ['jobs', '作业'], ['collect_tasks', '采集任务'],
-]
-
-async function loadOverview() {
-  try { overview.value = (await api.get('/me/overview')).data } catch (e) { /* 静默 */ }
+// ── 存储容量 ──────────────────────────────────────────────
+const quota = ref(null)
+async function loadQuota() {
+  try { quota.value = (await api.get('/space/quota')).data } catch (e) { /* 静默 */ }
 }
-async function loadAssets() {
-  loading.value = true
-  try {
-    const { data } = await api.get('/space/assets', { params: { q: q.value, limit: 60 } })
-    assets.value = data.items || []
-  } finally { loading.value = false }
+function fmtBytes(b) {
+  b = b || 0
+  if (b < 1024) return b + ' B'
+  if (b < 1048576) return (b / 1024).toFixed(0) + ' KB'
+  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB'
+  return (b / 1073741824).toFixed(2) + ' GB'
 }
-async function loadTrash() {
-  const { data } = await api.get('/space/trash', { params: { limit: 60 } })
-  trash.value = data.items || []
-}
-async function toTrash(id) {
-  await api.post(`/space/assets/${id}/trash`)
-  ElMessage.success('已移入回收站'); loadAssets(); loadOverview()
-}
-async function restore(id) {
-  await api.post(`/space/assets/${id}/restore`)
-  ElMessage.success('已恢复'); loadTrash()
-}
-async function purge(id) {
-  await ElMessageBox.confirm('永久删除不可恢复,确定?', '确认', { type: 'warning' })
-  await api.delete(`/space/assets/${id}/purge`)
-  ElMessage.success('已永久删除'); loadTrash()
-}
+const capPercent = computed(() => (quota.value ? Math.min(100, quota.value.percent) : 0))
+const capColor = computed(() => (capPercent.value > 90 ? '#ff5d6c' : capPercent.value > 70 ? '#e6a23c' : '#67c23a'))
 
 // ── 任务中心 ──────────────────────────────────────────────
 const jobs = ref([])
+const statusFilter = ref('all') // all | active | done | error
+const showAll = ref(false)
+const PAGE = 40
 let jobsTimer = null
 
 async function loadJobs() {
   try { jobs.value = await listJobs() } catch (e) { /* 静默 */ }
 }
 
-// 按 大模块 → 小模块(cat)分组,组内最近在前(后端已倒序)。
+const statusCounts = computed(() => {
+  const c = { all: jobs.value.length, active: 0, done: 0, error: 0 }
+  for (const j of jobs.value) {
+    if (j.status === 'pending' || j.status === 'running') c.active++
+    else if (j.status === 'done') c.done++
+    else if (j.status === 'error') c.error++
+  }
+  return c
+})
+const hasActiveJob = computed(() => statusCounts.value.active > 0)
+
+const filtered = computed(() => {
+  if (statusFilter.value === 'all') return jobs.value
+  if (statusFilter.value === 'active') return jobs.value.filter((j) => j.status === 'pending' || j.status === 'running')
+  return jobs.value.filter((j) => j.status === statusFilter.value)
+})
+const capped = computed(() => (showAll.value ? filtered.value : filtered.value.slice(0, PAGE)))
+const hiddenCount = computed(() => filtered.value.length - capped.value.length)
+
+// 把(限量后的)作业按 大模块 → 小模块(cat)分组,组内最近在前。
 const jobGroups = computed(() => {
   const byModule = {}
-  for (const j of jobs.value) {
+  for (const j of capped.value) {
     const tool = toolForJob(j)
     const mod = moduleOfTool(tool)
     const cat = tool?.cat || '其它'
@@ -73,49 +71,81 @@ const jobGroups = computed(() => {
   }))
 })
 
-const hasActiveJob = computed(() => jobs.value.some((j) => j.status === 'pending' || j.status === 'running'))
-
 function jobTitle(job) {
   return job._tool ? `${job._tool.icon} ${job._tool.name}` : job.kind
 }
 
+async function delJob(job) {
+  try {
+    await ElMessageBox.confirm('删除该任务?产出的素材会移入回收站(可恢复)。', '确认删除', { type: 'warning' })
+  } catch (e) { return }
+  await api.delete('/jobs/' + job.id)
+  ElMessage.success('已删除')
+  loadJobs(); loadQuota()
+}
+
+// ── 回收站 ────────────────────────────────────────────────
+const trash = ref([])
+async function loadTrash() {
+  try { trash.value = (await api.get('/space/trash', { params: { limit: 100 } })).data.items || [] } catch (e) { /* 静默 */ }
+}
+async function restore(id) {
+  await api.post(`/space/assets/${id}/restore`)
+  ElMessage.success('已恢复'); loadTrash(); loadQuota()
+}
+async function purge(id) {
+  try {
+    await ElMessageBox.confirm('永久删除不可恢复,会释放存储空间,确定?', '确认', { type: 'warning' })
+  } catch (e) { return }
+  await api.delete(`/space/assets/${id}/purge`)
+  ElMessage.success('已永久删除'); loadTrash(); loadQuota()
+}
+
 function onTab(name) {
   if (name === 'trash') loadTrash()
-  else if (name === 'jobs') loadJobs()
-  else loadAssets()
+  else { loadJobs(); loadQuota() }
 }
 
 onMounted(() => {
-  loadOverview()
-  loadAssets()
-  loadJobs()
-  // 任务中心轮询:有运行中作业时定期刷新状态/结果。无活跃作业时也轻量轮询保证「最近任务」更新。
-  jobsTimer = setInterval(() => { if (tab.value === 'jobs' || hasActiveJob.value) loadJobs() }, 5000)
+  loadJobs(); loadQuota()
+  // 任务中心:有在跑的任务时定时刷新状态/结果。
+  jobsTimer = setInterval(() => { if (tab.value === 'jobs') loadJobs() }, 5000)
 })
 onUnmounted(() => clearInterval(jobsTimer))
 </script>
 
 <template>
   <div>
-    <h2>我的空间</h2>
-    <div class="cards">
-      <div v-for="[k, label] in CARDS" :key="k" class="card panel">
-        <div class="num">{{ overview ? overview[k] ?? 0 : '—' }}</div>
-        <div class="muted">{{ label }}</div>
+    <div class="head">
+      <h2>我的空间</h2>
+      <!-- 存储容量条 -->
+      <div v-if="quota" class="cap">
+        <div class="cap-info">
+          <span>存储 {{ fmtBytes(quota.used_bytes) }} / {{ fmtBytes(quota.quota_bytes) }}</span>
+          <span class="muted">{{ quota.percent }}%</span>
+        </div>
+        <div class="cap-bar"><div class="cap-fill" :style="{ width: capPercent + '%', background: capColor }" /></div>
+        <div v-if="quota.over" class="cap-warn">⚠️ 空间已满,新任务会被拒绝。请清理回收站释放空间。</div>
       </div>
     </div>
 
-    <el-tabs v-model="tab" @tab-change="onTab" style="margin-top: 18px">
+    <el-tabs v-model="tab" @tab-change="onTab" style="margin-top: 8px">
       <el-tab-pane name="jobs">
         <template #label>
-          <span>任务中心 <el-badge v-if="hasActiveJob" is-dot type="warning" /></span>
+          <span>任务中心 <el-badge v-if="hasActiveJob" :value="statusCounts.active" type="warning" /></span>
         </template>
+
         <div class="toolbar">
+          <div class="filters">
+            <button v-for="f in [['all','全部'],['active','处理中'],['done','已完成'],['error','失败']]"
+                    :key="f[0]" class="fchip" :class="{ on: statusFilter === f[0] }" @click="statusFilter = f[0]">
+              {{ f[1] }} <span class="fcount">{{ statusCounts[f[0]] }}</span>
+            </button>
+          </div>
           <el-button size="small" @click="loadJobs">🔄 刷新</el-button>
-          <span class="muted small" v-if="hasActiveJob">有任务正在后台处理,状态会自动更新…</span>
         </div>
 
-        <div v-if="!jobs.length" class="empty muted">暂无任务 —— 去「作图」选个工具运行试试</div>
+        <div v-if="!filtered.length" class="empty muted">暂无任务 —— 去「作图」选个工具运行试试</div>
 
         <div v-for="g in jobGroups" :key="g.module" class="mod-group">
           <div class="mod-title">{{ g.module }}</div>
@@ -135,46 +165,32 @@ onUnmounted(() => clearInterval(jobsTimer))
                       {{ JOB_STATUS[job.status]?.label || job.status }}
                     </el-tag>
                   </div>
-                  <div class="job-meta muted">
-                    {{ timeAgo(job.created_at) }} · 用时 {{ jobDuration(job) }}
-                  </div>
+                  <div class="job-meta muted">{{ timeAgo(job.created_at) }} · 用时 {{ jobDuration(job) }}</div>
                   <div v-if="job.status === 'error'" class="job-err" :title="job.error">{{ job.error }}</div>
-                  <div v-else-if="job.status === 'done'" class="job-dl">
-                    <a v-for="([name, url]) in jobDownloads(job.result)" :key="name" class="chip" :href="url" target="_blank" download>⬇ {{ name }}</a>
+                  <div class="job-actions">
+                    <a v-for="([name, url]) in jobDownloads(job.result)" :key="name" class="chip dl" :href="url" target="_blank" download>⬇ {{ name }}</a>
+                    <button class="chip del" @click="delJob(job)">🗑 删除</button>
                   </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </el-tab-pane>
 
-      <el-tab-pane label="素材库" name="assets">
-        <div class="toolbar">
-          <el-input v-model="q" placeholder="搜索素材名…" style="width: 240px" clearable @keyup.enter="loadAssets" @clear="loadAssets" />
-          <el-button @click="loadAssets">搜索</el-button>
+        <div v-if="hiddenCount > 0 && !showAll" class="more">
+          <el-button @click="showAll = true">显示全部({{ hiddenCount }} 条更多)</el-button>
         </div>
-        <el-table :data="assets" v-loading="loading" style="margin-top: 12px" empty-text="暂无素材">
-          <el-table-column prop="id" label="ID" width="70" />
-          <el-table-column prop="name" label="名称" />
-          <el-table-column prop="source" label="来源" width="110" />
-          <el-table-column prop="risk" label="风险" width="90" />
-          <el-table-column prop="size_bytes" label="大小" width="110">
-            <template #default="{ row }">{{ Math.round((row.size_bytes || 0) / 1024) }} KB</template>
-          </el-table-column>
-          <el-table-column label="操作" width="110">
-            <template #default="{ row }">
-              <el-button size="small" type="danger" plain @click="toTrash(row.id)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
       </el-tab-pane>
 
       <el-tab-pane label="回收站" name="trash">
+        <p class="muted small" style="margin: 4px 0 12px">永久删除会真正释放存储空间。</p>
         <el-table :data="trash" empty-text="回收站为空">
           <el-table-column prop="id" label="ID" width="70" />
           <el-table-column prop="name" label="名称" />
           <el-table-column prop="source" label="来源" width="110" />
+          <el-table-column label="大小" width="100">
+            <template #default="{ row }">{{ fmtBytes(row.size_bytes) }}</template>
+          </el-table-column>
           <el-table-column label="操作" width="200">
             <template #default="{ row }">
               <el-button size="small" @click="restore(row.id)">恢复</el-button>
@@ -188,25 +204,70 @@ onUnmounted(() => clearInterval(jobsTimer))
 </template>
 
 <style scoped>
-.cards {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 12px;
-  margin-top: 14px;
+.head {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
 }
-.card {
-  padding: 18px;
-  text-align: center;
+.head h2 {
+  margin: 0;
 }
-.num {
-  font-size: 26px;
-  font-weight: 800;
-  color: var(--brand2);
+.cap {
+  flex: 1;
+  min-width: 260px;
+  max-width: 420px;
+}
+.cap-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+.cap-bar {
+  height: 8px;
+  border-radius: 5px;
+  background: var(--line2);
+  overflow: hidden;
+}
+.cap-fill {
+  height: 100%;
+  border-radius: 5px;
+  transition: width 0.3s ease;
+}
+.cap-warn {
+  color: var(--err);
+  font-size: 12px;
+  margin-top: 6px;
 }
 .toolbar {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.filters {
+  display: flex;
+  gap: 8px;
+}
+.fchip {
+  border: 1px solid var(--line2);
+  background: var(--panel);
+  color: var(--mut);
+  border-radius: 16px;
+  padding: 4px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.fchip.on {
+  border-color: var(--brand);
+  color: var(--fg);
+  background: var(--panel2);
+}
+.fcount {
+  opacity: 0.6;
+  font-size: 11px;
 }
 .small {
   font-size: 12px;
@@ -215,7 +276,6 @@ onUnmounted(() => clearInterval(jobsTimer))
   padding: 48px 0;
   text-align: center;
 }
-/* 任务中心:大模块 → 小模块 → 作业卡 */
 .mod-group {
   margin-top: 18px;
 }
@@ -243,7 +303,6 @@ onUnmounted(() => clearInterval(jobsTimer))
   display: flex;
   gap: 12px;
   padding: 12px;
-  align-items: stretch;
 }
 .job-thumb {
   flex: 0 0 72px;
@@ -315,15 +374,20 @@ onUnmounted(() => clearInterval(jobsTimer))
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.job-dl {
+.job-actions {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
   margin-top: auto;
+  align-items: center;
 }
-@media (max-width: 900px) {
-  .cards {
-    grid-template-columns: repeat(3, 1fr);
-  }
+.del {
+  border: none;
+  cursor: pointer;
+  color: var(--err);
+}
+.more {
+  text-align: center;
+  margin: 20px 0;
 }
 </style>

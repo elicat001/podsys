@@ -164,6 +164,55 @@ def test_variants_broker_down_refunds_n(client, auth_headers, png, monkeypatch):
     assert after == before, f"broker 挂了应退回 3 笔:before={before} after={after}"
 
 
+def test_reaper_marks_stale_running_error_and_refunds(client, auth_headers):
+    """超时还 running 的僵尸 → 列表端点惰性清理为 error + 退点。"""
+    from datetime import datetime, timezone, timedelta
+    from app.db import SessionLocal
+    from app.models_db import Job
+    me = client.get("/api/auth/me", headers=auth_headers).json()
+    uid, before = me["user_id"], me["credits"]
+    s = SessionLocal()
+    try:
+        s.add(Job(id="stalejob0001", kind="vectorize", tool_id="vectorize", status="running",
+                  params={}, result={}, error="", owner_id=uid,
+                  created_at=datetime.now(timezone.utc) - timedelta(hours=2)))
+        s.commit()
+    finally:
+        s.close()
+    jobs = client.get("/api/jobs", headers=auth_headers).json()
+    stale = next(x for x in jobs if x["id"] == "stalejob0001")
+    assert stale["status"] == "error", stale
+    after = client.get("/api/auth/me", headers=auth_headers).json()["credits"]
+    assert after == before + 2, f"vectorize(process=2)应退回:before={before} after={after}"
+
+
+def test_delete_job_trashes_asset(client, auth_headers, png, monkeypatch):
+    """删除任务 → 作业行删除(再查 404)+ 关联素材进回收站。"""
+    _enable_ai(monkeypatch)
+    import app.tasks as tasks
+    monkeypatch.setattr(tasks, "extract_print_design", lambda src: _fake_design())
+    jid = client.post("/api/print-extract", headers=auth_headers,
+                      files={"file": ("a.png", png(), "image/png")}).json()["job_id"]
+    assert client.get(f"/api/jobs/{jid}", headers=auth_headers).json()["status"] == "done"
+
+    assert client.delete(f"/api/jobs/{jid}", headers=auth_headers).status_code == 200
+    assert client.get(f"/api/jobs/{jid}", headers=auth_headers).status_code == 404
+    trash = client.get("/api/space/trash", headers=auth_headers).json()["items"]
+    assert any(t["name"] == "印花提取" for t in trash), trash
+
+
+def test_quota_over_rejects_and_refunds(client, auth_headers, png, monkeypatch):
+    """超出存储配额 → 413 + 退点(不往满盘塞)。"""
+    monkeypatch.setattr("app.services.quota.usage",
+                        lambda db, uid: {"over": True, "used_bytes": 9, "quota_bytes": 1, "percent": 900.0})
+    before = client.get("/api/auth/me", headers=auth_headers).json()["credits"]
+    r = client.post("/api/vectorize", headers=auth_headers,
+                    data={"colors": 6}, files={"file": ("a.png", png(), "image/png")})
+    assert r.status_code == 413, r.text
+    after = client.get("/api/auth/me", headers=auth_headers).json()["credits"]
+    assert after == before, f"超容应退点:before={before} after={after}"
+
+
 def test_job_owner_isolation(client, auth_headers, monkeypatch, png):
     """他人作业 404(不泄露存在性)。"""
     _enable_ai(monkeypatch)
