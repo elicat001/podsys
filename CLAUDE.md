@@ -260,10 +260,14 @@ print/mockup/production 三个 URL 可访问(HTTP 200),production 为 30×40cm@3
 > **同机还有个无关的 Django 项目 `kejing-gunicorn`(/www/wwwroot/django,8000)——别碰。
 > 它占用系统 Redis 的 6379/db1,所以本项目的 Celery broker 必须另起一个 6380 实例,别串。**
 
-> **⏳ 待办(Phase D,尚未上线)**:迁到 Celery 后,**生产还缺两件**才能让异步工具真正出结果:
-> ① 另起一个 `redis-server` 实例跑 `127.0.0.1:6380`(独立配置 + systemd 单元,只 bind 本机);
-> ② 一个 `podsys-worker.service`(用户 `www`,`celery -A app.celery_app worker -l info`)。
-> 在这之前,线上 AI 工具会走「优雅降级」→ 502 + 退点。`deploy.sh` 也需补 restart worker。**动服务器前先 SSH 核对边界,不碰 Django/6379。**
+> **✅ Phase D 已上线**:异步执行层已部署。生产侧基建(一次性,已建好,勿重复建):
+> - **独立 Redis 实例 6380**:`/etc/redis/redis-podsys.conf`(`port 6380` + `bind 127.0.0.1` + `save ""`
+>   无持久化,broker 消息可丢、Job 表才是真相源)+ systemd 模板实例 **`redis-server@podsys`**(enable+start)。
+>   与 Django 的 6379/db1 **物理隔离**。排障:`redis-cli -p 6380 ping`。
+> - **`podsys-worker.service`**(用户 `www`,`celery -A app.celery_app worker -l info --concurrency=4`,
+>   连 6380;enable+start)。日志 `/var/log/podsys/worker-{out,err}.log`。
+> - `deploy.sh` 已补:`pip install -r requirements.txt`(装 celery/redis)+ 末尾 restart worker。
+> 排障:`systemctl status redis-server@podsys podsys-worker podsys`。**动服务器前先 SSH 核对边界,不碰 Django/6379。**
 
 **架构**:nginx 把 `/` 全转给后端;后端一身二职——`/api`、`/files` 走业务,其余路径服务
 Vue 构建产物 `frontend-vue/dist`(`main.py` 的 `_SPAStaticFiles`:404 回退 `index.html`,支持
