@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from .. import storage
@@ -42,10 +43,7 @@ _FLATTEN_PROMPT = (
     "the person, hands, fabric folds, drape, shadows, lighting gradients, perspective "
     "distortion and the background scene. Reproduce the design FAITHFULLY as clean, SOLID, "
     "fully OPAQUE, high-contrast, print-ready flat artwork: keep the exact same text "
-    "wording, logos, motifs, colors, layout and proportions. Keep the design's ORIGINAL "
-    "upright orientation exactly as it reads on the product — text must read horizontally "
-    "left-to-right; do NOT rotate, tilt or flip the artwork, even when the product photo is "
-    "tall and narrow (pad with white space around it instead of rotating). Lay it out evenly "
+    "wording, logos, motifs, colors, layout and proportions. Lay it out evenly "
     "lit and straightened on a pure white background (centered for a single motif, or filled "
     "edge-to-edge for an all-over repeating pattern). Do NOT redesign, restyle, add or remove "
     "anything, and do NOT make it translucent, frosted or blurry — output only the original "
@@ -89,32 +87,45 @@ def _border_bg_color(rgb: Image.Image) -> tuple[int, int, int]:
     return (rs[m], gs[m], bs[m])
 
 
-def _white_bg_to_transparent(img: Image.Image, tol: int = 55,
-                             min_bg_frac: float = 0.02, max_bg_frac: float = 0.97) -> Image.Image:
-    """把『连通到画面边缘的底色背景』抠成透明,**完整保留设计**(含满铺花型/装饰图)。
+def _white_bg_to_transparent(img: Image.Image, tol: int = 55, min_bg_frac: float = 0.02,
+                             max_bg_frac: float = 0.97, solid_bg_frac: float = 0.65) -> Image.Image:
+    """把底色背景抠成透明。按"设计是否稀疏"分两策略,兼顾 logo 与满铺花型:
 
-    为什么用这个而不是 rembg:rembg 做语义"抠主体",对满铺/装饰类印花(枕套花纹、窗帘)
-    会把整片设计当背景删光(实测仅剩残影)。这里只去掉"连通到边缘的底色",设计内部一律保留:
-    1. 取四边中位色当底色;2. 从四边 flood-fill(容差 tol)标记连通背景;3. 该区域 alpha→0。
-    防呆:背景占比 <min 或 >max(没有真正可抠的底)→ 原样返回不透明,绝不弄巧成拙。
+    - **底色占主导(≥solid_bg_frac,如 logo/文字/贴纸这类稀疏设计)**:全局色键——任意位置接近
+      底色的像素都抠透明,**包括被笔画圈住的字母内孔/镂空**(SPORTS 的 P/O/R/S 中间那些"洞")。
+    - **底色非主导(满铺花型/装饰图)**:只抠"连通到画面边缘的外部底",**保留设计内部同色区域**
+      (枕套花纹里大片同色是设计的一部分,不能当背景删——这是早期定调,见 CLAUDE.md 演进史)。
+    防呆:底色占比 <min 或 >max(没有真正可抠的底)→ 原样返回不透明,绝不弄巧成拙。
     """
     base = img.convert("RGBA")
     w, h = base.size
     rgb = base.convert("RGB")
     bg = _border_bg_color(rgb)
-    pad = Image.new("RGB", (w + 2, h + 2), bg)
-    pad.paste(rgb, (1, 1))
-    seed = (255, 0, 255)
-    ImageDraw.floodfill(pad, (0, 0), seed, thresh=tol)
-    filled = pad.crop((1, 1, w + 1, h + 1))
-    r, g, b = filled.split()
-    mask = ImageChops.multiply(
-        ImageChops.multiply(r.point(lambda v: 255 if v == seed[0] else 0),
-                            g.point(lambda v: 255 if v == seed[1] else 0)),
-        b.point(lambda v: 255 if v == seed[2] else 0))
-    if not (min_bg_frac <= mask.histogram()[255] / float(w * h) <= max_bg_frac):
+
+    # 全局底色掩码:HxW 布尔,任意位置接近底色(含字母内孔)。
+    arr = np.asarray(rgb, dtype=np.int16)
+    bgmask = (np.abs(arr - np.array(bg, dtype=np.int16)) <= tol).all(axis=2)
+    bg_frac = float(bgmask.mean())
+    if not (min_bg_frac <= bg_frac <= max_bg_frac):
         return base  # 没有明显可抠的底色 → 保持不透明
-    mask = mask.filter(ImageFilter.GaussianBlur(0.6))
+
+    if bg_frac >= solid_bg_frac:
+        mask_arr = bgmask  # 稀疏设计:连内孔一并抠透明
+    else:
+        # 满铺花型:只抠连通到边缘的外部底(flood-fill),保留设计内部同色区域
+        pad = Image.new("RGB", (w + 2, h + 2), bg)
+        pad.paste(rgb, (1, 1))
+        seed = (255, 0, 255)
+        ImageDraw.floodfill(pad, (0, 0), seed, thresh=tol)
+        filled = pad.crop((1, 1, w + 1, h + 1))
+        r, g, b = filled.split()
+        outer = ImageChops.multiply(
+            ImageChops.multiply(r.point(lambda v: 255 if v == seed[0] else 0),
+                                g.point(lambda v: 255 if v == seed[1] else 0)),
+            b.point(lambda v: 255 if v == seed[2] else 0))
+        mask_arr = np.asarray(outer, dtype=bool)
+
+    mask = Image.fromarray((mask_arr.astype("uint8") * 255), mode="L").filter(ImageFilter.GaussianBlur(0.6))
     base.putalpha(ImageChops.subtract(base.split()[3], mask))
     return base
 
@@ -124,8 +135,8 @@ def _extract_ai(image: Image.Image) -> tuple[Image.Image, dict]:
     由 `extract_print_design` 捕获后降级到本地。
 
     ⚠️ 方向的已知局限:对**圆柱硬质产品**(瓶子/杯子)的横向 logo,gpt-image 有时会把设计
-    旋转 90°(为填充竖画布)。实测 prompt 文字约束、正方输入+正方输出都压不住它。
-    因此**方向交给前端的『旋转』按钮**让用户一键校正(见前端 ResultView),后端不强拗。"""
+    旋转 90°(为填充竖画布)。实测**用 prompt 约束方向(禁止旋转/翻转)完全无效**,故已从
+    `_FLATTEN_PROMPT` 移除该指令;方向校正交给前端的『旋转』按钮(见 ResultView),后端不强拗。"""
     from ..ai.openai_image import OpenAIImageClient  # 惰性 import(重依赖,且离线不应触发)
 
     out = OpenAIImageClient().edit(_downscale(image), _FLATTEN_PROMPT).convert("RGBA")

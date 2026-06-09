@@ -25,6 +25,19 @@ def test_white_key_keeps_design_removes_edge_bg():
     assert op > 0.3, f"设计被删太多,仅剩 {op:.0%}"
 
 
+def test_white_key_logo_removes_enclosed_counter():
+    """稀疏 logo/文字:被笔画圈住的内孔(同底色)也要抠透明(SPORTS 字母 P/O/R/S 中间的洞)。"""
+    img = Image.new("RGB", (240, 240), (255, 255, 255))   # 大片白底占主导(稀疏设计)
+    d = ImageDraw.Draw(img)
+    d.ellipse([80, 80, 160, 160], fill=(20, 20, 20))       # 黑色环(类比字母笔画)
+    d.ellipse([105, 105, 135, 135], fill=(255, 255, 255))  # 环心白 = 被笔画圈住的内孔
+    out = _white_bg_to_transparent(img)
+    a = out.getchannel("A")
+    assert a.getpixel((3, 3)) == 0          # 外部白 → 透明
+    assert a.getpixel((120, 120)) == 0      # 内孔白(被黑圈住)→ 也透明 ✓(本次修复点)
+    assert a.getpixel((85, 120)) == 255     # 黑色笔画 → 保留不透明
+
+
 def _design_on_white(bg=(255, 255, 255)) -> Image.Image:
     img = Image.new("RGB", (200, 200), bg)
     ImageDraw.Draw(img).rectangle([70, 70, 130, 130], fill=(220, 40, 40))  # 居中红色图案
