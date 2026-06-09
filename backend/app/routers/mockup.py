@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from .. import storage
 from ..auth import current_user
+from ..config import settings
 from ..db import get_db
 from ..models_db import User
 from ..models_team import MockupTemplate
@@ -123,6 +124,7 @@ async def replace(
     file: UploadFile = File(...),                          # 新印花
     template_id: int = Form(0),                            # 团队资源套图模板(0=用上传的产品照)
     mockups: list[UploadFile] | None = File(None),         # 临时上传的产品照(template_id=0 时用)
+    engine: str = Form("auto"),                            # ai=智能(gpt 真实印制)| fast=快速(本地几何)| auto=有 key 走 AI
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
@@ -155,6 +157,8 @@ async def replace(
         n = len(mockup_raws)
     if not (1 <= n <= MAX_BATCH):
         raise HTTPException(status_code=400, detail=f"套图数量需在 1~{MAX_BATCH} 之间")
+    if engine == "ai" and not settings.openai_api_key:  # 智能需 key(还没扣点,直接拒)
+        raise HTTPException(status_code=502, detail="智能运行需配置 AI key;可改用「快速运行」(本地)")
 
     if usage(db, user.id)["over"]:  # 超容:还没扣点,直接 413
         raise HTTPException(status_code=413, detail="存储空间已用满(上限 2GB),请到「我的空间」清理后重试")
@@ -170,7 +174,7 @@ async def replace(
         raise HTTPException(status_code=402, detail=str(exc)) from exc
 
     job = create_job(db, "mockup-replace", owner_id=user.id, tool_id="mockup",
-                     params={"template_id": template_id, "n": n})
+                     params={"template_id": template_id, "n": n, "engine": engine})
     storage.upload_path(job.id).write_bytes(print_raw)               # 新印花
     for i, mraw in enumerate(mockup_raws):                           # 临时产品照(若有)
         storage.upload_path(f"{job.id}_m{i}").write_bytes(mraw)

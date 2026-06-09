@@ -303,6 +303,7 @@ def _work_mockup_replace(job_id: str, job: Job, db: Session) -> dict:
     """
     from .services.mockup_replace import replace_print
     p = job.params
+    prefer_local = p.get("engine") == "fast"
     new_print = _load_input(job_id)  # 新印花
     products: list[Image.Image] = []
     tid = int(p.get("template_id") or 0)
@@ -327,7 +328,7 @@ def _work_mockup_replace(job_id: str, job: Job, db: Session) -> dict:
 
     urls = []
     for i, prod in enumerate(products):
-        out = replace_print(prod, new_print)
+        out = replace_print(prod, new_print, prefer_local=prefer_local)
         name = f"mockup_{i}.png"
         out.save(storage.output_path(job_id, name), format="PNG")
         url = storage.output_url(job_id, name)

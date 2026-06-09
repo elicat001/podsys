@@ -34,11 +34,11 @@ async def variants(
     file: UploadFile = File(...),
     n: int = Form(3),
     prompt: str = Form(""),
+    engine: str = Form("auto"),   # ai=智能(gpt)| fast=快速(本地换色)| auto=有 key 走 AI 否则本地
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    """图裂变:生成 N 个爆款变体。按张计费(P0-1:n 次 AI 调用 = n 次扣点),
-    任意失败则把已扣的 n 笔全部退回,保证扣点笔数与退点笔数对齐。"""
+    """图裂变:生成 N 个爆款变体。按张计费(P0-1:n 次 = n 次扣点),任意失败全退,笔数对齐。"""
     if n < 1 or n > 6:
         raise HTTPException(status_code=400, detail="n 必须在 1~6 之间")
 
@@ -64,15 +64,20 @@ async def variants(
         _refund_all()
         raise HTTPException(status_code=400, detail=f"无法读取图片: {exc}") from exc
 
-    # 有 key:gpt-image 耗时(单张数十秒)→ Celery 后台作业避免 HTTP 超时(Failed to fetch);
-    # 立即返回 job_id,前端轮询。按张扣的退点笔数 = n(broker 挂了或作业失败都退 n 笔)。
-    if settings.openai_api_key:
+    use_ai = engine == "ai" or (engine == "auto" and settings.openai_api_key)
+    if engine == "ai" and not settings.openai_api_key:
+        _refund_all()
+        raise HTTPException(status_code=502, detail="智能运行需配置 AI key;可改用「快速运行」(本地)")
+
+    # 智能:gpt-image 耗时 → Celery 后台作业(worker 内 make_variants 走 AI),退点笔数 = n
+    if use_ai:
         return submit_celery(run_tool, db, user, kind="variants", tool_id="variants", op="edit",
                              raw=raw, params={"n": n, "prompt": prompt}, n=n)
 
+    # 快速:本地换色,同步直接返回(强制本地)
     try:
         src = Image.open(io.BytesIO(raw)); src.load()
-        imgs = design_tools.make_variants(src, n, prompt=prompt)
+        imgs = design_tools.make_variants(src, n, prompt=prompt, prefer_local=True)
     except Exception as exc:  # noqa: BLE001
         _refund_all()
         raise HTTPException(status_code=502, detail="图裂变失败,请稍后重试") from exc

@@ -105,9 +105,9 @@ def _fit_contain(img: Image.Image, bw: int, bh: int) -> tuple[Image.Image, int, 
     return fitted, (bw - nw) // 2, (bh - nh) // 2
 
 
-def replace_print(product: Image.Image, new_print: Image.Image) -> Image.Image:
-    """套图替换入口:有 key 走 AI 多图合成(真实感),失败/无 key 降级几何贴合。"""
-    if settings.openai_api_key:
+def replace_print(product: Image.Image, new_print: Image.Image, prefer_local: bool = False) -> Image.Image:
+    """套图替换入口:智能=AI 多图合成(真实感);快速/无 key/AI 失败=几何贴合。"""
+    if not prefer_local and settings.openai_api_key:
         try:
             return _replace_ai(product, new_print)
         except Exception as exc:  # noqa: BLE001 — AI 失败降级几何,不阻断出图

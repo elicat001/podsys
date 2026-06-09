@@ -32,9 +32,10 @@ watch(() => [dlg.visible, tool.value?.id], async () => {
   await loadDynSources()
 })
 
-async function run() {
+async function run(eng) {
   let fd
   try { fd = buildFormData() } catch (e) { ElMessage.warning(e.message); return }
+  if (eng) fd.engine = eng  // 快速=fast(本地)/ 智能=ai;不传=auto(单按钮工具)
   running.value = true
   result.value = null
   try {
@@ -93,8 +94,12 @@ function goTaskCenter() {
         <ResultView :tool="tool" :data="result" />
       </div>
 
-      <!-- 异步工具提示:运行会丢后台 -->
-      <p v-if="tool.async && !result" class="muted hint">
+      <!-- 双引擎说明 -->
+      <p v-if="tool.dualEngine && !result" class="muted hint">
+        ⚡ 快速运行 = 本地实现(即时、稳定);🤖 智能运行 = AI 实现(效果更好,需稍等)。约 {{ costHint }}。
+      </p>
+      <!-- 单异步工具提示:运行会丢后台 -->
+      <p v-else-if="tool.async && !result" class="muted hint">
         ⏳ 提交后将在后台处理,无需在此等待,可到「我的空间 · 任务中心」查看结果。
       </p>
     </div>
@@ -104,7 +109,13 @@ function goTaskCenter() {
         <el-button v-if="tool && tool.async" link @click="goTaskCenter">查看任务中心 →</el-button>
         <span style="flex: 1" />
         <el-button @click="dlg.close()">关闭</el-button>
-        <el-button type="primary" :loading="running" @click="run">
+        <!-- 双引擎:两个按钮 -->
+        <template v-if="tool && tool.dualEngine">
+          <el-button :loading="running" @click="run('fast')">⚡ 快速运行</el-button>
+          <el-button type="primary" :loading="running" @click="run('ai')">🤖 智能运行</el-button>
+        </template>
+        <!-- 单引擎:一个按钮 -->
+        <el-button v-else type="primary" :loading="running" @click="run()">
           {{ running ? '提交中…' : `运行 · ${costHint}` }}
         </el-button>
       </div>

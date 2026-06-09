@@ -72,17 +72,15 @@ def _placeholder_title(keywords: str, category: str, img: Image.Image | None = N
 
 
 def generate_title(keywords: str = "", category: str = "apparel",
-                   img: Image.Image | None = None) -> dict:
+                   img: Image.Image | None = None, prefer_local: bool = False) -> dict:
     """生成电商标题 + 关键词。
 
     返回 `{title, keywords:[...], degraded:bool}`。
-    - 无 key:降级占位(degraded=True),调用方据此**不扣点**。
-    - 有 key:调 `settings.openai_text_model`(默认 gpt-5.4-mini,本网关需流式);
-      **传了图就让模型识图**(图压到 512px JPEG 省 token),结合关键词出吸引人的 SEO 标题;成功 degraded=False。
-    - **有 key 但模型不可用 / 调用或解析失败** → 自动降级本地占位(degraded=True),
-      不再抛错,调用方据 degraded 退点。
+    - prefer_local=True(快速)或无 key:本地规则引擎(degraded=True),调用方据此**不扣点**。
+    - 有 key 且不强制本地(智能):调 `settings.openai_text_model` 识图出 SEO 标题;成功 degraded=False。
+    - **有 key 但模型不可用 / 调用或解析失败** → 自动降级本地占位(degraded=True),不抛错,据 degraded 退点。
     """
-    if not has_openai_key():
+    if prefer_local or not has_openai_key():
         return _placeholder_title(keywords, category, img)
 
     try:

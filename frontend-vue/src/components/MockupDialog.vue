@@ -49,12 +49,13 @@ function next() {
   step.value = 2
 }
 
-async function run() {
+async function run(eng) {
   if (!printFile.value) { ElMessage.warning('请上传印花'); return }
   running.value = true
   try {
     const fd = new FormData()
     fd.append('file', printFile.value)
+    fd.append('engine', eng)  // fast=本地几何 / ai=gpt 真实印制
     if (sourceMode.value === 'template') {
       fd.append('template_id', pickedTemplate.value.id)
     } else {
@@ -130,7 +131,7 @@ function goTeamResources() {
     <div v-else>
       <p class="muted small src-sum">套图来源:{{ sourceSummary }}</p>
       <ImageUpload v-model="printFile" label="上传新印花(将替换每张产品照的原印花)" />
-      <p class="muted hint">⏳ 运行后在后台逐张替换,无需等待,去「我的空间 · 任务中心」看结果。</p>
+      <p class="muted hint">⚡ 快速运行 = 本地几何替换(即时,曲面一般);🤖 智能运行 = AI 真实印制(效果好,需稍等)。后台逐张处理,去任务中心看结果。</p>
     </div>
 
     <template #footer>
@@ -139,7 +140,10 @@ function goTeamResources() {
         <span style="flex: 1" />
         <el-button @click="dlg.close()">关闭</el-button>
         <el-button v-if="step === 1" type="primary" :disabled="!sourceReady" @click="next">下一步</el-button>
-        <el-button v-else type="primary" :loading="running" @click="run">运行 · 套图替换</el-button>
+        <template v-else>
+          <el-button :loading="running" @click="run('fast')">⚡ 快速运行</el-button>
+          <el-button type="primary" :loading="running" @click="run('ai')">🤖 智能运行</el-button>
+        </template>
       </div>
     </template>
   </el-dialog>

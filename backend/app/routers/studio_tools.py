@@ -40,15 +40,16 @@ async def title(
     keywords: str = Form(""),
     category: str = Form("apparel"),
     file: UploadFile | None = File(None),
+    engine: str = Form("auto"),   # ai=智能(识图 SEO,需 key,扣1)| fast=快速(本地规则,免费)| auto=有 key 走 AI
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    """标题提取。**AI 为主路径**(走 key,扣 1 点);**无 key/AI 失败 → 本地规则引擎兜底,不扣点**(退回)。
-
-    可选上传图片:本地兜底时用图的主色调给标题加前缀(Minimalist/具体色名等)。
-    """
-    has_key = studio_tools.has_openai_key()
-    # 可选图片:仅本地降级引擎用其主色调(损坏/未传则忽略,不影响主流程)
+    """标题提取。智能(AI 识图,扣 1 点);快速(本地规则,不扣点)。"""
+    prefer_local = engine == "fast"
+    if engine == "ai" and not studio_tools.has_openai_key():
+        raise HTTPException(status_code=502, detail="智能运行需配置 AI key;可改用「快速运行」(本地)")
+    has_key = studio_tools.has_openai_key() and not prefer_local
+    # 可选图片:本地引擎用其主色调 / AI 识图(损坏/未传则忽略)
     img: Image.Image | None = None
     if file is not None:
         try:
@@ -60,7 +61,7 @@ async def title(
             img = None
     charged = False
     if has_key:
-        # 有 key 才扣点(余额不足 -> charge 内部抛 InsufficientCredits)
+        # 有 key 且非快速才扣点(余额不足 -> charge 内部抛 InsufficientCredits)
         try:
             charge(db, user, "title")
             charged = True
@@ -68,7 +69,8 @@ async def title(
             raise HTTPException(status_code=402, detail=str(exc)) from exc
 
     try:
-        result = studio_tools.generate_title(keywords=keywords, category=category, img=img)
+        result = studio_tools.generate_title(keywords=keywords, category=category, img=img,
+                                             prefer_local=prefer_local)
     except Exception as exc:  # noqa: BLE001
         if charged:
             refund(db, user, "title")

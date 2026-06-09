@@ -91,7 +91,7 @@ def meme_prompt(text: str, extra: str = "") -> str:
 
 
 # 有 OpenAI key → gpt-image(语义更强);无 key → 本地真实引擎(effects),不再报错。
-def make_variants(image: Image.Image, n: int, prompt: str = "") -> list[Image.Image]:
+def make_variants(image: Image.Image, n: int, prompt: str = "", prefer_local: bool = False) -> list[Image.Image]:
     """图裂变:生成 n 个变体。
 
     有 key 时**并行**调用 gpt-image:单次 edit 是阻塞网络 I/O(实测网关 ~80s),
@@ -99,12 +99,12 @@ def make_variants(image: Image.Image, n: int, prompt: str = "") -> list[Image.Im
     "Failed to fetch")。并行后墙钟≈单次。SDK 客户端(httpx 连接池)线程安全、可跨线程复用。
     任一调用失败时 list() 迭代会抛出,交由 router 退回全部已扣点。
     """
-    if _has_key():
+    if not prefer_local and _has_key():
         client = _client(); p = variants_prompt(prompt)
         src = _downscale_for_edit(image)  # 大图先缩,显著降低上传+网关耗时(输出≤1024,质量不变)
         with ThreadPoolExecutor(max_workers=min(n, 4)) as ex:
             return list(ex.map(lambda _: client.edit(src, p), range(n)))
-    # 无 key:主体感知离线裂变(只给印花换色,人/背景不变);定位不可用时内部自动回退整图改色
+    # 本地(快速 / 无 key):主体感知离线裂变(只给印花换色,人/背景不变);定位不可用时回退整图改色
     return effects.print_colorway_variants(image, n)
 
 

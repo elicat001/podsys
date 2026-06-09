@@ -9,7 +9,7 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from .. import storage
@@ -17,9 +17,10 @@ from ..config import settings
 from ..db import get_db
 from ..models_db import User
 from ..services.billing import charge_for, refund
+from ..services.design_extract import extract_design
 from ..services.jobs import create_job
 from ..services.library import save_as_asset
-from ..services.print_extract import extract_print_design, save_print_outputs
+from ..services.print_extract import save_print_outputs
 from ..tasks import run_print_extract
 from ..web_utils import enqueue_or_refund, read_image_or_refund
 
@@ -29,28 +30,33 @@ router = APIRouter(prefix="/api/print-extract", tags=["print-extract"])
 @router.post("")
 def print_extract(
     file: UploadFile = File(...),
+    engine: str = Form("auto"),   # ai=智能(gpt 重绘,需 key)| fast=快速(本地保真)| auto=有 key 走 AI 否则本地
     user: User = Depends(charge_for("process")),
     db: Session = Depends(get_db),
 ):
     raw = file.file.read()
     src = read_image_or_refund(raw, db, user, "process")  # 读图失败 → 400 + 退点
 
-    # AI 路径(慢)→ Celery 作业:落盘原图 + 建 Job + 入队;失败退点由 worker 内
-    # run_job_in_worker(refund_op="process") 兜底。
-    if settings.print_extract_ai and settings.openai_api_key:
+    use_ai = engine == "ai" or (engine == "auto" and settings.print_extract_ai and settings.openai_api_key)
+    if engine == "ai" and not settings.openai_api_key:
+        refund(db, user, "process")
+        raise HTTPException(status_code=502, detail="智能运行需配置 AI key;可改用「快速运行」(本地)")
+
+    if use_ai:  # 智能:AI 重绘 → Celery 作业(worker 内 extract_print_design 走 AI,失败自降级)
         job = create_job(db, "print-extract", owner_id=user.id, tool_id="extract")
-        storage.upload_path(job.id).write_bytes(raw)  # worker 按 job_id 读这张原图
+        storage.upload_path(job.id).write_bytes(raw)
         enqueue_or_refund(run_print_extract, job, db, user, "process")  # broker 挂了→退点+502
         return {"job_id": job.id, "status": "pending"}
 
-    # 本地路径(快)→ 同步直接返回(无 key 时即此;离线测试走这条)
+    # 快速:本地保真算法,同步直接返回(强制本地,即使有 key 也不走 AI)
     job_id = storage.new_job_id()
     storage.upload_path(job_id).write_bytes(raw)
     try:
-        design, meta = extract_print_design(src)
+        design, meta = extract_design(src)
     except ValueError as exc:
         refund(db, user, "process")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    meta.setdefault("engine", "local")
     url, result = save_print_outputs(job_id, design, meta)
     save_as_asset(db, user.id, design, "印花提取", url, source="generated")
     return {"job_id": job_id, **result}

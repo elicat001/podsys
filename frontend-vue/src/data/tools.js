@@ -14,7 +14,7 @@ export const TOOLS = [
   // ── 印花提取 ──────────────────────────────
   {
     id: 'extract', name: '印花提取', icon: '✂️', cat: '印花提取', ep: 'print-extract',
-    async: true, result: 'image', cost: 2,
+    async: true, result: 'image', cost: 2, dualEngine: true,
     desc: '提取衣服/产品上的印花,输出透明 PNG(白衣彩衣皆可)',
     inputs: [{ key: 'file', type: 'file', label: '上传图片', required: true }],
   },
@@ -40,7 +40,7 @@ export const TOOLS = [
   },
   {
     id: 'variants', name: '图裂变', icon: '🧬', cat: '印花设计', ep: 'design-tools/variants',
-    async: true, result: 'images', cost: 4, costPerN: 'n',
+    async: true, result: 'images', cost: 4, costPerN: 'n', dualEngine: true,
     desc: '识别卖点,一张裂变多款',
     inputs: [
       { key: 'file', type: 'file', label: '上传原图', required: true },
@@ -171,7 +171,7 @@ export const TOOLS = [
   },
   {
     id: 'title', name: '标题提取', icon: '🏷️', cat: '套图标题', ep: 'studio/title',
-    async: false, result: 'info', cost: 1,
+    async: false, result: 'info', cost: 1, dualEngine: true,
     desc: '生成电商标题',
     inputs: [
       { key: 'keywords', type: 'text', label: '关键词', default: '', placeholder: '例:cat lover, gift' },
