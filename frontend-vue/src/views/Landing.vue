@@ -368,7 +368,8 @@ const features = [
   padding: 10vh 6vw;
 }
 .final .btn-primary {
-  margin-top: 24px;
+  display: inline-block; /* 行内元素会忽略上下 margin → 必须 inline-block,否则按钮压住上方标题 */
+  margin-top: 32px;
 }
 .foot {
   text-align: center;
