@@ -16,41 +16,55 @@
 set -euo pipefail
 
 REPO=/www/wwwroot/podsys
+BE="$REPO/backend"
 FE="$REPO/frontend-vue"
-BUILD_HOME=/tmp/wwwbuild        # www 真实 home 属 root,npm 没法写;给它一个可写的 scratch HOME
+VENV="$BE/.venv"
+BUILD_HOME=/tmp/wwwbuild        # www 真实 home 属 root,npm/pip 没法写;给它一个可写的 scratch HOME
 SVC=podsys.service
+WORKER=podsys-worker.service    # Celery worker(可能不存在=未配置异步,跳过其重启)
 RUNAS=www                       # 后端服务的运行用户;用它构建,保证产物属主一致
 PORT=10000
 
-echo "==> [0/5] 准备:npm 的可写 HOME"
+echo "==> [0/6] 准备:npm/pip 的可写 HOME"
 mkdir -p "$BUILD_HOME"; chown "$RUNAS:$RUNAS" "$BUILD_HOME"
 
-echo "==> [1/5] 拉取最新代码(ff-only)"
+echo "==> [1/6] 拉取最新代码(ff-only)"
 cd "$REPO"
 sudo -u "$RUNAS" git pull --ff-only origin main
 HEAD=$(sudo -u "$RUNAS" git rev-parse --short HEAD)
 echo "    HEAD=$HEAD"
 
-echo "==> [2/5] 安装依赖(npm ci,按 package-lock 可复现)"
+echo "==> [2/6] 安装后端依赖(pip,只补缺的;celery/redis 等)"
+# 已满足的会跳过,首次会装上 celery/redis。HOME 指向可写 scratch 让 pip 能写缓存。
+sudo -u "$RUNAS" env HOME="$BUILD_HOME" "$VENV/bin/pip" install -q -r "$BE/requirements.txt"
+
+echo "==> [3/6] 安装前端依赖(npm ci,按 package-lock 可复现)"
 cd "$FE"
 sudo -u "$RUNAS" env HOME="$BUILD_HOME" npm ci --no-audit --no-fund --prefer-offline
 
-echo "==> [3/5] 构建前端到临时目录 dist.new(不动现网 dist)"
+echo "==> [4/6] 构建前端到临时目录 dist.new(不动现网 dist)"
 sudo -u "$RUNAS" env HOME="$BUILD_HOME" npm run build -- --outDir dist.new --emptyOutDir
 if [ ! -f dist.new/index.html ] || [ "$(ls dist.new/assets 2>/dev/null | wc -l)" -lt 10 ]; then
   echo "    !! 构建产物不完整,中止(现网 dist 保持不变)"; rm -rf dist.new; exit 1
 fi
 echo "    构建 OK(assets=$(ls dist.new/assets | wc -l))"
 
-echo "==> [4/5] 原子替换 dist"
+echo "==> [5/6] 原子替换 dist"
 rm -rf dist.old
 [ -d dist ] && mv dist dist.old
 mv dist.new dist
 chown -R "$RUNAS:$RUNAS" dist
 rm -rf dist.old
 
-echo "==> [5/5] 重启后端 + 健康检查"
+echo "==> [6/6] 重启后端(+ 异步 worker)+ 健康检查"
 systemctl restart "$SVC"
+# Celery worker:配置了才重启(异步工具要它才出结果;没配就跳过,AI 工具走优雅降级 502+退点)
+if systemctl list-unit-files "$WORKER" --no-legend 2>/dev/null | grep -q "$WORKER"; then
+  systemctl restart "$WORKER"
+  echo "    worker=$(systemctl is-active "$WORKER")"
+else
+  echo "    (未配置 $WORKER,跳过——异步工具将走优雅降级)"
+fi
 for i in $(seq 1 30); do
   [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$PORT/api/templates")" = "200" ] && break
   sleep 2
