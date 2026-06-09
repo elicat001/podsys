@@ -15,7 +15,7 @@ def test_variants_charges_per_image(client, auth_headers, monkeypatch):
     # 让 AI 成功:monkeypatch make_variants 返回 n 张占位图
     from app.services import design_tools
     monkeypatch.setattr(design_tools, "make_variants",
-                        lambda img, n, prompt="": [Image.new("RGBA", (32, 32)) for _ in range(n)])
+                        lambda img, n, prompt="", prefer_local=False: [Image.new("RGBA", (32, 32)) for _ in range(n)])
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     r = client.post("/api/design-tools/variants", headers=auth_headers,
                     data={"n": 3}, files={"file": ("x.png", _png(), "image/png")})
@@ -27,7 +27,7 @@ def test_variants_charges_per_image(client, auth_headers, monkeypatch):
 
 def test_variants_failure_refunds_all(client, auth_headers, monkeypatch):
     from app.services import design_tools
-    def _boom(img, n, prompt=""):
+    def _boom(img, n, prompt="", prefer_local=False):
         raise RuntimeError("no key")
     monkeypatch.setattr(design_tools, "make_variants", _boom)
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
