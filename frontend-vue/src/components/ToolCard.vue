@@ -2,12 +2,15 @@
 // 作图画廊里的工具卡:图标 + 名称 + 描述 + CSS 前后对比缩略。点卡弹出工具弹窗。
 import { useRouter } from 'vue-router'
 import { useToolDialog } from '../stores/toolDialog.js'
+import { useMockupDialog } from '../stores/mockupDialog.js'
 const props = defineProps({ tool: { type: Object, required: true } })
 const router = useRouter()
 const dlg = useToolDialog()
+const mockupDlg = useMockupDialog()
 function open() {
-  // 视频生成有独立整页(多输入/预览),仍走路由;其余工具一律弹窗即开即用。
+  // 视频生成有独立整页(多输入/预览),仍走路由;商品套图走专用两步弹窗(选套图源→传印花);其余工具通用弹窗。
   if (props.tool.id === 'videogen') { router.push('/app/video/generate'); return }
+  if (props.tool.id === 'mockup') { mockupDlg.open(); return }
   dlg.open(props.tool)
 }
 // 给每个工具一个稳定的色相,缩略图配色有区分

@@ -38,6 +38,7 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("jobs", "tool_id", "VARCHAR(32) DEFAULT ''"),
     ("jobs", "started_at", "DATETIME"),
     ("jobs", "finished_at", "DATETIME"),
+    ("users", "org_id", "INTEGER DEFAULT 1"),   # 团队资源共享维度;现有用户统一到 org 1
 ]
 
 
@@ -60,6 +61,7 @@ def init_db() -> None:
     from . import models_shop  # noqa: F401  (店铺表 — batch7)
     from . import models_workflow  # noqa: F401  (保存的自定义工作流表 — batch8)
     from . import models_template  # noqa: F401  (刊登/导出模板表 — batch10)
+    from . import models_team  # noqa: F401  (团队资源:套图模板)
     _migrate_columns()  # 先给老表补列(create_all 不补列)
     Base.metadata.create_all(engine)
 

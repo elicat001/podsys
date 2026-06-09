@@ -23,3 +23,10 @@ def output_path(job_id: str, name: str) -> Path:
 
 def output_url(job_id: str, name: str) -> str:
     return f"/files/{job_id}/{name}"
+
+
+def path_from_url(url: str) -> Path | None:
+    """把对外 url(/files/{job_id}/{name})解析回磁盘路径;非本地 /files url → None。"""
+    if not url or not url.startswith("/files/"):
+        return None
+    return settings.outputs_dir / url[len("/files/"):]

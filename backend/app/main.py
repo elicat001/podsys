@@ -50,6 +50,7 @@ from .routers import templates as templates_router
 from .routers import print_extract as print_extract_router
 from .routers import export as export_router
 from .routers import mockup as mockup_router
+from .routers import team as team_router
 
 app = FastAPI(title="PODStudio API", version="0.3.0")
 settings.ensure_dirs()
@@ -92,6 +93,7 @@ app.include_router(templates_router.router)
 app.include_router(print_extract_router.router)
 app.include_router(export_router.router)
 app.include_router(mockup_router.router)
+app.include_router(team_router.router)
 
 # 前端 = Vue 单页应用的构建产物(frontend-vue/dist)。旧的静态 frontend/ 已废弃删除。
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend-vue" / "dist"

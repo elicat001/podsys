@@ -296,6 +296,47 @@ def _work_mockup_batch(job_id: str, job: Job, db: Session) -> dict:
     return {"items": items, "images": urls, "count": len(items)}
 
 
+def _work_mockup_replace(job_id: str, job: Job, db: Session) -> dict:
+    """套图模板印花替换:逐张产品照把原印花换成新印花(新印花=upload_path(job_id))。
+
+    产品照来源:template_id>0 → 团队资源套图模板的图(按 url 读盘);否则 → 临时上传(job_id_m{i})。
+    """
+    from .services.mockup_replace import replace_print
+    p = job.params
+    new_print = _load_input(job_id)  # 新印花
+    products: list[Image.Image] = []
+    tid = int(p.get("template_id") or 0)
+    if tid:
+        from .models_team import MockupTemplate
+        tpl = db.get(MockupTemplate, tid)
+        if tpl is None:
+            raise ValueError("套图模板不存在")
+        for im in tpl.images:
+            dp = storage.path_from_url(im.path)
+            if dp and dp.is_file():
+                pim = Image.open(dp); pim.load(); products.append(pim)
+    else:
+        i = 0
+        while True:
+            mp = storage.upload_path(f"{job_id}_m{i}")
+            if not mp.exists():
+                break
+            pim = Image.open(mp); pim.load(); products.append(pim); i += 1
+    if not products:
+        raise ValueError("没有可用的产品图")
+
+    urls = []
+    for i, prod in enumerate(products):
+        out = replace_print(prod, new_print)
+        name = f"mockup_{i}.png"
+        out.save(storage.output_path(job_id, name), format="PNG")
+        url = storage.output_url(job_id, name)
+        urls.append(url)
+        if job.owner_id is not None:
+            save_as_asset(db, job.owner_id, out.convert("RGBA"), f"套图 {i + 1}", url, source="generated")
+    return {"images": urls, "count": len(urls)}
+
+
 def _work_production(job_id: str, job: Job, db: Session) -> dict:
     from .services import export
     p = job.params
@@ -331,6 +372,7 @@ TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
     "compress": (_work_compress, "process", None),
     "mockup": (_work_mockup, "asset", None),
     "mockup-batch": (_work_mockup_batch, "asset", "n"),
+    "mockup-replace": (_work_mockup_replace, "asset", "n"),
     "production": (_work_production, "asset", None),
 }
 

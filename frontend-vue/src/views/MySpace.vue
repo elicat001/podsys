@@ -4,10 +4,12 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client.js'
 import { listJobs, JOB_STATUS, jobThumb, jobDownloads, timeAgo, jobDuration } from '../api/jobs.js'
+import { listMockupTemplates, createMockupTemplate, deleteMockupTemplate } from '../api/team.js'
 import { toolForJob, moduleOfTool } from '../data/tools.js'
 
 const route = useRoute()
-const tab = ref(route.query.tab === 'trash' ? 'trash' : 'jobs')
+const _initTab = ['trash', 'team'].includes(route.query.tab) ? route.query.tab : 'jobs'
+const tab = ref(_initTab)
 
 // ── 存储容量 ──────────────────────────────────────────────
 const quota = ref(null)
@@ -101,13 +103,44 @@ async function purge(id) {
   ElMessage.success('已永久删除'); loadTrash(); loadQuota()
 }
 
+// ── 团队资源:套图模板 ───────────────────────────────────────
+const teamTpls = ref([])
+const showCreate = ref(false)
+const newName = ref('')
+const newFiles = ref([])
+const creating = ref(false)
+async function loadTeam() {
+  try { teamTpls.value = await listMockupTemplates() } catch (e) { /* 静默 */ }
+}
+function onPickTplFiles(e) { newFiles.value = Array.from(e.target.files || []) }
+async function createTpl() {
+  if (!newName.value.trim()) { ElMessage.warning('请填写模板名'); return }
+  if (!newFiles.value.length) { ElMessage.warning('请上传至少一张产品照'); return }
+  creating.value = true
+  try {
+    await createMockupTemplate(newName.value.trim(), newFiles.value)
+    ElMessage.success('套图模板已创建')
+    showCreate.value = false; newName.value = ''; newFiles.value = []
+    loadTeam()
+  } catch (e) { ElMessage.error(e.message || '创建失败') } finally { creating.value = false }
+}
+async function delTpl(t) {
+  try {
+    await ElMessageBox.confirm(`删除套图模板「${t.name}」?`, '确认删除', { type: 'warning' })
+  } catch (e) { return }
+  await deleteMockupTemplate(t.id)
+  ElMessage.success('已删除'); loadTeam()
+}
+
 function onTab(name) {
   if (name === 'trash') loadTrash()
+  else if (name === 'team') loadTeam()
   else { loadJobs(); loadQuota() }
 }
 
 onMounted(() => {
   loadJobs(); loadQuota()
+  if (tab.value === 'team') loadTeam()
   // 任务中心:有在跑的任务时定时刷新状态/结果。
   jobsTimer = setInterval(() => { if (tab.value === 'jobs') loadJobs() }, 5000)
 })
@@ -198,6 +231,42 @@ onUnmounted(() => clearInterval(jobsTimer))
             </template>
           </el-table-column>
         </el-table>
+      </el-tab-pane>
+
+      <el-tab-pane label="团队资源" name="team">
+        <div class="toolbar">
+          <strong>套图模板</strong>
+          <span class="muted small">团队共享 · 一个模板含多张产品照,用于「商品套图」批量替换印花</span>
+          <span style="flex: 1" />
+          <el-button size="small" type="primary" @click="showCreate = true">+ 新建套图模板</el-button>
+        </div>
+
+        <div v-if="!teamTpls.length" class="empty muted">还没有套图模板 —— 点「新建套图模板」上传一组产品照</div>
+        <div v-else class="tpl-grid">
+          <div v-for="t in teamTpls" :key="t.id" class="tpl-card panel">
+            <div class="tpl-thumbs">
+              <img v-for="im in t.images.slice(0, 4)" :key="im.id" :src="im.url" />
+            </div>
+            <div class="tpl-foot">
+              <span class="tpl-name">{{ t.name }} <span class="muted">· {{ t.image_count }}张</span></span>
+              <button class="chip del" @click="delTpl(t)">🗑</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 新建套图模板 -->
+        <el-dialog v-model="showCreate" title="新建套图模板" width="460px" align-center append-to-body>
+          <el-input v-model="newName" placeholder="模板名,如:夏季纯棉T恤套图" style="margin-bottom: 14px" />
+          <label class="picker">
+            <input type="file" accept="image/*" multiple hidden @change="onPickTplFiles" />
+            <div class="big">⬆</div>
+            <div>{{ newFiles.length ? `已选 ${newFiles.length} 张产品照(点击重选)` : '点击上传产品照(可多张,已印好图案的产品照)' }}</div>
+          </label>
+          <template #footer>
+            <el-button @click="showCreate = false">取消</el-button>
+            <el-button type="primary" :loading="creating" @click="createTpl">创建</el-button>
+          </template>
+        </el-dialog>
       </el-tab-pane>
     </el-tabs>
   </div>
@@ -389,5 +458,54 @@ onUnmounted(() => clearInterval(jobsTimer))
 .more {
   text-align: center;
   margin: 20px 0;
+}
+/* 团队资源:套图模板 */
+.tpl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.tpl-card {
+  padding: 10px;
+}
+.tpl-thumbs {
+  display: flex;
+  gap: 4px;
+}
+.tpl-thumbs img {
+  width: 25%;
+  height: 70px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--bg2);
+}
+.tpl-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+.tpl-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+.picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1.5px dashed var(--line2);
+  border-radius: 12px;
+  min-height: 140px;
+  cursor: pointer;
+  color: var(--mut);
+}
+.picker:hover {
+  border-color: var(--brand);
+}
+.picker .big {
+  font-size: 26px;
 }
 </style>

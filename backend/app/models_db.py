@@ -16,6 +16,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     credits: Mapped[int] = mapped_column(Integer, default=100)   # 简易计费:点数
+    org_id: Mapped[int] = mapped_column(Integer, default=1, index=True)  # 团队资源共享维度(暂统一=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     assets: Mapped[list["Asset"]] = relationship(back_populates="owner")

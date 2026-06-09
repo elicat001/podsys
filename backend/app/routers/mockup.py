@@ -16,13 +16,17 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from PIL import Image
 from sqlalchemy.orm import Session
 
+from .. import storage
 from ..auth import current_user
 from ..db import get_db
 from ..models_db import User
+from ..models_team import MockupTemplate
 from ..services import mockup
 from ..services.billing import InsufficientCredits, charge, charge_for, refund
+from ..services.jobs import create_job
+from ..services.quota import usage
 from ..tasks import run_tool
-from ..web_utils import read_image_or_refund, submit_celery
+from ..web_utils import enqueue_or_refund, read_image_or_refund, submit_celery
 
 router = APIRouter(prefix="/api/mockup", tags=["mockup"])
 
@@ -112,3 +116,63 @@ async def batch(
     # 组合存进 params(color 可能为 None → JSON null),worker 重建 combos 渲染(见 tasks._work_mockup_batch)
     return submit_celery(run_tool, db, user, kind="mockup-batch", tool_id="mockupbatch", op="asset",
                          raw=raw, params={"combos": [[t, c] for (t, c) in combos], "n": n}, n=n)
+
+
+@router.post("/replace")
+async def replace(
+    file: UploadFile = File(...),                          # 新印花
+    template_id: int = Form(0),                            # 团队资源套图模板(0=用上传的产品照)
+    mockups: list[UploadFile] | None = File(None),         # 临时上传的产品照(template_id=0 时用)
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """套图模板印花替换:把模板/上传的每张产品照里的原印花换成上传的新印花。按张扣点(asset×N)。
+
+    来源二选一:template_id>0 → 用团队资源套图模板的全部图;否则用 mockups 上传的产品照。
+    异步 Celery 作业;worker 逐张 detect+replace(见 tasks._work_mockup_replace)。
+    """
+    print_raw = await file.read()
+    try:
+        Image.open(io.BytesIO(print_raw)).load()
+    except Exception as exc:  # noqa: BLE001 — 还没扣点,直接 400
+        raise HTTPException(status_code=400, detail=f"印花图无法读取: {exc}") from exc
+
+    # 确定产品图来源与数量 N
+    mockup_raws: list[bytes] = []
+    if template_id:
+        tpl = db.get(MockupTemplate, template_id)
+        if tpl is None or tpl.org_id != user.org_id:
+            raise HTTPException(status_code=404, detail="套图模板不存在")
+        n = len(tpl.images)
+    else:
+        for i, m in enumerate(mockups or []):
+            raw = await m.read()
+            try:
+                Image.open(io.BytesIO(raw)).load()
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=400, detail=f"第 {i + 1} 张产品图无法读取: {exc}") from exc
+            mockup_raws.append(raw)
+        n = len(mockup_raws)
+    if not (1 <= n <= MAX_BATCH):
+        raise HTTPException(status_code=400, detail=f"套图数量需在 1~{MAX_BATCH} 之间")
+
+    if usage(db, user.id)["over"]:  # 超容:还没扣点,直接 413
+        raise HTTPException(status_code=413, detail="存储空间已用满(上限 2GB),请到「我的空间」清理后重试")
+
+    # 按张预扣 N 次(任意环节失败全退,笔数对齐)
+    charged = 0
+    try:
+        for _ in range(n):
+            charge(db, user, "asset"); charged += 1
+    except InsufficientCredits as exc:
+        for _ in range(charged):
+            refund(db, user, "asset")
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
+
+    job = create_job(db, "mockup-replace", owner_id=user.id, tool_id="mockup",
+                     params={"template_id": template_id, "n": n})
+    storage.upload_path(job.id).write_bytes(print_raw)               # 新印花
+    for i, mraw in enumerate(mockup_raws):                           # 临时产品照(若有)
+        storage.upload_path(f"{job.id}_m{i}").write_bytes(mraw)
+    enqueue_or_refund(run_tool, job, db, user, "asset", n=n)         # broker 挂 → 退 N + 502
+    return {"job_id": job.id, "status": "pending"}

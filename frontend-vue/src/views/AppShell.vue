@@ -7,6 +7,7 @@ import { MODULES, SIDEBARS, moduleOf } from '../data/nav.js'
 import CreditsBadge from '../components/CreditsBadge.vue'
 import RecentJobs from '../components/RecentJobs.vue'
 import ToolDialog from '../components/ToolDialog.vue'
+import MockupDialog from '../components/MockupDialog.vue'
 
 const auth = useAuth()
 const route = useRoute()
@@ -84,6 +85,7 @@ function logout() {
 
     <!-- 全局工具弹窗(作图画廊点卡片即开)-->
     <ToolDialog />
+    <MockupDialog />
   </div>
 </template>
 
