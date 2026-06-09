@@ -18,7 +18,7 @@
 - 后端:Python 3 + FastAPI + Uvicorn(单体,无 Celery/Redis)
 - 图像:Pillow(默认离线 CPU),可切换 rembg / OpenAI gpt-image / 第三方 API
 - 存储:本地文件 + SQLite(SQLAlchemy 2.0);接口已预留可换 S3/Postgres
-- 前端:静态 HTML/JS(`frontend/*.html`,深色风格)
+- 前端:**Vue 3 SPA**(`frontend-vue/`:Vite + vue-router(history 模式)+ pinia + element-plus,深色风格)。后端 `main.py` 服务其构建产物 `dist`(SPA 回退,见「部署」一节);旧的静态 `frontend/*.html` 已废弃删除。**需登录才能用**(无游客自动注册)。
 - 鉴权:JWT(PyJWT)+ pbkdf2 密码哈希;计费:点数(credits)模式
 
 **⚠️ 别低估范围**:核心是上面那条 5 步主线,但项目其实已铺开 **~26 个 router** 的完整能力矩阵(对标灵图 ipoddy 的"采集→作图→上架→制图"):
@@ -49,7 +49,8 @@ backend/app/
 
 backend/tests/         # pytest 测试(conftest.py 提供 client / auth_headers / png fixtures)
 docs/plans/            # 历史迭代计划(batch2~batch10),记录每批做了什么
-frontend/              # 静态页面
+frontend-vue/          # Vue 3 SPA 源码(Vite;node_modules/dist 不入库,服务器构建)
+deploy.sh              # 生产部署脚本(在服务器上跑;见「部署」一节)
 ```
 
 **核心流程在 `main.py` 的 `/api/process`**:扣点 → 存原图 → `extract_print`(抠图+裁剪+放大)
@@ -159,9 +160,11 @@ frontend/              # 静态页面
   - 都没分到产品(输入本身就是设计图)→ 退化为 `extract_on_fabric`(整图按边缘色去底)。`method` ∈ garment / product / whole_image / whole_image_fallback。
   - **已知边界(别过拟合)**:深色衣服、枕头等清晰产品都干净;**重褶皱浅色(白)布料的褶皱阴影颜色上和浅色印花分不开,会有残留**——颜色分离的固有难点。**宁留残留也别加"开运算/取最大块/fold-rejection"等启发式**(会损坏印花本身,且过拟合)。要更极致得上真 AI 编辑(edit key)。
 
-### 前端↔后端鉴权(访客自动注册,易引发"用户不存在")
-- 前端各页(`frontend/*.html`)无登录界面:首次打开自动 `POST /api/auth/register` 注册一个 guest 用户,把 JWT 存进浏览器 `localStorage` 的 `pod_token`,之后所有请求带 `Authorization: Bearer <token>`。
-- **坑**:`pod_token` 指向的用户若在当前数据库里不存在(换了库 / 清了库 / token 过期),后端 `current_user` 返回 401「用户不存在」。处理:浏览器清掉 `localStorage` 的 `pod_token` 后刷新(会重新注册),或排查是不是连错了库(见上条数据库锚定)。
+### 前端↔后端鉴权(Vue:需登录,无游客自动注册)
+- **`frontend-vue` 需登录才能用**:`Login.vue` 走 `/api/auth/login`(或注册 `/api/auth/register`),token 存 `localStorage('pod_token')`(沿用老 key),`api/client.js` 自动加 `Authorization: Bearer <token>`。
+- **路由守卫**(`router/index.js` `beforeEach`):只有 `meta.public` 的页(落地页 `/`、`/login`)免登录,其余未登录一律重定向 `/login?redirect=...`;已登录访问 `/login` 跳 `/app`。
+- **401 自动登出**:`api/client.js` 收到 401 → 清 token、回登录页。
+- **坑**:`pod_token` 指向的用户在当前库不存在(换库 / 清库 / token 过期)→ 后端 401「用户不存在」→ 前端自动登出回登录页。重新登录即可;若反复异常,排查是不是连错了库(见上「数据库锚定」)。
 
 ### docs/plans 不是完整记录
 - `docs/plans/` 只覆盖到 **batch2~batch10**。**batch11(`effects.py` 真实离线引擎)、batch12(深度审计整改:产物入库 / 真超分 / 工具去重 / 扩侵权库)只在 git 历史里**。
@@ -197,6 +200,34 @@ frontend/              # 静态页面
 
 ## 验证主流程是否正常(冒烟)
 
-启动:`cd backend && ./.venv/Scripts/python.exe -m uvicorn app.main:app --port 10000`
-流程:注册 `/api/auth/register` → 拿 token → `POST /api/process`(带图)→ 检查返回的
+启动后端:`cd backend && ./.venv/Scripts/python.exe -m uvicorn app.main:app --port 10000`
+启动前端(本地开发):`npm --prefix frontend-vue run dev`(Vite,5173,代理 `/api`、`/files` 到 10000)。
+流程:登录/注册 `/api/auth/*` → 拿 token → `POST /api/process`(带图)→ 检查返回的
 print/mockup/production 三个 URL 可访问(HTTP 200),production 为 30×40cm@300DPI(3543×4724)。
+
+## 部署 / 生产(pod.kejing.online)
+
+> 生产机:Ubuntu 24.04,**root@pod.kejing.online**(SSH 别名常配为 `pod-kejing`)。
+> 项目在 **`/www/wwwroot/podsys`**,运行用户 **`www`**;后端由 systemd **`podsys.service`** 跑
+> (`uvicorn app.main:app --port 10000`),**nginx** 反代 `pod.kejing.online` → `127.0.0.1:10000`。
+> **同机还有个无关的 Django 项目 `kejing-gunicorn`(/www/wwwroot/django,8000)——别碰。**
+
+**架构**:nginx 把 `/` 全转给后端;后端一身二职——`/api`、`/files` 走业务,其余路径服务
+Vue 构建产物 `frontend-vue/dist`(`main.py` 的 `_SPAStaticFiles`:404 回退 `index.html`,支持
+history 深链刷新;`/api`、`/files` 仍保留真 404)。前端**在服务器上构建**(生产机已装 Node LTS)。
+
+**部署 = 一条命令**(本机先 `git push` 到 `origin/main`,然后):
+```bash
+ssh pod-kejing 'bash /www/wwwroot/podsys/deploy.sh'   # 没配别名就 ssh root@pod.kejing.online
+```
+`deploy.sh`(仓库根,**在服务器上跑**)流程:`git pull --ff-only` → `npm ci` → `npm run build`
+**到临时 dist.new、成功才原子替换**现网 `dist`(构建失败现网不动=零停机)→ `systemctl restart
+podsys.service` → 健康检查 `/` 与 `/api` 均 200。幂等可重跑,断了重跑即可。
+
+**注意 / 坑**:
+- 前端只改源码也要**重新构建**才生效(走 `deploy.sh`);后端改了由 `deploy.sh` 的 restart 生效。
+- `www` 的 home(`/www/wwwroot`)属 root,**npm 没法在那写缓存** → `deploy.sh` 用 `HOME=/tmp/wwwbuild`(脚本会自建)。
+- **`frontend-vue/src/data/` 是源码不是运行时数据**:根 `.gitignore` 的 `data/` 规则会误伤它,已加例外
+  `!frontend-vue/src/data/`。**以后在前端新建 `data/` 类目录注意别被 gitignore 吞掉**(`git status --ignored` 自检)。
+- `*.sh` 由 `.gitattributes` 强制 LF(防 Windows CRLF 在 Linux 上把脚本搞坏)。
+- 生产前三件套仍要处理:`POD_JWT_SECRET`、关 `POD_DEV_BILLING`、收紧 `POD_REGISTER_RATE_LIMIT`(见上)。
