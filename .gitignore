@@ -34,4 +34,6 @@ Thumbs.db
 # 根目录运行时数据(预览/直接在根目录跑时生成)
 /data/
 data/
+# 例外:Vue 前端的 src/data 是源码(导航/工具定义),不是运行时数据,必须入库
+!frontend-vue/src/data/
 *.db
