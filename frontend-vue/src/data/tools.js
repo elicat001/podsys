@@ -21,7 +21,7 @@ export const TOOLS = [
   {
     id: 'matting', name: '一键抠图(成图)', icon: '🪄', cat: '印花提取', ep: 'process',
     async: false, result: 'triple', cost: 2,
-    desc: '去背景留主体,并直出套图 + 生产图三件套',
+    desc: '印花专用抠图,替换透明背景',
     inputs: [
       { key: 'file', type: 'file', label: '上传图片', required: true },
       { key: 'template', type: 'dynamicSelect', label: '套图模板', source: 'templates', default: 'tshirt' },

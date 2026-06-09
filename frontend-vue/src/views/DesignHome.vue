@@ -7,7 +7,7 @@ import ToolCard from '../components/ToolCard.vue'
 
 const route = useRoute()
 const designTools = TOOLS.filter((t) => t.cat !== '视频')
-const RECOMMEND = ['variants', 'matting', 'extract', 'generate', 'seamless', 'upscale']
+const RECOMMEND = ['extract', 'ipguard', 'variants', 'mockup', 'title', 'production']
 
 const activeCat = computed(() => route.query.cat || '')
 const sections = computed(() => {
