@@ -1,22 +1,57 @@
-"""套图模板「印花替换」引擎:把真实产品照里的原印花,换成用户上传的新印花,尽量保真实感。
+"""套图模板「印花替换」引擎:把产品照里的原印花换成用户上传的新印花。
 
-思路(纯本地、几何法,faithful 保留用户那张精确印花):
-  ① 复用印花提取的检测(`design_extract._product_mask` + `_print_alpha`)定位原印花的 bbox + mask;
-  ② 抹掉原印花:其 mask 处填周围布料色(羽化边),其余像素原样保留(保住布料褶皱);
-  ③ 新印花等比缩放进该 bbox(居中,不裁切用户图);
-  ④ 把原图该区域的『明暗(亮度)』当作折叠/阴影系数 multiply 到新印花上 → 新印花跟着布料起伏,
-     不是平贴;⑤ 合成回去。
-
-效果上限:平贴/微角度(平铺产品照、托特包、画布、正面 T 恤)效果好;强曲面(杯子环绕)/重褶皱
-只能近似(无 PSD 智能对象式 warp)。检测不到产品时退化为『居中贴新印花』兜底,不报错。
+两条路(默认 AI,无 key/失败降级几何):
+- **AI 多图合成(默认,有 key)**:把 [产品照, 新设计] 一起送 gpt-image-2 edit(input_fidelity=high),
+  让模型把设计**真实地印到产品上**——跟随瓶身曲面/褶皱/光影、替换原印花。实测效果远好于几何法
+  (几何平贴搞不定瓶子这种曲面 + 旧印花擦不干净)。代价:模型会**重渲染产品**(可能与原照不完全像素一致),
+  但出的是可直接上架的真实感套图,符合商品套图诉求。
+- **几何兜底(无 key/AI 失败)**:检测原印花 bbox→抹除→新印花等比贴入→原图明暗 multiply。平贴尚可,
+  曲面差;检测不到产品→居中贴。仅作离线降级。
 """
 from __future__ import annotations
+
+import logging
 
 import numpy as np
 from PIL import Image
 from scipy import ndimage
 
+from ..config import settings
 from .design_extract import _ANALYZE, _flatten_illumination, _print_alpha, _product_mask
+
+log = logging.getLogger(__name__)
+
+# 套图替换 prompt:把第二张设计真实地印到第一张产品上,替换原印花,保留产品/背景。
+_MOCKUP_PROMPT = (
+    "The FIRST image is a product photo. The SECOND image is a flat design/print. "
+    "STEP 1: completely ERASE and paint over EVERY existing printed text, logo and graphic on the "
+    "product (remove all old letters/artwork), leaving a clean blank product surface with its original "
+    "color and material. "
+    "STEP 2: place the design from the SECOND image onto that area, rendered SOLID and FULLY OPAQUE so "
+    "NO old text shows through and it is not translucent; make it look realistically printed, following "
+    "the product's shape, curvature and lighting. "
+    "Keep the product color, background, cap, handle and strap unchanged; keep the design's exact "
+    "artwork, colors and proportions. Photorealistic e-commerce product mockup."
+)
+
+
+def _pick_size(product: Image.Image) -> str:
+    """按产品照长宽比挑 gpt-image 输出尺寸(竖瓶→竖版,宽图→横版,否则方形)。"""
+    w, h = product.size
+    if h >= w * 1.2:
+        return "1024x1536"
+    if w >= h * 1.2:
+        return "1536x1024"
+    return "1024x1024"
+
+
+def _replace_ai(product: Image.Image, new_print: Image.Image) -> Image.Image:
+    """AI 多图合成:把新设计真实地印到产品上。无 key→OpenAIImageClient() 构造即抛。"""
+    from ..ai.openai_image import OpenAIImageClient
+    out = OpenAIImageClient().compose(
+        [product.convert("RGBA"), new_print.convert("RGBA")],
+        _MOCKUP_PROMPT, size=_pick_size(product), input_fidelity="high")
+    return out.convert("RGB")
 
 
 def _detect_region(product: Image.Image) -> dict | None:
@@ -71,7 +106,17 @@ def _fit_contain(img: Image.Image, bw: int, bh: int) -> tuple[Image.Image, int, 
 
 
 def replace_print(product: Image.Image, new_print: Image.Image) -> Image.Image:
-    """把 product 里的原印花替换成 new_print,带回原图明暗。检测不到产品→居中贴兜底。"""
+    """套图替换入口:有 key 走 AI 多图合成(真实感),失败/无 key 降级几何贴合。"""
+    if settings.openai_api_key:
+        try:
+            return _replace_ai(product, new_print)
+        except Exception as exc:  # noqa: BLE001 — AI 失败降级几何,不阻断出图
+            log.warning("AI 套图替换失败,降级几何法: %s", exc)
+    return _replace_local(product, new_print)
+
+
+def _replace_local(product: Image.Image, new_print: Image.Image) -> Image.Image:
+    """几何兜底:检测原印花区→抹除→新印花等比贴入→原图明暗 multiply。检测不到→居中贴。"""
     full = product.convert("RGB")
     W, H = full.size
     reg = _detect_region(full)

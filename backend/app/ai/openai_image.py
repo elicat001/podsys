@@ -110,6 +110,17 @@ class OpenAIImageClient:
             resp = self.client.images.edit(**kwargs)
         return self._decode(resp)
 
+    # ---- 多图合成(产品照 + 设计 → 真实感套图)----
+    def compose(self, images: list[Image.Image], prompt: str, size: str = "auto",
+                input_fidelity: str = "high") -> Image.Image:
+        """多张输入图一起送 gpt-image edit(如 [产品照, 新设计]):模型按 prompt 把它们融合。
+        input_fidelity=high 尽量保留输入细节(设计忠实)。用于商品套图『把设计真实地印到产品上』。"""
+        files = [_file_tuple(_cap_for_edit(im), f"img{i}.png") for i, im in enumerate(images)]
+        with _API_GATE:  # 限并发,避免整批超时
+            resp = self.client.images.edit(model=self.model, image=files, prompt=prompt,
+                                           n=1, size=self._size(size), input_fidelity=input_fidelity)
+        return self._decode(resp)
+
     # ---- 抠图 / 去背景 ----
     def remove_background(self, image: Image.Image) -> Image.Image:
         return self.edit(
