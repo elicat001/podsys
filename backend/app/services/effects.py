@@ -211,68 +211,158 @@ def fuse(img: Image.Image, prompt: str) -> Image.Image:
     return ImageChops.overlay(rgb, tex)
 
 
-# ---------- 标题:由图像主色 + 关键词派生(非写死) ----------
-# 本地电商标题:风格/受众/场合 SEO 修饰词库 + 品类话术 + 多模板(纯规则,无云、无模型)
+# ---------- 标题:由图像调色板 + 关键词派生(纯规则,无云、无模型) ----------
+# 本地电商标题引擎:风格/受众/场合/卖点 SEO 词库 + 品类话术 + 调色板分析 + 多模板。
+# 设计取舍:不"理解"画面内容(那要 ML),但通过①真实调色板(主色/明暗/鲜艳度)②关键词主体
+# ③品类同义词 ④确定性多模板,产出**接近真人 listing**的标题与搜索词,且 12 核机器上 ~几毫秒、无并发压力。
 _TITLE_STYLES = ["Funny", "Cute", "Aesthetic", "Vintage", "Retro", "Trendy",
-                 "Minimalist", "Graphic", "Cool", "Unique", "Cottagecore", "Y2K"]
+                 "Minimalist", "Graphic", "Cool", "Unique", "Cottagecore", "Y2K",
+                 "Streetwear", "Kawaii", "Grunge", "Boho", "Edgy", "Whimsical"]
 _TITLE_AUDIENCE = ["for Men", "for Women", "Unisex", "for Teens", "for Her", "for Him"]
 _TITLE_OCCASION = ["Birthday Gift", "Christmas Gift", "Holiday Gift Idea",
-                   "Funny Gift", "Aesthetic Gift", "Gift Idea"]
+                   "Funny Gift", "Gift for Friends", "Gift Idea"]
+_TITLE_SELL = ["Premium Quality", "Trendy Design", "Perfect Gift", "Unique Design",
+               "Bold Statement", "Eye-Catching Print", "Great Gift Idea"]
+_TITLE_NOUNS = ["Graphic", "Art Print", "Illustration", "Design", "Artwork"]
 # 品类 → 产品名(第一个为主名,其余进标签作同义搜索词)
 _TITLE_CAT = {
-    "apparel": ("T-Shirt", "Tee", "Graphic Tee"),
+    "apparel": ("T-Shirt", "Tee", "Graphic Tee", "Shirt"),
+    "hoodie": ("Hoodie", "Sweatshirt", "Pullover"),
     "phone": ("Phone Case", "Case", "Phone Cover"),
     "home": ("Home Decor", "Wall Art", "Poster"),
     "mug": ("Mug", "Coffee Mug", "Cup"),
     "bag": ("Tote Bag", "Canvas Tote", "Bag"),
+    "pillow": ("Throw Pillow", "Pillow Cover", "Cushion"),
     "sticker": ("Sticker", "Vinyl Sticker", "Decal"),
 }
+# 色相(0~360°)→ 颜色名(电商搜索词)
+_HUE_NAMES = [(15, "Red"), (45, "Orange"), (68, "Yellow"), (95, "Lime"),
+              (160, "Green"), (200, "Teal"), (255, "Blue"), (290, "Purple"),
+              (330, "Pink"), (361, "Red")]
+
+
+def _hue_name(h: float) -> str:
+    """色相(0~1)→ 颜色名。"""
+    deg = (h % 1.0) * 360
+    for lim, name in _HUE_NAMES:
+        if deg < lim:
+            return name
+    return "Red"
+
+
+def _palette(img: Image.Image) -> dict:
+    """轻量调色板分析(纯 Pillow+colorsys,无 numpy/ML):返回主色名、明暗、鲜艳度描述词。
+
+    忽略透明背景像素;在彩色像素里按 饱和度×明度 加权投票出主色;据整体明暗/饱和给出风格描述。
+    """
+    im = img.convert("RGBA")
+    im.thumbnail((80, 80))  # 缩到 ≤80px:几千像素,colorsys 循环也只需几毫秒
+    px = list(im.getdata())
+    opaque = [(r, g, b) for (r, g, b, a) in px if a > 128]
+    if len(opaque) < 16:  # 几乎全透明(罕见)→ 退而用全部像素
+        opaque = [(r, g, b) for (r, g, b, _a) in px]
+    n = len(opaque) or 1
+
+    sum_v = 0.0
+    colored = 0
+    sat_colored = 0.0
+    votes: dict[str, float] = {}
+    for r, g, b in opaque:
+        h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+        sum_v += v
+        if s > 0.28 and v > 0.18:          # 足够鲜明的彩色像素才参与主色投票
+            colored += 1
+            sat_colored += s
+            name = _hue_name(h)
+            votes[name] = votes.get(name, 0.0) + s * v
+    mean_v = sum_v / n
+    frac_colored = colored / n
+    mean_sat = (sat_colored / colored) if colored else 0.0
+
+    if frac_colored < 0.06:                # 近单色 → 黑/白/灰阶
+        if mean_v < 0.24:
+            return {"accent": None, "mono": "Black", "vivid": "Bold", "tone": "Bold Black"}
+        if mean_v > 0.82:
+            return {"accent": None, "mono": "White", "vivid": "Clean", "tone": "Minimalist"}
+        return {"accent": None, "mono": "Black & White", "vivid": "Monochrome", "tone": "Aesthetic"}
+
+    accent = max(votes, key=votes.get)
+    if mean_sat > 0.6 and mean_v > 0.55:
+        vivid, tone = "Vibrant", "Trendy"
+    elif mean_sat < 0.42 and mean_v > 0.6:
+        vivid, tone = "Pastel", "Aesthetic"
+    elif mean_v < 0.4:
+        vivid, tone = "Dark Moody", "Edgy"
+    else:
+        vivid, tone = "Colorful", "Graphic"
+    return {"accent": accent, "mono": None, "vivid": vivid, "tone": tone}
 
 
 def smart_title(img: Image.Image | None, keywords: str = "", category: str = "apparel") -> dict:
-    """本地电商标题(无云、无模型):多模板 + SEO 修饰词 + 品类话术 + 主色调,按关键词
-    确定性派生(同输入同输出,不同输入产出不同模板/词)。
+    """本地电商标题(无云、无模型):调色板分析 + 关键词主体 + SEO 词库 + 品类话术 + 多模板,
+    确定性派生(同输入同输出;不同输入产出不同主色/模板/词)。
 
-    仍是规则拼接(不"理解"内容),但比单一模板更像真实 listing 标题、搜索词覆盖更全。
+    仍是规则拼接(不"理解"画面语义),但调色板让"无关键词"也能给出贴切主色描述,模板与搜索词更接近
+    真人 listing。CPU 极轻(缩图 + colorsys 投票),适合高并发。
     """
     kw = [k.strip() for k in (keywords or "").replace("，", ",").split(",") if k.strip()]
-    seed = _seed("|".join(kw) + "|" + category)
-
-    prod = _TITLE_CAT.get(category, (category.replace("_", " ").title(),))
-    product = prod[0]
-
-    # 主色调(给了图才用):白底/低饱和 → Minimalist/Bold Black;彩色 → 具体色名
-    tone = None
+    # 图指纹:8×8 灰度缩略图 → 让不同设计(即便主色相同)派生不同模板/受众,避免批量标题撞车;同图稳定。
+    fp = ""
     if img is not None:
         try:
-            r, g, b = img.convert("RGB").resize((1, 1)).getpixel((0, 0))
-            h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-            if s < 0.18:
-                tone = "Minimalist" if v >= 0.5 else "Bold Black"
-            else:
-                tone = ["Red", "Orange", "Yellow", "Green", "Teal", "Blue", "Purple", "Pink"][int(h * 8) % 8]
+            g = img.convert("L"); g.thumbnail((8, 8))
+            fp = bytes(g.getdata()).hex()
         except Exception:  # noqa: BLE001
-            tone = None
+            fp = ""
+    seed = _seed("|".join(kw) + "|" + category + "|" + fp)
 
-    subject = " ".join(k.title() for k in kw[:3]) if kw else "Custom Graphic"
+    prod = _TITLE_CAT.get(category, (category.replace("_", " ").title(), category.replace("_", " ").title()))
+    product = prod[0]
+
+    pal = _palette(img) if img is not None else {"accent": None, "mono": None, "vivid": None, "tone": None}
+    # 主色前缀:有彩色主色用色名;近单色用 黑/白/Mono 词;都没有(无图)用风格词
+    color_lead = pal["accent"] or pal["mono"]
+
     style = _TITLE_STYLES[seed % len(_TITLE_STYLES)]
     style2 = _TITLE_STYLES[(seed // 11) % len(_TITLE_STYLES)]
     if style2 == style:  # 避免 "Retro ... Retro" / "Y2K Y2K" 同词重复
         style2 = _TITLE_STYLES[(seed // 11 + 1) % len(_TITLE_STYLES)]
+    # 图给了风格基调就优先用它当主风格,让标题与画面气质一致
+    if pal["tone"]:
+        style = pal["tone"]
     aud = _TITLE_AUDIENCE[(seed // 13) % len(_TITLE_AUDIENCE)]
     occ = _TITLE_OCCASION[(seed // 17) % len(_TITLE_OCCASION)]
-    lead = tone or style  # 有色调用色调当前缀,否则风格词
+    sell = _TITLE_SELL[(seed // 19) % len(_TITLE_SELL)]
+    noun = _TITLE_NOUNS[(seed // 23) % len(_TITLE_NOUNS)]
+
+    # 主体 + 前缀:有关键词→主体=关键词,前缀=主色;无关键词→主体已含主色,前缀改用风格词(避免色名重复)
+    if kw:
+        subject = " ".join(k.title() for k in kw[:3])
+        lead = color_lead or style
+    elif color_lead:
+        subject = f"{color_lead} {noun}"          # 如 "Orange Art Print" / "Black & White Illustration"
+        lead = style                               # 前缀用风格,不再重复色名
+    else:
+        subject = f"Custom {noun}"
+        lead = style
 
     templates = [
-        f"{lead} {subject} {product} - {style2} Graphic {aud}, {occ}",
-        f"{subject} {product} | {style} {style2} Design {aud}",
-        f"{style} {subject} Graphic {product} - Unique {occ} {aud}",
-        f"{subject} {product}, {lead} {style2} Print - {occ}",
+        f"{lead} {subject} {product} - {style2} {aud}, {occ}",
+        f"{subject} {product} | {style} {style2} {noun} {aud}",
+        f"{style} {subject} {product} - {sell}, {occ}",
+        f"{subject} {product}, {lead} {style2} Print - {occ} {aud}",
+        f"{lead} {subject} {product} | {sell} {aud} - {occ}",
     ]
-    title = " ".join(templates[seed % len(templates)].split())[:140]
+    title = " ".join(templates[seed % len(templates)].split())
+    # 去相邻重复词(防 "Orange Orange" / "Vintage Vintage" 等任何残留)
+    ws = title.split()
+    title = " ".join(w for i, w in enumerate(ws) if i == 0 or w.lower() != ws[i - 1].lower())[:140]
 
-    # 标签:用户词 + 色调 + 风格 + 品类同义词 + 通用 SEO,去重(小写)取前 12
-    extra = ([tone.lower()] if tone else []) + [style.lower(), style2.lower(),
-             *[p.lower() for p in prod], category, "gift", "pod design"]
-    tags = list(dict.fromkeys([t for t in (kw + extra) if t]))[:12]
+    # 标签:用户词 + 主色 + 鲜艳度 + 风格×2 + 品类全部同义词 + 场合 + 通用 SEO;去重(小写)取前 13
+    extra = [x for x in [
+        (pal["accent"] or "").lower(), (pal["mono"] or "").lower().replace(" & ", " "),
+        (pal["vivid"] or "").lower(), style.lower(), style2.lower(),
+        *[p.lower() for p in prod], category, occ.lower(), "gift", "trendy print", "pod design",
+    ] if x]
+    tags = list(dict.fromkeys([t for t in ([k.lower() for k in kw] + extra) if t]))[:13]
     return {"title": title, "keywords": tags}

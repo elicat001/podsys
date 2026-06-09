@@ -112,7 +112,7 @@ def test_variants_celery_dispatch(client, auth_headers, png, monkeypatch):
     from app.services import design_tools as dt
     monkeypatch.setattr(settings, "openai_api_key", "sk-test")
     monkeypatch.setattr(dt, "make_variants",
-                        lambda src, n, prompt="": [Image.new("RGB", (16, 16), (i * 40, 0, 0)) for i in range(n)])
+                        lambda src, n, prompt="", prefer_local=False: [Image.new("RGB", (16, 16), (i * 40, 0, 0)) for i in range(n)])
 
     before = client.get("/api/auth/me", headers=auth_headers).json()["credits"]
     resp = client.post("/api/design-tools/variants", headers=auth_headers,

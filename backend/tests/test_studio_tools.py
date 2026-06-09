@@ -47,15 +47,14 @@ def test_title_unauth_401(client):
     assert r.status_code == 401
 
 
-def test_title_no_key_degraded_no_charge(client, auth_headers):
+def test_title_no_key_degraded_no_charge(client, auth_headers, tool_result):
     before = _balance(client, auth_headers)
     r = client.post(
         "/api/studio/title",
         data={"keywords": "cat lover, funny, gift", "category": "apparel"},
         headers=auth_headers,
     )
-    assert r.status_code == 200, r.text
-    body = r.json()
+    body = tool_result(auth_headers, r)  # 后台作业 → 轮询
     assert body["degraded"] is True
     assert isinstance(body["title"], str) and body["title"].strip()
     assert isinstance(body["keywords"], list) and len(body["keywords"]) > 0
@@ -63,14 +62,13 @@ def test_title_no_key_degraded_no_charge(client, auth_headers):
     assert _balance(client, auth_headers) == before
 
 
-def test_title_no_key_empty_keywords_still_ok(client, auth_headers):
+def test_title_no_key_empty_keywords_still_ok(client, auth_headers, tool_result):
     r = client.post("/api/studio/title", data={}, headers=auth_headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["degraded"] is True
-    assert r.json()["title"].strip()
+    body = tool_result(auth_headers, r)
+    assert body["degraded"] is True and body["title"].strip()
 
 
-def test_title_ai_charges_one(client, auth_headers, monkeypatch):
+def test_title_ai_charges_one(client, auth_headers, monkeypatch, tool_result):
     """AI 主路径(有 key 且成功)→ 扣 1 点。"""
     from app.routers import studio_tools as r_studio
     monkeypatch.setattr(r_studio.studio_tools, "has_openai_key", lambda: True)
@@ -84,12 +82,11 @@ def test_title_ai_charges_one(client, auth_headers, monkeypatch):
         data={"keywords": "cat", "category": "apparel"},
         headers=auth_headers,
     )
-    assert r.status_code == 200, r.text
-    assert r.json()["degraded"] is False
+    assert tool_result(auth_headers, r)["degraded"] is False
     assert _balance(client, auth_headers) == before - 1  # 走 AI 扣 1 点
 
 
-def test_title_ai_degraded_refunds(client, auth_headers, monkeypatch):
+def test_title_ai_degraded_refunds(client, auth_headers, monkeypatch, tool_result):
     """有 key 但 AI 降级到本地兜底 → 退点,余额不变。"""
     from app.routers import studio_tools as r_studio
     monkeypatch.setattr(r_studio.studio_tools, "has_openai_key", lambda: True)
@@ -103,8 +100,7 @@ def test_title_ai_degraded_refunds(client, auth_headers, monkeypatch):
         data={"keywords": "cat", "category": "apparel"},
         headers=auth_headers,
     )
-    assert r.status_code == 200, r.text
-    assert r.json()["degraded"] is True
+    assert tool_result(auth_headers, r)["degraded"] is True
     assert _balance(client, auth_headers) == before  # 降级退点,实际 0
 
 

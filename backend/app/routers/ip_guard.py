@@ -14,8 +14,8 @@ from ..db import get_db
 from ..models_db import User
 from ..services import ip_guard
 from ..services.billing import charge_for
-from ..web_utils import read_image_or_refund
-from .. import storage
+from ..tasks import run_tool
+from ..web_utils import read_image_or_refund, submit_celery
 
 router = APIRouter(prefix="/api/ip-guard", tags=["ip-guard"])
 
@@ -28,22 +28,14 @@ def scan(
     user: User = Depends(charge_for("process")),
     db: Session = Depends(get_db),
 ):
-    """深度侵权检索:返回 scan() 报告 + job_id。
+    """深度侵权检索 → Celery 后台作业(提交即走、任务中心看报告)。
 
-    P2-2:默认只回 risk/advice/命中条数;`verbose=true` 才回命中条目明细
-    (品牌/距离/命中关键词),避免向终端用户泄露侵权库结构与判定阈值。
+    P2-2:默认只回 risk/advice/命中条数;`verbose=true` 才回命中明细(worker 内按 verbose 裁剪)。
     """
-    img = read_image_or_refund(file.file.read(), db, user, "process")
-    report = ip_guard.scan(img, title=title or None)
-    if not verbose:
-        report = {
-            "risk": report.get("risk"),
-            "advice": report.get("advice"),
-            "match_count": len(report.get("matches", [])),
-            "checked": report.get("checked"),
-        }
-    report["job_id"] = storage.new_job_id()
-    return report
+    raw = file.file.read()
+    read_image_or_refund(raw, db, user, "process")  # 读图失败 → 400 + 退点
+    return submit_celery(run_tool, db, user, kind="ipguard", tool_id="ipguard", op="process",
+                         raw=raw, params={"title": title, "verbose": verbose})
 
 
 @router.get("/library")

@@ -54,12 +54,11 @@ def test_upscale_actually_enlarges(client, auth_headers):
 
 
 # ---------- 侵权库扩充 + 关键词命中 ----------
-def test_ipguard_library_expanded_and_hits(client, auth_headers):
+def test_ipguard_library_expanded_and_hits(client, auth_headers, tool_result):
     lib = client.get("/api/ip-guard/library", headers=auth_headers).json()
     assert lib["total"] >= 18, f"侵权库应已扩充: {lib['total']}"
     r = client.post("/api/ip-guard/scan", headers=auth_headers,
                     data={"title": "cute baby yoda mandalorian shirt", "verbose": "true"},
                     files={"file": ("x.png", _png(), "image/png")})
-    assert r.status_code == 200, r.text
-    body = r.json()
+    body = tool_result(auth_headers, r)  # 后台作业 → 轮询
     assert body["risk"] == "high" and len(body["matches"]) >= 1, "应命中 Star Wars 关键词"

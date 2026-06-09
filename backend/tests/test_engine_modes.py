@@ -14,10 +14,9 @@ def _f(png):
 
 
 # ---- 印花提取 ----
-def test_extract_fast_local_sync(client, auth_headers, png):
+def test_extract_fast_local(client, auth_headers, png, tool_result):
     r = client.post("/api/print-extract", headers=auth_headers, data={"engine": "fast"}, files=_f(png))
-    assert r.status_code == 200, r.text
-    assert r.json().get("status") != "pending" and "image_url" in r.json()  # 本地同步直接出
+    assert "image_url" in tool_result(auth_headers, r)  # 后台作业(本地引擎)→ 轮询出图
 
 
 def test_extract_ai_without_key_502(client, auth_headers, png):
@@ -28,11 +27,10 @@ def test_extract_ai_without_key_502(client, auth_headers, png):
 
 
 # ---- 图裂变 ----
-def test_variants_fast_local_sync(client, auth_headers, png):
+def test_variants_fast_local(client, auth_headers, png, tool_result):
     r = client.post("/api/design-tools/variants", headers=auth_headers,
                     data={"n": 2, "engine": "fast"}, files=_f(png))
-    assert r.status_code == 200, r.text
-    assert len(r.json()["images"]) == 2 and r.json().get("status") != "pending"
+    assert len(tool_result(auth_headers, r)["images"]) == 2  # 后台本地换色 → 2 张
 
 
 def test_variants_ai_without_key_502(client, auth_headers, png):
@@ -44,10 +42,10 @@ def test_variants_ai_without_key_502(client, auth_headers, png):
 
 
 # ---- 标题提取 ----
-def test_title_fast_local_no_charge(client, auth_headers, png):
+def test_title_fast_local_no_charge(client, auth_headers, png, tool_result):
     before = client.get("/api/auth/me", headers=auth_headers).json()["credits"]
     r = client.post("/api/studio/title", headers=auth_headers, data={"keywords": "cat", "engine": "fast"})
-    assert r.status_code == 200 and r.json().get("degraded") is True
+    assert tool_result(auth_headers, r).get("degraded") is True  # 后台本地规则
     assert client.get("/api/auth/me", headers=auth_headers).json()["credits"] == before  # 快速不扣点
 
 

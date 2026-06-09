@@ -11,16 +11,15 @@ def _png(size=(300, 300)) -> io.BytesIO:
 
 
 # ---------- P0-1:variants 按张计费,且失败按张退点(笔数对齐) ----------
-def test_variants_charges_per_image(client, auth_headers, monkeypatch):
-    # 让 AI 成功:monkeypatch make_variants 返回 n 张占位图
+def test_variants_charges_per_image(client, auth_headers, monkeypatch, tool_result):
+    # 让 AI 成功:monkeypatch make_variants 返回 n 张占位图(worker 内同模块可见)
     from app.services import design_tools
     monkeypatch.setattr(design_tools, "make_variants",
                         lambda img, n, prompt="", prefer_local=False: [Image.new("RGBA", (32, 32)) for _ in range(n)])
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     r = client.post("/api/design-tools/variants", headers=auth_headers,
                     data={"n": 3}, files={"file": ("x.png", _png(), "image/png")})
-    assert r.status_code == 200, r.text
-    assert len(r.json()["images"]) == 3
+    assert len(tool_result(auth_headers, r)["images"]) == 3  # 后台作业 → 轮询 3 张
     bal1 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     assert bal1 == bal0 - 3 * 4, f"variants n=3 应扣 12 点(3×edit): {bal0}->{bal1}"
 
@@ -33,7 +32,10 @@ def test_variants_failure_refunds_all(client, auth_headers, monkeypatch):
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     r = client.post("/api/design-tools/variants", headers=auth_headers,
                     data={"n": 4}, files={"file": ("x.png", _png(), "image/png")})
-    assert r.status_code == 502
+    # 异步:端点立即返回 pending;作业在 worker 失败(eager 同步跑完)→ error + 按 4 笔全退
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "error", job
     bal1 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     assert bal1 == bal0, f"失败应把 4 笔全退回: {bal0}->{bal1}"
 

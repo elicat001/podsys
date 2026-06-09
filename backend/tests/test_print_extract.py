@@ -137,13 +137,12 @@ def test_extract_design_rejects_oversized(monkeypatch):
 
 # ---------- 接口 ----------
 
-def test_print_extract_endpoint(client, auth_headers, png):
+def test_print_extract_endpoint(client, auth_headers, png, tool_result):
     resp = client.post(
         "/api/print-extract", headers=auth_headers,
         files={"file": ("d.png", png(shape="rect"), "image/png")},
     )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
+    body = tool_result(auth_headers, resp)  # 后台作业(无 key→本地)→ 轮询
     assert "image_url" in body and "method" in body
 
 

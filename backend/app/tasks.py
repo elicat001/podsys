@@ -80,13 +80,17 @@ def run_job_in_worker(job_id: str, work: Work, *, refund_op: str | None = None,
         db.close()
 
 
-# ── 印花提取(Phase A 试点)────────────────────────────────────────────────
+# ── 印花提取 ──────────────────────────────────────────────────────────────
 def _print_extract_work(job_id: str, job: Job, db: Session) -> dict:
-    """从盘上读原图 → AI 重绘提取 → 存透明/白底两版 → 入库素材。"""
+    """读原图 → 提取(engine=fast 本地保真 / 否则 AI 重绘)→ 存透明/白底两版 → 入库素材。"""
     raw = storage.upload_path(job_id).read_bytes()
-    src = Image.open(io.BytesIO(raw))
-    src.load()
-    design, meta = extract_print_design(src)
+    src = Image.open(io.BytesIO(raw)); src.load()
+    if job.params.get("engine") == "fast":
+        from .services.design_extract import extract_design
+        design, meta = extract_design(src)
+        meta.setdefault("engine", "local")
+    else:
+        design, meta = extract_print_design(src)
     url, result = save_print_outputs(job_id, design, meta)
     if job.owner_id is not None:
         save_as_asset(db, job.owner_id, design, "印花提取", url, source="generated")
@@ -137,7 +141,8 @@ def _work_variants(job_id: str, job: Job, db: Session) -> dict:
     from .services import design_tools
     src = _load_input(job_id)
     p = job.params
-    imgs = design_tools.make_variants(src, int(p["n"]), prompt=p.get("prompt", ""))
+    imgs = design_tools.make_variants(src, int(p["n"]), prompt=p.get("prompt", ""),
+                                      prefer_local=p.get("engine") == "fast")
     urls = []
     for i, im in enumerate(imgs):
         name = f"variant_{i + 1}.png"
@@ -353,6 +358,40 @@ def _work_production(job_id: str, job: Job, db: Session) -> dict:
     return {"files": files, "proof": proof_url, "meta": result["meta"]}
 
 
+def _work_title(job_id: str, job: Job, db: Session) -> dict:
+    """标题提取(分析类,信息结果)。engine=ai 走 gpt 识图;否则本地规则。
+    智能若降级(AI 不可用)→ 退回已扣的 1 点(快速本就没扣,见 router)。"""
+    from .services import studio_tools
+    p = job.params
+    img = None
+    ipath = storage.upload_path(job_id)  # 可选辅助图(router 有图才落盘)
+    if ipath.exists():
+        try:
+            img = Image.open(ipath); img.load()
+        except Exception:  # noqa: BLE001
+            img = None
+    prefer_local = p.get("engine") != "ai"
+    result = studio_tools.generate_title(keywords=p.get("keywords", ""),
+                                         category=p.get("category", "apparel"),
+                                         img=img, prefer_local=prefer_local)
+    if p.get("engine") == "ai" and result.get("degraded") and job.owner_id is not None:
+        u = db.get(User, job.owner_id)
+        if u is not None:
+            refund(db, u, "title")  # 智能降级 → 不收费
+    return result
+
+
+def _work_ipguard(job_id: str, job: Job, db: Session) -> dict:
+    """侵权风险检索(分析类,信息结果)。本地库扫描,无 AI/本地之分。"""
+    from .services import ip_guard
+    p = job.params
+    report = ip_guard.scan(_load_input(job_id), title=p.get("title") or None)
+    if not p.get("verbose"):
+        report = {"risk": report.get("risk"), "advice": report.get("advice"),
+                  "match_count": len(report.get("matches", [])), "checked": report.get("checked")}
+    return report
+
+
 # kind → (work, refund_op, n_param)。n_param 非空时退点笔数 = job.params[n_param](如裂变按张扣)。
 TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
     "generate": (_work_generate, "generate", None),
@@ -375,6 +414,9 @@ TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
     "mockup-batch": (_work_mockup_batch, "asset", "n"),
     "mockup-replace": (_work_mockup_replace, "asset", "n"),
     "production": (_work_production, "asset", None),
+    # 分析类(信息结果,丢任务中心)
+    "title": (_work_title, None, None),       # 退点在 worker 内按 degrade 处理,不走通用退点
+    "ipguard": (_work_ipguard, "process", None),
 }
 
 

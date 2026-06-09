@@ -65,12 +65,11 @@ def _balance(client, headers) -> int:
 
 
 # 新契约(batch11):无 OpenAI key 走本地真实引擎 -> 200 + 真实产物,正常扣点(不再 502)
-def test_variants_no_key_offline_real(client, dt_client, auth_headers, png):
+def test_variants_no_key_offline_real(client, dt_client, auth_headers, png, tool_result):
     before = _balance(client, auth_headers)
     resp = dt_client.post("/api/design-tools/variants", headers=auth_headers,
         files={"file": ("a.png", png(), "image/png")}, data={"n": "3"})
-    assert resp.status_code == 200, resp.text
-    assert len(resp.json()["images"]) == 3
+    assert len(tool_result(auth_headers, resp)["images"]) == 3  # 后台本地换色 → 轮询 3 张
     assert _balance(client, auth_headers) == before - 3 * 4
 
 

@@ -140,7 +140,7 @@ export const TOOLS = [
   // ── 侵权检测 ──────────────────────────────
   {
     id: 'ipguard', name: '侵权风险过滤', icon: '🛡️', cat: '侵权检测', ep: 'ip-guard/scan',
-    async: false, result: 'info', cost: 2,
+    async: true, result: 'info', cost: 2,
     desc: 'TRO + 艺术家版权库深度检索',
     inputs: [
       { key: 'file', type: 'file', label: '上传图片', required: true },
@@ -171,7 +171,7 @@ export const TOOLS = [
   },
   {
     id: 'title', name: '标题提取', icon: '🏷️', cat: '套图标题', ep: 'studio/title',
-    async: false, result: 'info', cost: 1, dualEngine: true,
+    async: true, result: 'info', cost: 1, dualEngine: true,
     desc: '生成电商标题',
     inputs: [
       { key: 'keywords', type: 'text', label: '关键词', default: '', placeholder: '例:cat lover, gift' },

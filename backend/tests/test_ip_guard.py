@@ -162,7 +162,7 @@ def test_scan_requires_auth(client):
     assert resp.status_code == 401
 
 
-def test_scan_charges_two_credits(client, auth_headers):
+def test_scan_charges_two_credits(client, auth_headers, tool_result):
     _ensure_router(client)
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     resp = client.post(
@@ -171,10 +171,8 @@ def test_scan_charges_two_credits(client, auth_headers):
         files={"file": ("a.png", _png_bytes(_circle_png()), "image/png")},
         data={"title": ""},
     )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
+    body = tool_result(auth_headers, resp)  # 后台作业 → 轮询取报告
     assert body["risk"] in ("safe", "review", "high")
-    assert "job_id" in body
     # P2-2:默认(非 verbose)只回 match_count/checked/advice,不泄露 matches 明细
     assert "match_count" in body and "checked" in body and "advice" in body
     assert "matches" not in body

@@ -40,22 +40,20 @@ def test_seamless_bad_repeat_refunds(client, auth_headers):
 
 
 # ---------- ip_guard verbose 分级(P2-2) ----------
-def test_ipguard_default_hides_details(client, auth_headers):
+def test_ipguard_default_hides_details(client, auth_headers, tool_result):
     r = client.post("/api/ip-guard/scan", headers=auth_headers,
                     data={"title": "official BrandX shirt"},
                     files={"file": ("x.png", _png(), "image/png")})
-    assert r.status_code == 200, r.text
-    body = r.json()
+    body = tool_result(auth_headers, r)  # 后台作业 → 轮询
     assert "risk" in body and "match_count" in body
     assert "matches" not in body  # 默认不回明细
 
 
-def test_ipguard_verbose_shows_matches(client, auth_headers):
+def test_ipguard_verbose_shows_matches(client, auth_headers, tool_result):
     r = client.post("/api/ip-guard/scan", headers=auth_headers,
                     data={"title": "official BrandX shirt", "verbose": "true"},
                     files={"file": ("x.png", _png(), "image/png")})
-    assert r.status_code == 200, r.text
-    assert "matches" in r.json()
+    assert "matches" in tool_result(auth_headers, r)
 
 
 # ---------- gpt-image KEY 路径计费(P2-3:之前无 key 无法测的成功/失败分支,用 mock 覆盖) ----------

@@ -64,33 +64,13 @@ async def variants(
         _refund_all()
         raise HTTPException(status_code=400, detail=f"无法读取图片: {exc}") from exc
 
-    use_ai = engine == "ai" or (engine == "auto" and settings.openai_api_key)
     if engine == "ai" and not settings.openai_api_key:
         _refund_all()
         raise HTTPException(status_code=502, detail="智能运行需配置 AI key;可改用「快速运行」(本地)")
-
-    # 智能:gpt-image 耗时 → Celery 后台作业(worker 内 make_variants 走 AI),退点笔数 = n
-    if use_ai:
-        return submit_celery(run_tool, db, user, kind="variants", tool_id="variants", op="edit",
-                             raw=raw, params={"n": n, "prompt": prompt}, n=n)
-
-    # 快速:本地换色,同步直接返回(强制本地)
-    try:
-        src = Image.open(io.BytesIO(raw)); src.load()
-        imgs = design_tools.make_variants(src, n, prompt=prompt, prefer_local=True)
-    except Exception as exc:  # noqa: BLE001
-        _refund_all()
-        raise HTTPException(status_code=502, detail="图裂变失败,请稍后重试") from exc
-
-    job_id = storage.new_job_id()
-    urls = []
-    for i, im in enumerate(imgs):
-        name = f"variant_{i + 1}.png"
-        im.save(storage.output_path(job_id, name), format="PNG")
-        url = storage.output_url(job_id, name)
-        urls.append(url)
-        save_as_asset(db, user.id, im, f"图裂变 {i+1}", url, source="generated")
-    return {"job_id": job_id, "images": urls}
+    # 一律 Celery 后台作业(提交即走、任务中心看结果);engine 决定 worker 用 AI 还是本地换色。
+    eng = "ai" if (engine == "ai" or (engine == "auto" and settings.openai_api_key)) else "fast"
+    return submit_celery(run_tool, db, user, kind="variants", tool_id="variants", op="edit",
+                         raw=raw, params={"n": n, "prompt": prompt, "engine": eng}, n=n)
 
 
 @router.post("/seamless")

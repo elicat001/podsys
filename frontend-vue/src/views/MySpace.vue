@@ -6,6 +6,7 @@ import { api } from '../api/client.js'
 import { listJobs, JOB_STATUS, jobThumb, jobDownloads, timeAgo, jobDuration } from '../api/jobs.js'
 import { listMockupTemplates, createMockupTemplate, deleteMockupTemplate, addTemplateImages, deleteTemplateImage } from '../api/team.js'
 import { toolForJob, moduleOfTool } from '../data/tools.js'
+import ResultView from '../components/ResultView.vue'
 
 const route = useRoute()
 const _initTab = ['trash', 'team'].includes(route.query.tab) ? route.query.tab : 'jobs'
@@ -75,6 +76,15 @@ const jobGroups = computed(() => {
 
 function jobTitle(job) {
   return job._tool ? `${job._tool.icon} ${job._tool.name}` : job.kind
+}
+
+// ── 结果预览(点缩略图 / 预览按钮 → 大图弹窗,复用 ResultView)──
+const showPreview = ref(false)
+const previewJob = ref(null)
+function openPreview(job) {
+  if (job.status !== 'done' || !job.result) return
+  previewJob.value = job
+  showPreview.value = true
 }
 
 async function delJob(job) {
@@ -226,7 +236,8 @@ onUnmounted(() => clearInterval(jobsTimer))
             <div class="cat-title muted">{{ c.cat }}</div>
             <div class="job-grid">
               <div v-for="job in c.items" :key="job.id" class="job-card panel">
-                <div class="job-thumb">
+                <div class="job-thumb" :class="{ clickable: job.status === 'done' && jobThumb(job.result) }"
+                     @click="openPreview(job)" :title="job.status === 'done' ? '点击预览' : ''">
                   <img v-if="job.status === 'done' && jobThumb(job.result)" :src="jobThumb(job.result)" class="checker" />
                   <div v-else-if="job.status === 'error'" class="ph err">✕</div>
                   <div v-else class="ph"><span class="spin" /></div>
@@ -241,6 +252,7 @@ onUnmounted(() => clearInterval(jobsTimer))
                   <div class="job-meta muted">{{ timeAgo(job.created_at) }} · 用时 {{ jobDuration(job) }}</div>
                   <div v-if="job.status === 'error'" class="job-err" :title="job.error">{{ job.error }}</div>
                   <div class="job-actions">
+                    <button v-if="job.status === 'done' && job.result" class="chip preview" @click="openPreview(job)">👁 预览</button>
                     <a v-for="([name, url]) in jobDownloads(job.result)" :key="name" class="chip dl" :href="url" target="_blank" download>⬇ {{ name }}</a>
                     <button class="chip del" @click="delJob(job)">🗑 删除</button>
                   </div>
@@ -342,6 +354,17 @@ onUnmounted(() => clearInterval(jobsTimer))
         </el-table>
       </el-tab-pane>
     </el-tabs>
+
+    <!-- 结果预览弹窗(复用 ResultView,与作图页一致的大图/下载/旋转体验)-->
+    <el-dialog v-model="showPreview" :title="previewJob ? jobTitle(previewJob) : '预览'"
+               width="680px" align-center append-to-body class="preview-dlg">
+      <div v-if="previewJob" class="preview-body">
+        <ResultView :tool="previewJob._tool || { result: 'image' }" :data="previewJob.result" />
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="showPreview = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -458,6 +481,22 @@ onUnmounted(() => clearInterval(jobsTimer))
   height: 100%;
   object-fit: cover;
   border-radius: 8px;
+}
+.job-thumb.clickable {
+  cursor: zoom-in;
+}
+.job-thumb.clickable:hover {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+.preview {
+  border: none;
+  cursor: pointer;
+  color: var(--brand);
+}
+.preview-body {
+  max-height: 70vh;
+  overflow: auto;
 }
 .checker {
   background: repeating-conic-gradient(#2a2a2a 0% 25%, #222 0% 50%) 50% / 14px 14px;
