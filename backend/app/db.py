@@ -1,14 +1,29 @@
 """Database layer — SQLAlchemy 2.0 + SQLite (swap URL for Postgres in prod)."""
 from __future__ import annotations
 from collections.abc import Iterator
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
 from .config import settings
 
 settings.ensure_dirs()
 DB_URL = f"sqlite:///{(settings.data_dir / 'podstudio.db').as_posix()}"
 
-engine = create_engine(DB_URL, connect_args={"check_same_thread": False}, future=True)
+# timeout=10:拿不到写锁时最多等 10s(而非立刻报错),配合多 worker 并发写 Job 状态。
+engine = create_engine(DB_URL, connect_args={"check_same_thread": False, "timeout": 10}, future=True)
+
+
+@event.listens_for(engine, "connect")
+def _sqlite_concurrency_pragmas(dbapi_conn, _rec):
+    """并发硬化(多 Celery worker 同时写 + 前端高频轮询读):
+    WAL 让『读不阻塞写、写不阻塞读』,大幅减少 'database is locked';busy_timeout 兜底锁等待。
+    synchronous=NORMAL 在 WAL 下安全且更快(仅极端断电可能丢最后一两个事务,本场景可接受)。"""
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA synchronous=NORMAL")
+    cur.execute("PRAGMA busy_timeout=10000")
+    cur.close()
+
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, class_=Session)
 
 
