@@ -14,11 +14,17 @@ upscaler (Pillow/Real-ESRGAN) for production files. See README.
 from __future__ import annotations
 import base64
 import io
+import threading
 from PIL import Image
 from ..config import settings
 
 # gpt-image-1 accepts these sizes (plus "auto")
 VALID_SIZES = {"1024x1024", "1536x1024", "1024x1536", "auto"}
+
+# 全局限流:同时在飞的 gpt-image 网关调用数上限。本网关并发跑多张 gpt-image 会让每张都被拖过
+# 单次超时(250s)→ 整批 APITimeoutError(图裂变 4 路并发实测全超时)。这里把"同时在飞"的调用
+# 压到 settings.openai_max_concurrency。进程级:threads 池下=全局;prefork 下=每进程。
+_API_GATE = threading.Semaphore(max(1, settings.openai_max_concurrency))
 
 
 def _png_bytes(img: Image.Image) -> bytes:
@@ -80,10 +86,11 @@ class OpenAIImageClient:
     # ---- 文生图 ----
     def generate(self, prompt: str, size: str = "1024x1024",
                  quality: str = "auto", background: str = "auto") -> Image.Image:
-        resp = self.client.images.generate(
-            model=self.model, prompt=prompt, n=1,
-            size=self._size(size), quality=quality, background=background,
-        )
+        with _API_GATE:  # 限并发,避免整批超时
+            resp = self.client.images.generate(
+                model=self.model, prompt=prompt, n=1,
+                size=self._size(size), quality=quality, background=background,
+            )
         return self._decode(resp)
 
     # ---- 图生图 / 改图 / 换装换背景 ----
@@ -99,7 +106,8 @@ class OpenAIImageClient:
         if mask is not None:
             # mask 必须与图同尺寸(图缩了 mask 也要跟着缩)
             kwargs["mask"] = _file_tuple(mask.resize(image.size, Image.LANCZOS), "mask.png")
-        resp = self.client.images.edit(**kwargs)
+        with _API_GATE:  # 限并发,避免整批超时(图裂变 N 路并发→网关压不住→全超时)
+            resp = self.client.images.edit(**kwargs)
         return self._decode(resp)
 
     # ---- 抠图 / 去背景 ----
