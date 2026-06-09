@@ -15,7 +15,6 @@ from ..config import settings
 from ..db import get_db
 from ..models_db import User
 from ..services.billing import charge_for, refund
-from ..services.image_tools import compress_image
 from ..services.library import save_as_asset
 from ..ai.upscale import get_upscale_provider
 from ..tasks import run_tool
@@ -140,38 +139,20 @@ def compress(
     user: User = Depends(charge_for("process")),
     db: Session = Depends(get_db),
 ):
-    """裁剪压缩(纯离线 Pillow,op=process 扣 2)。
+    """裁剪压缩(纯离线 Pillow,op=process 扣 2)→ Celery 后台作业,前端轮询。
 
-    返回压缩后文件 + 原始/压缩后字节数 + 尺寸/格式。
+    结果带原始/压缩后字节数 + 尺寸/格式(worker 内算,见 tasks._work_compress)。
     """
     raw = file.file.read()
-    original_bytes = len(raw)
-    src = _read_image(raw, db, user, "process")
-    try:
-        _out_img, encoded, info = compress_image(
-            src, target_w=target_w, target_h=target_h, quality=quality, fmt=fmt
-        )
-    except ValueError as exc:
+    _read_image(raw, db, user, "process")  # 读图失败 → 400 + 退点
+    # 参数非法同步早拦截(400),不进后台:超大目标尺寸 / 非法格式 / 质量越界
+    from ..services.image_tools import MAX_TARGET_PIXELS
+    if target_w and target_h and target_w * target_h > MAX_TARGET_PIXELS:
         refund(db, user, "process")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="目标尺寸过大(像素数超上限)")
+    if fmt not in ("png", "jpeg", "webp") or not (1 <= quality <= 100):
         refund(db, user, "process")
-        raise HTTPException(status_code=400, detail="压缩失败") from exc
-
-    job_id = storage.new_job_id()
-    ext = "jpg" if info["pil_format"] == "JPEG" else info["format"]
-    name = f"compressed.{ext}"
-    # 直接写编码后的字节,保证落盘文件与 output_bytes 完全一致
-    storage.output_path(job_id, name).write_bytes(encoded)
-    save_as_asset(db, user.id, _out_img, "裁剪压缩", storage.output_url(job_id, name),
-                  source="generated", size_bytes=info["output_bytes"])
-
-    return JSONResponse({
-        "job_id": job_id,
-        "image_url": storage.output_url(job_id, name),
-        "original_bytes": original_bytes,
-        "output_bytes": info["output_bytes"],
-        "width": info["width"],
-        "height": info["height"],
-        "format": info["format"],
-    })
+        raise HTTPException(status_code=400, detail="格式或质量参数非法")
+    return JSONResponse(submit_celery(
+        run_tool, db, user, kind="compress", tool_id="compress", op="process", raw=raw,
+        params={"target_w": target_w, "target_h": target_h, "quality": quality, "fmt": fmt}))

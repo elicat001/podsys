@@ -16,9 +16,11 @@
 **抠图 → 提取印花 → 放大 → 套图预览 → 导出生产文件** 的流水线,变成可直接送工厂印刷的高清文件。
 
 - 后端:Python 3 + FastAPI + Uvicorn
-- **异步作业:Celery + 独立 Redis 实例(默认 127.0.0.1:6380)**。所有耗时端点(印花提取/文生图/
-  改图/裂变/融合/转绘/梗图/提质/扩图/去水印/试衣/换装/合照/转矢量)= 立即返回 `job_id` → worker 后台跑
-  → 前端轮询 `/api/jobs/{id}`。详见「异步作业(Celery)」一节。(历史上是 BackgroundTasks,已迁移。)
+- **异步作业:Celery + 独立 Redis 实例(默认 127.0.0.1:6380)**。几乎所有产出类端点(印花提取/文生图/
+  改图/裂变/融合/转绘/梗图/提质/扩图/去水印/试衣/换装/合照/转矢量 + 套图/批量套图/四方连续/压缩/生产图)
+  = 立即返回 `job_id` → worker 后台跑 → 前端轮询 `/api/jobs/{id}`,前端「提交即走」丢任务中心。
+  仍**同步**的:一键抠图 `/api/process`(核心管线)、标题/侵权(分析类,返回文字/风险而非可下载图)。
+  详见「异步作业(Celery)」一节。(历史上是 BackgroundTasks,已迁移。)
 - 图像:Pillow(默认离线 CPU),可切换 rembg / OpenAI gpt-image / 第三方 API
 - 存储:本地文件 + SQLite(SQLAlchemy 2.0);接口已预留可换 S3/Postgres
 - 前端:**Vue 3 SPA**(`frontend-vue/`:Vite + vue-router(history 模式)+ pinia + element-plus,深色风格)。后端 `main.py` 服务其构建产物 `dist`(SPA 回退,见「部署」一节);旧的静态 `frontend/*.html` 已废弃删除。**需登录才能用**(无游客自动注册)。

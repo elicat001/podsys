@@ -20,12 +20,12 @@ def test_seamless_service_dimensions():
     assert pat.size == (400, 320)  # 2x2 镜像块 再 2x2 平铺
 
 
-def test_seamless_endpoint_charges_and_returns(client, auth_headers):
+def test_seamless_endpoint_charges_and_returns(client, auth_headers, tool_result):
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     r = client.post("/api/design-tools/seamless", headers=auth_headers,
                     data={"repeat": 2}, files={"file": ("x.png", _png((100, 80)), "image/png")})
-    assert r.status_code == 200, r.text
-    got = client.get(r.json()["image_url"])
+    res = tool_result(auth_headers, r)  # 异步:轮询取产物(eager 下立即完成)
+    got = client.get(res["image_url"])
     assert got.status_code == 200 and Image.open(io.BytesIO(got.content)).size == (400, 320)
     bal1 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     assert bal1 == bal0 - 2  # process 扣 2

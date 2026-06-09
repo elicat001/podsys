@@ -95,7 +95,7 @@ function goTaskCenter() {
 
       <!-- 异步工具提示:运行会丢后台 -->
       <p v-if="tool.async && !result" class="muted hint">
-        ⏳ 此工具为 AI 处理,提交后将在后台运行,无需在此等待。
+        ⏳ 提交后将在后台处理,无需在此等待,可到「我的空间 · 任务中心」查看结果。
       </p>
     </div>
 

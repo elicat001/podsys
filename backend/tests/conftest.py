@@ -103,6 +103,21 @@ def png():
     return make_png
 
 
+@pytest.fixture()
+def tool_result(client):
+    """异步工具端点助手:POST 响应 → 轮询作业 → 断言 done 并返回 result。
+
+    所有耗时端点都迁到 Celery 后返回 {job_id, status:"pending"};eager 模式(conftest 强制)下
+    任务已在 POST 时同步跑完,这里取回 job.result 供断言。失败的断言会打印整个 job 便于定位。
+    """
+    def _get(headers, resp):
+        assert resp.status_code == 200, resp.text
+        job = client.get(f"/api/jobs/{resp.json()['job_id']}", headers=headers).json()
+        assert job["status"] == "done", job
+        return job["result"]
+    return _get
+
+
 def test__isolation_uses_tmp_dir():
     """sanity:确认测试库确实在临时目录,而非开发库 backend/data。"""
     assert str(settings.data_dir) == str(_TMP_DATA_DIR)

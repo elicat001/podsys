@@ -49,34 +49,31 @@ def test_render_unauth_401(client, png):
     assert r.status_code == 401
 
 
-def test_render_with_color(client, auth_headers, png):
+def test_render_with_color(client, auth_headers, png, tool_result):
     before = _balance(client, auth_headers)
     r = client.post("/api/mockup/render", headers=auth_headers,
                     files=_files(png), data={"template": "tshirt", "color": "black"})
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["template"] == "tshirt" and body["color"] == "black"
-    dl = client.get(body["image_url"])
+    res = tool_result(auth_headers, r)
+    assert res["template"] == "tshirt" and res["color"] == "black"
+    dl = client.get(res["image_url"])
     assert dl.status_code == 200 and len(dl.content) > 0
     assert _balance(client, auth_headers) == before - 1  # asset=1
 
 
-def test_render_default_color(client, auth_headers, png):
+def test_render_default_color(client, auth_headers, png, tool_result):
     r = client.post("/api/mockup/render", headers=auth_headers,
                     files=_files(png), data={"template": "tote"})
-    assert r.status_code == 200, r.text
-    assert r.json()["color"] is None
+    assert tool_result(auth_headers, r)["color"] is None
 
 
-def test_render_mug_offline_local_engine(client, auth_headers, png):
+def test_render_mug_offline_local_engine(client, auth_headers, png, tool_result):
     """水杯套图:离线(conftest 强制无 key)走本地引擎,产物可下载,engine=local。"""
     r = client.post("/api/mockup/render", headers=auth_headers,
                     files=_files(png), data={"template": "mug", "color": "black"})
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["template"] == "mug" and body["color"] == "black"
-    assert body["engine"] == "local"  # 测试环境强制离线 → 回退本地合成
-    assert client.get(body["image_url"]).status_code == 200
+    res = tool_result(auth_headers, r)
+    assert res["template"] == "mug" and res["color"] == "black"
+    assert res["engine"] == "local"  # 测试环境强制离线 → 回退本地合成
+    assert client.get(res["image_url"]).status_code == 200
 
 
 def test_render_bad_template_refund_400(client, auth_headers, png):
@@ -96,12 +93,11 @@ def test_render_bad_color_refund_400(client, auth_headers, png):
 
 
 # ---- 批量套图 -------------------------------------------------------------
-def test_batch_cartesian_and_charge(client, auth_headers, png):
+def test_batch_cartesian_and_charge(client, auth_headers, png, tool_result):
     before = _balance(client, auth_headers)
     r = client.post("/api/mockup/batch", headers=auth_headers, files=_files(png),
                     data={"templates": "tshirt,tote", "colors": "white,black"})
-    assert r.status_code == 200, r.text
-    body = r.json()
+    body = tool_result(auth_headers, r)
     assert body["count"] == 4  # 2 模板 × 2 配色
     seen = {(it["template"], it["color"]) for it in body["items"]}
     assert seen == {("tshirt", "white"), ("tshirt", "black"),
@@ -111,11 +107,10 @@ def test_batch_cartesian_and_charge(client, auth_headers, png):
     assert _balance(client, auth_headers) == before - 4  # 按张 asset×4
 
 
-def test_batch_default_colors(client, auth_headers, png):
+def test_batch_default_colors(client, auth_headers, png, tool_result):
     r = client.post("/api/mockup/batch", headers=auth_headers, files=_files(png),
                     data={"templates": "tshirt,canvas"})
-    assert r.status_code == 200, r.text
-    body = r.json()
+    body = tool_result(auth_headers, r)
     assert body["count"] == 2
     assert all(it["color"] for it in body["items"])  # 默认色已落实
 

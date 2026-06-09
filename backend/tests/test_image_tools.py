@@ -50,7 +50,7 @@ def _balance(client, headers) -> int:
 # --------------------------------------------------------------------------
 # compress:离线真实行为(重点)
 # --------------------------------------------------------------------------
-def test_compress_resizes_and_changes_format(client, auth_headers):
+def test_compress_resizes_and_changes_format(client, auth_headers, tool_result):
     big = _make_big_png((1200, 1200))
     original_bytes = len(big.getvalue())
     big.seek(0)
@@ -61,8 +61,7 @@ def test_compress_resizes_and_changes_format(client, auth_headers):
         files={"file": ("big.png", big, "image/png")},
         data={"target_w": 300, "quality": 80, "fmt": "jpeg"},
     )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
+    body = tool_result(auth_headers, resp)
 
     assert body["width"] == 300
     # 等比:1200x1200 -> 300x300
@@ -82,7 +81,7 @@ def test_compress_resizes_and_changes_format(client, auth_headers):
     assert len(got.content) == body["output_bytes"]
 
 
-def test_compress_webp_and_single_dimension(client, auth_headers):
+def test_compress_webp_and_single_dimension(client, auth_headers, tool_result):
     big = _make_big_png((800, 400))
     resp = client.post(
         "/api/image-tools/compress",
@@ -90,8 +89,7 @@ def test_compress_webp_and_single_dimension(client, auth_headers):
         files={"file": ("big.png", big, "image/png")},
         data={"target_h": 200, "fmt": "webp"},
     )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
+    body = tool_result(auth_headers, resp)
     assert body["height"] == 200
     assert body["width"] == 400  # 800x400 等比 -> 400x200
     assert body["format"] == "webp"

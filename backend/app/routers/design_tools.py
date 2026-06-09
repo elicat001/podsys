@@ -18,7 +18,6 @@ from ..models_db import User
 from ..auth import current_user
 from ..services.billing import charge_for, charge, refund, InsufficientCredits
 from ..services import design_tools
-from ..services import seamless as seamless_svc
 from ..services.library import save_as_asset
 from ..tasks import run_tool
 from ..web_utils import read_image_or_refund, submit_celery
@@ -96,18 +95,14 @@ def seamless(
     user: User = Depends(charge_for("process")),
     db: Session = Depends(get_db),
 ):
-    """四方连续图(离线 Pillow,op=process 扣 2):镜像无缝基块 + 平铺。"""
-    src = read_image_or_refund(file.file.read(), db, user, "process")
-    try:
-        out = seamless_svc.seamless_pattern(src, repeat=repeat)
-    except ValueError as exc:
+    """四方连续图(离线 Pillow,op=process 扣 2)→ Celery 后台作业,前端轮询。"""
+    raw = file.file.read()
+    read_image_or_refund(raw, db, user, "process")  # 读图失败 → 400 + 退点
+    if not (1 <= repeat <= 8):  # 参数非法同步早拦截(400),不进后台
         refund(db, user, "process")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    job_id = storage.new_job_id()
-    out.save(storage.output_path(job_id, "seamless.png"), format="PNG")
-    url = storage.output_url(job_id, "seamless.png")
-    save_as_asset(db, user.id, out, "四方连续图", url, source="generated")
-    return {"job_id": job_id, "image_url": url}
+        raise HTTPException(status_code=400, detail="repeat 必须在 1~8 之间")
+    return submit_celery(run_tool, db, user, kind="seamless", tool_id="seamless", op="process",
+                         raw=raw, params={"repeat": repeat})
 
 
 @router.post("/fuse")

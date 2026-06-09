@@ -11,12 +11,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from .. import storage
 from ..db import get_db
 from ..models_db import User
 from ..services import export
 from ..services.billing import charge_for, refund
-from ..web_utils import read_image_or_refund
+from ..tasks import run_tool
+from ..web_utils import read_image_or_refund, submit_celery
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 
@@ -55,9 +55,10 @@ async def production(
     """把上传的设计稿导出为工厂级多格式生产文件。
 
     入参:设计稿(建议透明底 PNG)+ 尺寸/DPI/格式/底色 + 出血/安全边/排版模式/锚点/CMYK/打样图。
-    返回:`{job_id, files:{fmt:url}, proof:url|null, meta}`。读图/参数非法 → 400(退点)。
+    返回:`{job_id, status:"pending"}` → 前端轮询(结果 {files:{fmt:url}, proof, meta})。读图/参数非法 → 400(退点)。
     """
-    src = read_image_or_refund(await file.read(), db, user, "asset")
+    raw = await file.read()
+    read_image_or_refund(raw, db, user, "asset")  # 读图失败 → 400 + 退点
 
     def _bad(detail: str):
         refund(db, user, "asset")
@@ -79,19 +80,9 @@ async def production(
     if anchor not in export.ANCHORS:
         raise _bad("锚点仅支持 center/top/bottom")
 
-    job_id = storage.new_job_id()
-    out_dir = storage.output_path(job_id, "_").parent
-    try:
-        result = export.export_production_multi(
-            src, out_dir, name_base="production",
-            width_cm=width_cm, height_cm=height_cm, dpi=dpi,
-            formats=tuple(fmts), bg=_BG.get(bg, (255, 255, 255)),
-            bleed_mm=bleed_mm, safe_mm=safe_mm, scale=scale, anchor=anchor,
-            cmyk=cmyk, proof=proof,
-        )
-    except ValueError as exc:  # 超 MAX_PX / 安全边过大等 → 400 + 退点
-        raise _bad(str(exc)) from exc
-
-    files = {fmt: storage.output_url(job_id, name) for fmt, name in result["files"].items()}
-    proof_url = storage.output_url(job_id, result["proof"]) if result.get("proof") else None
-    return {"job_id": job_id, "files": files, "proof": proof_url, "meta": result["meta"]}
+    # 排版/导出耗时,丢 Celery 后台。bg 转 list(JSON 可序列化),worker 内转回 tuple。
+    return submit_celery(
+        run_tool, db, user, kind="production", tool_id="production", op="asset", raw=raw,
+        params={"width_cm": width_cm, "height_cm": height_cm, "dpi": dpi, "formats": fmts,
+                "bg": list(_BG.get(bg, (255, 255, 255))), "bleed_mm": bleed_mm, "safe_mm": safe_mm,
+                "scale": scale, "anchor": anchor, "cmyk": cmyk, "proof": proof})

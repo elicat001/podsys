@@ -78,7 +78,7 @@ export const TOOLS = [
   },
   {
     id: 'seamless', name: '四方连续图', icon: '🔲', cat: '印花设计', ep: 'design-tools/seamless',
-    async: false, result: 'image', cost: 2,
+    async: true, result: 'image', cost: 2,
     desc: '无缝连续印花,服饰家纺',
     inputs: [
       { key: 'file', type: 'file', label: '上传原图', required: true },
@@ -126,7 +126,7 @@ export const TOOLS = [
   },
   {
     id: 'compress', name: '裁剪压缩', icon: '🗜️', cat: '图案处理', ep: 'image-tools/compress',
-    async: false, result: 'info', cost: 2,
+    async: true, result: 'info', cost: 2,
     desc: '压缩体积/改尺寸/格式',
     inputs: [
       { key: 'file', type: 'file', label: '上传图片', required: true },
@@ -151,7 +151,7 @@ export const TOOLS = [
   // ── 套图 & 标题 ───────────────────────────
   {
     id: 'mockup', name: '商品套图', icon: '👕', cat: '套图标题', ep: 'mockup/render',
-    async: false, result: 'image', cost: 1,
+    async: true, result: 'image', cost: 1,
     desc: '印花套到商品上(配色变体)',
     inputs: [
       { key: 'file', type: 'file', label: '上传印花', required: true },
@@ -161,7 +161,7 @@ export const TOOLS = [
   },
   {
     id: 'mockupbatch', name: '批量套图', icon: '🗂️', cat: '套图标题', ep: 'mockup/batch',
-    async: false, result: 'images', cost: 1, costPerN: 'templates',
+    async: true, result: 'images', cost: 1, costPerN: 'templates',
     desc: '多产品 × 多配色,一次出整组(≤12)',
     inputs: [
       { key: 'file', type: 'file', label: '上传印花', required: true },
@@ -210,7 +210,7 @@ export const TOOLS = [
   // ── 履约 ──────────────────────────────────
   {
     id: 'production', name: '生产图', icon: '🏭', cat: '履约', ep: 'export/production',
-    async: false, result: 'filesMap', cost: 1,
+    async: true, result: 'filesMap', cost: 1,
     desc: '设计稿 → 印厂格式(PNG/JPG/TIFF/PDF)。先用印花提取/抠图做成透明 PNG 再来。',
     inputs: [
       { key: 'file', type: 'file', label: '上传设计稿(透明 PNG)', required: true },

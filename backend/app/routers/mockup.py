@@ -16,14 +16,13 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from PIL import Image
 from sqlalchemy.orm import Session
 
-from .. import storage
 from ..auth import current_user
 from ..db import get_db
 from ..models_db import User
 from ..services import mockup
 from ..services.billing import InsufficientCredits, charge, charge_for, refund
-from ..services.library import save_as_asset
-from ..web_utils import read_image_or_refund
+from ..tasks import run_tool
+from ..web_utils import read_image_or_refund, submit_celery
 
 router = APIRouter(prefix="/api/mockup", tags=["mockup"])
 
@@ -42,8 +41,9 @@ async def render(
     user: User = Depends(charge_for("asset")),
     db: Session = Depends(get_db),
 ):
-    """单张套图。color 留空=该产品默认配色。"""
-    src = read_image_or_refund(await file.read(), db, user, "asset")
+    """单张套图。color 留空=该产品默认配色。→ Celery 后台作业,前端轮询。"""
+    raw = await file.read()
+    read_image_or_refund(raw, db, user, "asset")  # 读图失败 → 400 + 退点
     if template not in mockup.BUILTIN:
         refund(db, user, "asset")
         raise HTTPException(status_code=400, detail="未知产品模板")
@@ -51,14 +51,8 @@ async def render(
         refund(db, user, "asset")
         raise HTTPException(status_code=400, detail="未知配色")
 
-    img, engine = mockup.render_product(src, template, color or None)
-    job_id = storage.new_job_id()
-    name = f"mockup_{template}_{color or 'default'}.png"
-    img.save(storage.output_path(job_id, name), format="PNG")
-    url = storage.output_url(job_id, name)
-    save_as_asset(db, user.id, img, f"套图 {template}", url, source="generated")
-    return {"job_id": job_id, "image_url": url, "template": template,
-            "color": color or None, "engine": engine}
+    return submit_celery(run_tool, db, user, kind="mockup", tool_id="mockup", op="asset",
+                         raw=raw, params={"template": template, "color": color or None})
 
 
 @router.post("/batch")
@@ -108,24 +102,13 @@ async def batch(
         for _ in range(n):
             refund(db, user, "asset")
 
+    raw = await file.read()
     try:
-        src = Image.open(io.BytesIO(await file.read())); src.load()
+        Image.open(io.BytesIO(raw)).load()
     except Exception as exc:  # noqa: BLE001
         _refund_all()
         raise HTTPException(status_code=400, detail=f"无法读取图片: {exc}") from exc
 
-    try:
-        rendered = mockup.render_variants(src, combos)
-    except Exception as exc:  # noqa: BLE001
-        _refund_all()
-        raise HTTPException(status_code=502, detail="批量套图失败,请稍后重试") from exc
-
-    job_id = storage.new_job_id()
-    items = []
-    for tid, color, im in rendered:
-        name = f"mockup_{tid}_{color}.png"
-        im.save(storage.output_path(job_id, name), format="PNG")
-        url = storage.output_url(job_id, name)
-        save_as_asset(db, user.id, im, f"套图 {tid}/{color}", url, source="generated")
-        items.append({"template": tid, "color": color, "url": url})
-    return {"job_id": job_id, "items": items, "count": len(items)}
+    # 组合存进 params(color 可能为 None → JSON null),worker 重建 combos 渲染(见 tasks._work_mockup_batch)
+    return submit_celery(run_tool, db, user, kind="mockup-batch", tool_id="mockupbatch", op="asset",
+                         raw=raw, params={"combos": [[t, c] for (t, c) in combos], "n": n}, n=n)
