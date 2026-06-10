@@ -95,6 +95,16 @@ function jobTitle(job) {
   return job._tool ? `${job._tool.icon} ${job._tool.name}` : job.kind
 }
 
+// 复制文字到剪贴板
+async function copyText(text, label) {
+  try { await navigator.clipboard.writeText(text) }
+  catch (e) {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta)
+    ta.select(); try { document.execCommand('copy') } catch (_) { /* ignore */ } document.body.removeChild(ta)
+  }
+  ElMessage.success(`已复制${label}`)
+}
+
 // 信息类结果(标题/侵权)在卡片上直接展示的摘要文字;无则空(图像类不显示)。
 function jobSummary(job) {
   const r = job.result
@@ -279,7 +289,7 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
               <div v-for="job in c.items" :key="job.id" class="job-card panel">
                 <div class="job-thumb" :class="{ clickable: job.status === 'done' && job.result }"
                      @click="openPreview(job)" :title="job.status === 'done' ? '点击预览' : ''">
-                  <img v-if="job.status === 'done' && jobThumb(job.result)" :src="jobThumb(job.result)" class="checker" />
+                  <img v-if="job.status === 'done' && jobThumb(job.result)" :src="jobThumb(job.result)" class="checker" loading="lazy" decoding="async" />
                   <div v-else-if="job.status === 'error'" class="ph err">✕</div>
                   <!-- 已完成但无图(标题/侵权等信息类结果)→ 显示工具图标的"完成"态,不再误显示转圈 -->
                   <div v-else-if="job.status === 'done'" class="ph done">{{ job._tool?.icon || '✓' }}</div>
@@ -298,6 +308,7 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
                   <div v-if="job.status === 'error'" class="job-err" :title="job.error">{{ job.error }}</div>
                   <div class="job-actions">
                     <button v-if="job.status === 'done' && job.result" class="chip preview" @click="openPreview(job)">👁 预览</button>
+                    <button v-if="job.result && job.result.title" class="chip copy" @click="copyText(job.result.title, '标题')">📋 复制</button>
                     <a v-for="([name, url]) in jobDownloads(job.result)" :key="name" class="chip dl" :href="url" target="_blank" download>⬇ {{ name }}</a>
                     <button class="chip del" @click="delJob(job)">🗑 删除</button>
                   </div>
@@ -320,7 +331,7 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
         <div v-else class="tpl-grid">
           <div v-for="t in teamTpls" :key="t.id" class="tpl-card panel">
             <div class="tpl-thumbs clickable" @click="openEdit(t)" title="点击管理图片">
-              <img v-for="im in t.images.slice(0, 4)" :key="im.id" :src="im.url" />
+              <img v-for="im in t.images.slice(0, 4)" :key="im.id" :src="im.url" loading="lazy" decoding="async" />
             </div>
             <div class="tpl-foot">
               <span class="tpl-name">{{ t.name }} <span class="muted">· {{ t.image_count }}张</span></span>
@@ -577,6 +588,11 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
   border: none;
   cursor: pointer;
   color: var(--brand);
+}
+.copy {
+  border: none;
+  cursor: pointer;
+  color: var(--fg);
 }
 .preview-body {
   max-height: 70vh;

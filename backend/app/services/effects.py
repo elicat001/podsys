@@ -6,6 +6,7 @@
 from __future__ import annotations
 import colorsys
 import hashlib
+import re
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps, ImageChops
 
 MAX_PX = 50_000_000
@@ -211,19 +212,30 @@ def fuse(img: Image.Image, prompt: str) -> Image.Image:
     return ImageChops.overlay(rgb, tex)
 
 
-# ---------- 标题:由图像调色板 + 关键词派生(纯规则,无云、无模型) ----------
-# 本地电商标题引擎:风格/受众/场合/卖点 SEO 词库 + 品类话术 + 调色板分析 + 多模板。
-# 设计取舍:不"理解"画面内容(那要 ML),但通过①真实调色板(主色/明暗/鲜艳度)②关键词主体
-# ③品类同义词 ④确定性多模板,产出**接近真人 listing**的标题与搜索词,且 12 核机器上 ~几毫秒、无并发压力。
-_TITLE_STYLES = ["Funny", "Cute", "Aesthetic", "Vintage", "Retro", "Trendy",
-                 "Minimalist", "Graphic", "Cool", "Unique", "Cottagecore", "Y2K",
-                 "Streetwear", "Kawaii", "Grunge", "Boho", "Edgy", "Whimsical"]
-_TITLE_AUDIENCE = ["for Men", "for Women", "Unisex", "for Teens", "for Her", "for Him"]
-_TITLE_OCCASION = ["Birthday Gift", "Christmas Gift", "Holiday Gift Idea",
-                   "Funny Gift", "Gift for Friends", "Gift Idea"]
-_TITLE_SELL = ["Premium Quality", "Trendy Design", "Perfect Gift", "Unique Design",
-               "Bold Statement", "Eye-Catching Print", "Great Gift Idea"]
-_TITLE_NOUNS = ["Graphic", "Art Print", "Illustration", "Design", "Artwork"]
+# ---------- 标题:OCR 文字 + 关键词 + 调色板派生(纯规则,无云、无模型) ----------
+# 本地电商标题引擎。原则:**所有出现在标题/搜索词里的信息都要"有据可依"**——
+#   主体来自 OCR 识别的设计文字 / 用户关键词;受众·场合从这些词里**推断**(dad→男士/父亲节);
+#   风格来自调色板基调;产品同义词来自品类。不再硬塞随机风格词/泛词("pod design"等),
+#   避免出现 "for Her"(却是 dad 礼)、"White" 当主语 这类不专业、不准确的拼接。
+_TITLE_STYLES = ["Trendy", "Minimalist", "Graphic", "Aesthetic", "Vintage", "Cool", "Retro"]
+_TITLE_NOUNS = ["Graphic", "Art Print", "Illustration", "Design"]
+# 关键词/OCR 文字里出现这些 → 推断受众(命中第一个为准;都没命中=Unisex)
+_GENDER_HINTS = [("women", "for Women"), ("woman", "for Women"), ("ladies", "for Women"),
+                 ("mom", "for Women"), ("mama", "for Women"), ("mother", "for Women"),
+                 ("girl", "for Women"), ("her", "for Women"), ("wife", "for Women"),
+                 ("men", "for Men"), ("man", "for Men"), ("dad", "for Men"),
+                 ("papa", "for Men"), ("father", "for Men"), ("boy", "for Men"),
+                 ("him", "for Men"), ("husband", "for Men"), ("kid", "for Kids"),
+                 ("baby", "for Kids"), ("toddler", "for Kids")]
+# 关键词/OCR 文字里出现这些 → 推断场合(命中第一个为准;都没命中=Gift Idea)
+_OCC_HINTS = [("father", "Father's Day Gift"), ("dad", "Father's Day Gift"),
+              ("papa", "Father's Day Gift"), ("mother", "Mother's Day Gift"),
+              ("mom", "Mother's Day Gift"), ("mama", "Mother's Day Gift"),
+              ("birthday", "Birthday Gift"), ("christmas", "Christmas Gift"),
+              ("xmas", "Christmas Gift"), ("halloween", "Halloween Gift"),
+              ("valentine", "Valentine's Gift"), ("wedding", "Wedding Gift"),
+              ("anniversary", "Anniversary Gift"), ("graduation", "Graduation Gift"),
+              ("thanksgiving", "Thanksgiving Gift")]
 # 品类 → 产品名(第一个为主名,其余进标签作同义搜索词)
 _TITLE_CAT = {
     "apparel": ("T-Shirt", "Tee", "Graphic Tee", "Shirt"),
@@ -234,7 +246,22 @@ _TITLE_CAT = {
     "bag": ("Tote Bag", "Canvas Tote", "Bag"),
     "pillow": ("Throw Pillow", "Pillow Cover", "Cushion"),
     "sticker": ("Sticker", "Vinyl Sticker", "Decal"),
+    "accessory": ("Accessory", "Gift"),
+    "other": ("Print", "Design"),
 }
+
+
+def _infer(text: str, hints: list, default: str) -> str:
+    """按 hints 顺序找第一个命中的**整词**(含复数/所有格),返回映射值;都没命中返回 default。
+
+    必须按整词匹配,否则会误命中子串(如 'her' 命中 'fat-her-s'、'man' 命中 'wo-man'),
+    导致给 dad 礼贴 'for Women' 这类离谱错误。
+    """
+    words = set(re.findall(r"[a-z']+", text.lower()))
+    for key, val in hints:
+        if key in words or (key + "s") in words or (key + "'s") in words:
+            return val
+    return default
 # 色相(0~360°)→ 颜色名(电商搜索词)
 _HUE_NAMES = [(15, "Red"), (45, "Orange"), (68, "Yellow"), (95, "Lime"),
               (160, "Green"), (200, "Teal"), (255, "Blue"), (290, "Purple"),
@@ -318,63 +345,51 @@ def smart_title(img: Image.Image | None, keywords: str = "", category: str = "ap
             fp = ""
     seed = _seed("|".join(kw) + "|" + category + "|" + fp)
 
-    prod = _TITLE_CAT.get(category, (category.replace("_", " ").title(), category.replace("_", " ").title()))
+    prod = _TITLE_CAT.get(category, ("Print", "Design"))
     product = prod[0]
 
     pal = _palette(img) if img is not None else {"accent": None, "mono": None, "vivid": None, "tone": None}
-    # 主色前缀:有彩色主色用色名;近单色用 黑/白/Mono 词;都没有(无图)用风格词
-    color_lead = pal["accent"] or pal["mono"]
+    noun = _TITLE_NOUNS[seed % len(_TITLE_NOUNS)]
 
-    style = _TITLE_STYLES[seed % len(_TITLE_STYLES)]
-    style2 = _TITLE_STYLES[(seed // 11) % len(_TITLE_STYLES)]
-    if style2 == style:  # 避免 "Retro ... Retro" / "Y2K Y2K" 同词重复
-        style2 = _TITLE_STYLES[(seed // 11 + 1) % len(_TITLE_STYLES)]
-    # 图给了风格基调就优先用它当主风格,让标题与画面气质一致
-    if pal["tone"]:
-        style = pal["tone"]
-    aud = _TITLE_AUDIENCE[(seed // 13) % len(_TITLE_AUDIENCE)]
-    occ = _TITLE_OCCASION[(seed // 17) % len(_TITLE_OCCASION)]
-    sell = _TITLE_SELL[(seed // 19) % len(_TITLE_SELL)]
-    noun = _TITLE_NOUNS[(seed // 23) % len(_TITLE_NOUNS)]
-
-    # 主体 + 前缀,优先级:① OCR 识别到的设计文字(最具体)→ ② 关键词 → ③ 主色描述 → ④ 兜底
+    # 主体:① OCR 设计文字(最具体)→ ② 关键词 → ③ 主色描述 → ④ 兜底。**不再用颜色当主语前缀**。
     if ocr_words:
-        # 设计上印的文字本身就是主体;再把没被 OCR 覆盖到的关键词补在后面
         subj = list(ocr_words)
         low = {w.lower() for w in subj}
-        for k in kw:
-            if k.lower() not in low and len(subj) < 8:
+        for k in kw:                              # 关键词里 OCR 没覆盖的补在后面
+            if k.lower() not in low and len(subj) < 7:
                 subj.append(k); low.add(k.lower())
         subject = " ".join(w.title() for w in subj)
-        lead = color_lead or style
     elif kw:
-        subject = " ".join(k.title() for k in kw[:3])
-        lead = color_lead or style
-    elif color_lead:
-        subject = f"{color_lead} {noun}"          # 如 "Orange Art Print" / "Black & White Illustration"
-        lead = style                               # 前缀用风格,不再重复色名
+        subject = " ".join(k.title() for k in kw[:4])
+    elif pal["accent"] or pal["mono"]:
+        subject = f"{pal['accent'] or pal['mono']} {noun}"
     else:
         subject = f"Custom {noun}"
-        lead = style
 
+    # 受众/场合:从 OCR+关键词里**推断**(有据可依),而不是随机派(避免给 dad 礼贴 "for Her")
+    hint_text = " ".join(ocr_words) + " " + " ".join(kw)
+    aud = _infer(hint_text, _GENDER_HINTS, "Unisex")
+    occ = _infer(hint_text, _OCC_HINTS, "Gift Idea")
+    # 风格:优先用调色板基调(与画面气质一致),否则按种子取一个中性风格
+    style = pal["tone"] or _TITLE_STYLES[seed % len(_TITLE_STYLES)]
+
+    # 专业的 listing 结构:主体 + 产品 + 风格修饰 + 场合 + 受众(模板少而稳,信息都有据可依)
     templates = [
-        f"{lead} {subject} {product} - {style2} {aud}, {occ}",
-        f"{subject} {product} | {style} {style2} {noun} {aud}",
-        f"{style} {subject} {product} - {sell}, {occ}",
-        f"{subject} {product}, {lead} {style2} Print - {occ} {aud}",
-        f"{lead} {subject} {product} | {sell} {aud} - {occ}",
+        f"{subject} {product} - {style} {occ}, {aud}",
+        f"{subject} {product} | {style} Design {aud} - {occ}",
+        f"{style} {subject} {product} - {occ} {aud}",
     ]
     title = " ".join(templates[seed % len(templates)].split())
-    # 去相邻重复词(防 "Orange Orange" / "Vintage Vintage" 等任何残留)
-    ws = title.split()
+    ws = title.split()  # 去相邻重复词
     title = " ".join(w for i, w in enumerate(ws) if i == 0 or w.lower() != ws[i - 1].lower())[:140]
 
-    # 标签:OCR 词 + 用户词 + 主色 + 鲜艳度 + 风格×2 + 品类全部同义词 + 场合 + 通用 SEO;去重(小写)取前 13
-    extra = [x for x in [
-        (pal["accent"] or "").lower(), (pal["mono"] or "").lower().replace(" & ", " "),
-        (pal["vivid"] or "").lower(), style.lower(), style2.lower(),
-        *[p.lower() for p in prod], category, occ.lower(), "gift", "trendy print", "pod design",
-    ] if x]
-    lead_tags = [w.lower() for w in ocr_words] + [k.lower() for k in kw]
-    tags = list(dict.fromkeys([t for t in (lead_tags + extra) if t]))[:13]
+    # 搜索词:只放**有据可依**的——OCR 词 + 用户词 + 产品同义词 + 主色 + 场合;不再塞泛词/随机风格。去重取前 10。
+    grounded = (
+        [w.lower() for w in ocr_words]
+        + [k.lower() for k in kw]
+        + [p.lower() for p in prod]
+        + [c for c in [(pal["accent"] or pal["mono"] or "").lower().replace(" & ", " ")] if c]
+        + [occ.lower()]
+    )
+    tags = list(dict.fromkeys([t for t in grounded if t]))[:10]
     return {"title": title, "keywords": tags}

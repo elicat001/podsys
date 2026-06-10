@@ -91,6 +91,15 @@ const previewTool = computed(() => ({
   result: resultType(previewJob.value?.result, previewJob.value?._tool?.result || 'image'),
 }))
 
+async function copyText(text, label) {
+  try { await navigator.clipboard.writeText(text) }
+  catch (e) {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta)
+    ta.select(); try { document.execCommand('copy') } catch (_) { /* ignore */ } document.body.removeChild(ta)
+  }
+  ElMessage.success(`已复制${label}`)
+}
+
 async function delJob(job) {
   try { await ElMessageBox.confirm('删除该任务?产出的素材会移入回收站(可恢复)。', '确认删除', { type: 'warning' }) }
   catch (e) { return }
@@ -125,7 +134,7 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
     <div v-for="job in items" :key="job.id" class="row panel">
       <!-- 缩略图 / 完成态 -->
       <div class="thumb" :class="{ clickable: job.status === 'done' && job.result }" @click="openPreview(job)">
-        <img v-if="job.status === 'done' && jobThumb(job.result)" :src="jobThumb(job.result)" class="checker" />
+        <img v-if="job.status === 'done' && jobThumb(job.result)" :src="jobThumb(job.result)" class="checker" loading="lazy" decoding="async" />
         <div v-else-if="job.status === 'error'" class="ph err">✕</div>
         <div v-else-if="job.status === 'done'" class="ph done">{{ job._tool?.icon || '✓' }}</div>
         <div v-else class="ph"><span class="spin" /></div>
@@ -152,6 +161,8 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
         <!-- 操作 -->
         <div class="actions">
           <button v-if="job.status === 'done' && job.result" class="chip preview" @click="openPreview(job)">👁 预览</button>
+          <button v-if="job.result && job.result.title" class="chip copy" @click="copyText(job.result.title, '标题')">📋 复制标题</button>
+          <button v-if="job.result && job.result.keywords && job.result.keywords.length" class="chip copy" @click="copyText(job.result.keywords.join(', '), '关键词')">📋 复制关键词</button>
           <a v-for="([name, url]) in jobDownloads(job.result)" :key="name" class="chip dl" :href="url" target="_blank" download>⬇ {{ name }}</a>
           <button class="chip del" @click="delJob(job)">🗑 删除</button>
         </div>
@@ -199,6 +210,7 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
 .param b { color: var(--fg); font-weight: 600; }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 2px; }
 .preview { border: none; cursor: pointer; color: var(--brand); }
+.copy { border: none; cursor: pointer; color: var(--fg); }
 .del { border: none; cursor: pointer; color: var(--err); }
 .preview-body { max-height: 70vh; overflow: auto; }
 </style>

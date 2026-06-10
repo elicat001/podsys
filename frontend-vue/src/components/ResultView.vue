@@ -1,6 +1,7 @@
 <script setup>
 // 结果渲染:按 tool.result 分发。data = 后端返回(或轮询 result)。
 import { computed, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 
 const props = defineProps({
   tool: { type: Object, required: true },
@@ -8,6 +9,16 @@ const props = defineProps({
 })
 
 const type = computed(() => props.tool.result)
+
+// 复制到剪贴板(标题 / 关键词);失败兜底 execCommand。
+async function copy(text, label) {
+  try { await navigator.clipboard.writeText(text) }
+  catch (e) {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta)
+    ta.select(); try { document.execCommand('copy') } catch (_) { /* ignore */ } document.body.removeChild(ta)
+  }
+  ElMessage.success(`已复制${label}`)
+}
 
 // ── 方向校正:AI 提取对圆柱硬质产品有时会把设计转 90°,给用户一键旋转 ──
 const rot = ref(0)
@@ -72,7 +83,7 @@ const infoRows = computed(() => {
   const d = props.data || {}
   const labels = {
     risk: '风险等级', advice: '建议', match_count: '匹配数', checked: '已检索',
-    title: '标题', keywords: '关键词', degraded: '降级(无AI)',
+    title: '标题', keywords: '关键词',
     original_bytes: '原大小(字节)', output_bytes: '输出大小(字节)',
     width: '宽 px', height: '高 px', format: '格式', engine: '引擎',
     rect_count: '矢量块数', colors: '颜色数', frames: '帧数', duration_ms: '时长ms',
@@ -161,6 +172,11 @@ const riskColor = (r) => ({ high: 'var(--err)', review: 'var(--warn)', safe: 'va
         <td class="kv-v">{{ v }}</td>
       </tr>
     </table>
+    <div v-if="data.title || (data.keywords && data.keywords.length)" class="copy-row">
+      <button v-if="data.title" class="chip" @click="copy(data.title, '标题')">📋 复制标题</button>
+      <button v-if="data.keywords && data.keywords.length" class="chip"
+              @click="copy(data.keywords.join(', '), '关键词')">📋 复制关键词</button>
+    </div>
   </div>
 </template>
 
@@ -249,5 +265,13 @@ const riskColor = (r) => ({ high: 'var(--err)', review: 'var(--warn)', safe: 'va
 }
 .kv-v {
   padding: 6px 8px;
+}
+.copy-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.copy-row .chip {
+  cursor: pointer;
 }
 </style>
