@@ -35,6 +35,31 @@ def test_matting_async_transparent_and_charges(client, auth_headers, png, monkey
     assert any(a["name"] == "一键抠图" for a in assets)
 
 
+def test_uniform_bg_cutout_clean_and_keeps_interior():
+    """平背景洪水填充:主体实心不透明、角落背景透明、**主体内部同色区域(被包围)保留**。"""
+    import numpy as np
+    from PIL import ImageDraw
+    from app.ai.matting import _uniform_bg_cutout
+    im = Image.new("RGB", (200, 200), (255, 255, 255))
+    d = ImageDraw.Draw(im)
+    d.rectangle([50, 50, 150, 150], fill=(220, 40, 40))   # 红方块(主体)
+    d.ellipse([92, 92, 108, 108], fill=(255, 255, 255))   # 内部白点(被红包围,不连边缘)
+    out = _uniform_bg_cutout(im)
+    assert out is not None and out.mode == "RGBA"
+    a = np.asarray(out)[..., 3]
+    assert a[100, 100] == 255      # 内部白(被包围)→ 保留不透明,不被当背景抠掉
+    assert a[120, 120] == 255      # 红主体 → 不透明
+    assert a[4, 4] == 0            # 角落背景 → 透明
+
+
+def test_uniform_bg_cutout_skips_busy_bg():
+    """背景花哨(四角色差大)→ 返回 None,交给神经网络,不强行洪水填充。"""
+    import numpy as np
+    from app.ai.matting import _uniform_bg_cutout
+    arr = (np.random.RandomState(7).rand(80, 80, 3) * 255).astype("uint8")
+    assert _uniform_bg_cutout(Image.fromarray(arr, "RGB")) is None
+
+
 def test_matting_bad_image_refunds(client, auth_headers):
     before = client.get("/api/auth/me", headers=auth_headers).json()["credits"]
     r = client.post("/api/matting", headers=auth_headers,

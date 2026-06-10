@@ -113,17 +113,57 @@ def get_matting_provider():
     return cls()
 
 
-# ── 一键抠图:优先 rembg(u2net),不可用再退 pillow ──────────────────────────
+# ── 一键抠图:平背景走边缘洪水填充(硬边干净),复杂背景走 rembg,兜底 pillow ──────────
 _REMBG_SESSION = None
 
 
-def cutout_best(image: Image.Image) -> Image.Image:
-    """通用「一键抠图」:**优先 rembg/u2net**(神经分割,边缘干净、无颜色残留),
-    会话缓存复用;rembg 缺失/失败 → pillow 颜色距离兜底(离线可跑)。返回透明 RGBA。
+def _uniform_bg_cutout(image: Image.Image, tol: int = 36, band: int = 70,
+                       max_uniformity: float = 14.0) -> Image.Image | None:
+    """纯色/极平背景(卡通图、干净棚拍)→ **边缘洪水填充抠图**:只抠掉与画面边缘相连的背景色,
+    主体内部的同色区域(如皮卡丘白肚皮)保留 → 得到**实心、硬边、无半透明残留**的结果。
 
-    与 get_matting_provider() 解耦:抠图工具要"最好的效果",不受 POD_MATTING_PROVIDER
-    (印花提取的离线默认 pillow)影响;但 rembg 不可用时仍优雅降级,不崩。
+    背景不够平(实拍/场景,四角色差大)或几乎没背景 → 返回 None,交给神经网络。
+    纯 numpy/scipy、无模型,快且确定;解决 u2net 在大块平涂区(如皮卡丘尾巴)给半透明 alpha 的问题。
     """
+    import numpy as np
+    from scipy import ndimage
+
+    rgb_im = image.convert("RGB")
+    rgb = np.asarray(rgb_im).astype(np.int16)
+    h, w = rgb.shape[:2]
+    s = max(4, min(h, w) // 40)
+    corners = np.concatenate([rgb[:s, :s].reshape(-1, 3), rgb[:s, -s:].reshape(-1, 3),
+                              rgb[-s:, :s].reshape(-1, 3), rgb[-s:, -s:].reshape(-1, 3)])
+    bg = np.median(corners, axis=0)
+    if float(np.median(np.abs(corners - bg).sum(1))) > max_uniformity:
+        return None                                       # 背景不平 → 神经网络
+    dist = np.abs(rgb - bg).sum(2).astype(np.float32)     # 到背景色的距离(0~765)
+    lbl, _n = ndimage.label(dist <= tol)                  # 接近背景色的像素块
+    edge = set(int(x) for x in np.concatenate([lbl[0], lbl[-1], lbl[:, 0], lbl[:, -1]]))
+    edge.discard(0)
+    bg_region = np.isin(lbl, list(edge))                  # 只取"连到画面边缘"的背景(保内部同色)
+    if bg_region.mean() < 0.03:
+        return None                                       # 几乎没背景可去 → 交给神经网络
+    near = ndimage.binary_dilation(bg_region, iterations=3)
+    ramp = np.clip((dist - tol) / band, 0.0, 1.0)         # 边缘按距离平滑过渡
+    alpha = np.where(near, ramp, 1.0) * 255.0             # 背景外缘渐隐;主体内部恒不透明
+    alpha = ndimage.gaussian_filter(alpha, 0.6)           # 轻抗锯齿
+    out = np.dstack([np.asarray(rgb_im), alpha.astype(np.uint8)])
+    return Image.fromarray(out, "RGBA")
+
+
+def cutout_best(image: Image.Image) -> Image.Image:
+    """通用「一键抠图」,按背景复杂度分两路:
+    ① 纯色/极平背景(卡通、干净棚拍)→ 边缘洪水填充(硬边、实心、无半透明残留,最适合简单图);
+    ② 复杂/实拍背景 → rembg/u2net 神经分割(会话缓存);rembg 缺失/失败 → pillow 颜色距离兜底。
+    与 get_matting_provider() 解耦(不受 POD_MATTING_PROVIDER 影响);任何分支异常都优雅降级,不崩。
+    """
+    try:
+        flat = _uniform_bg_cutout(image)
+        if flat is not None:
+            return flat
+    except Exception as exc:  # noqa: BLE001 — 平背景抠图异常不致命,转神经网络
+        log.warning("平背景抠图失败,转神经网络: %s", exc)
     global _REMBG_SESSION
     try:
         from rembg import new_session, remove  # 惰性导入,离线启动不受拖累
