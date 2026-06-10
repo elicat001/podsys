@@ -47,6 +47,7 @@ def _serialize(job: Job) -> dict:
         "kind": job.kind,
         "tool_id": job.tool_id,           # 前端据此映射工具名/图标/大模块→小模块分组
         "status": job.status,
+        "params": job.params,             # 输入参数(关键词/尺寸/格式/引擎等),「详情列表」页展示;owner 隔离,无敏感数据
         "result": job.result,
         "error": job.error,
         "created_at": _iso_utc(job.created_at),

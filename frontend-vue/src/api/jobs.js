@@ -45,6 +45,19 @@ export async function listJobs({ limit } = {}) {
   return data
 }
 
+// 按 result 实际形状推断 ResultView 渲染类型(同一 tool_id 可能产单图/多图,不能死用 tool.result)。
+export function resultType(r, fallback = 'image') {
+  if (!r) return fallback
+  if (Array.isArray(r.images) || Array.isArray(r.items)) return 'images'
+  if (r.print_url || r.mockup_url || r.production_url) return 'triple'
+  if (r.files) return 'filesMap'
+  if (r.svg_url) return 'svg'
+  if (r.video_url) return 'video'
+  if (r.risk || r.title !== undefined || r.match_count !== undefined || r.degraded !== undefined) return 'info'
+  if (r.image_url) return 'image'
+  return fallback
+}
+
 // 从作业结果里挑一张可预览的缩略图 url(覆盖各 result 类型)。没有则返回 ''。
 export function jobThumb(result) {
   if (!result) return ''

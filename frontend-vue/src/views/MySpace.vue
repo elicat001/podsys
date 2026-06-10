@@ -1,14 +1,15 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client.js'
-import { listJobs, JOB_STATUS, jobThumb, jobDownloads, timeAgo, jobDuration } from '../api/jobs.js'
+import { listJobs, JOB_STATUS, jobThumb, jobDownloads, timeAgo, resultType } from '../api/jobs.js'
 import { listMockupTemplates, createMockupTemplate, deleteMockupTemplate, addTemplateImages, deleteTemplateImage } from '../api/team.js'
 import { toolForJob, moduleOfTool } from '../data/tools.js'
 import ResultView from '../components/ResultView.vue'
 
 const route = useRoute()
+const router = useRouter()
 const _initTab = ['trash', 'team'].includes(route.query.tab) ? route.query.tab : 'jobs'
 const tab = ref(_initTab)
 
@@ -28,11 +29,12 @@ const capPercent = computed(() => (quota.value ? Math.min(100, quota.value.perce
 const capColor = computed(() => (capPercent.value > 90 ? '#ff5d6c' : capPercent.value > 70 ? '#e6a23c' : '#67c23a'))
 
 // ── 任务中心 ──────────────────────────────────────────────
+const ROW = 5  // 每个小功能模块在概览里只显示一行(最多 5 个),更多去「详情列表」页
 const jobs = ref([])
 const statusFilter = ref('all') // all | active | done | error
-const showAll = ref(false)
-const PAGE = 40
-let jobsTimer = null
+const now = ref(Date.now())     // 1s 客户端计时,只驱动"用时"实时刷新(不发请求)
+let tickTimer = null            // 1s 计时
+let refreshTimer = null         // 列表轮询(仅有活动任务时才发请求)
 
 async function loadJobs() {
   // 不再静默吞错:列表加载失败要让用户(和排障)看见,否则失败时像"任务凭空消失"
@@ -55,13 +57,11 @@ const filtered = computed(() => {
   if (statusFilter.value === 'active') return jobs.value.filter((j) => j.status === 'pending' || j.status === 'running')
   return jobs.value.filter((j) => j.status === statusFilter.value)
 })
-const capped = computed(() => (showAll.value ? filtered.value : filtered.value.slice(0, PAGE)))
-const hiddenCount = computed(() => filtered.value.length - capped.value.length)
 
-// 把(限量后的)作业按 大模块 → 小模块(cat)分组,组内最近在前。
+// 按 大模块 → 小模块(cat)分组;每个 cat 概览只取前 ROW 个,total 给「详情列表」用。
 const jobGroups = computed(() => {
   const byModule = {}
-  for (const j of capped.value) {
+  for (const j of filtered.value) {
     const tool = toolForJob(j)
     const mod = moduleOfTool(tool)
     const cat = tool?.cat || '其它'
@@ -71,9 +71,25 @@ const jobGroups = computed(() => {
   }
   return Object.entries(byModule).map(([mod, cats]) => ({
     module: mod,
-    cats: Object.entries(cats).map(([cat, items]) => ({ cat, items })),
+    cats: Object.entries(cats).map(([cat, items]) => ({ cat, items: items.slice(0, ROW), total: items.length })),
   }))
 })
+
+// 实时用时:done/error 用 duration_sec;pending/running 用 now-started 实时算(随 1s tick 刷新)。
+function liveDuration(job) {
+  let sec = job.duration_sec
+  if (sec == null && job.started_at && (job.status === 'running' || job.status === 'pending')) {
+    sec = (now.value - new Date(job.started_at).getTime()) / 1000
+  }
+  if (sec == null) return '—'
+  if (sec < 60) return `${Math.round(sec)}s`
+  return `${Math.floor(sec / 60)}m${Math.round(sec % 60)}s`
+}
+
+// 跳转到某小功能模块的「详情列表」页(展示该 cat 全部任务 + 更多信息)
+function goDetail(cat) {
+  router.push({ path: '/app/space/tasks', query: { cat, status: statusFilter.value } })
+}
 
 function jobTitle(job) {
   return job._tool ? `${job._tool.icon} ${job._tool.name}` : job.kind
@@ -99,22 +115,10 @@ function openPreview(job) {
   previewJob.value = job
   showPreview.value = true
 }
-// 预览用的渲染类型:按 result 实际形状推断(不依赖 tool.result——同一 tool_id 可能产单图或多图,
-// 如商品套图 render=单图、replace=多图,若死用 tool.result 会渲染错分支导致空白)。
-function resultType(r) {
-  if (!r) return 'image'
-  if (Array.isArray(r.images) || Array.isArray(r.items)) return 'images'
-  if (r.print_url || r.mockup_url || r.production_url) return 'triple'
-  if (r.files) return 'filesMap'
-  if (r.svg_url) return 'svg'
-  if (r.video_url) return 'video'
-  if (r.risk || r.title !== undefined || r.match_count !== undefined || r.degraded !== undefined) return 'info'
-  if (r.image_url) return 'image'
-  return previewJob.value?._tool?.result || 'image'
-}
+// 预览渲染类型按 result 实际形状推断(同一 tool_id 可能产单图/多图);共享 jobs.js 的 resultType。
 const previewTool = computed(() => ({
   ...(previewJob.value?._tool || {}),
-  result: resultType(previewJob.value?.result),
+  result: resultType(previewJob.value?.result, previewJob.value?._tool?.result || 'image'),
 }))
 
 async function delJob(job) {
@@ -221,10 +225,14 @@ function onTab(name) {
 onMounted(() => {
   loadJobs(); loadQuota()
   if (tab.value === 'team') loadTeam()
-  // 任务中心:有在跑的任务时定时刷新状态/结果。
-  jobsTimer = setInterval(() => { if (tab.value === 'jobs') loadJobs() }, 5000)
+  // 性能优化:把"实时用时"和"列表刷新"拆开——
+  // ① 1s 客户端计时:只在有活动任务时推进 now → 驱动"用时"每秒刷新,**不发任何请求**。
+  // ② 列表轮询:**仅当有 pending/running 任务**时才每 3s 拉一次(全部完成后自动停,空闲零请求)。
+  //   仍用轮询(非 SSE/WS)是刻意的:经 nginx+网关时长连接易被中断,轮询更稳;此处把"空转"消掉即可。
+  tickTimer = setInterval(() => { if (tab.value === 'jobs' && hasActiveJob.value) now.value = Date.now() }, 1000)
+  refreshTimer = setInterval(() => { if (tab.value === 'jobs' && hasActiveJob.value) loadJobs() }, 3000)
 })
-onUnmounted(() => clearInterval(jobsTimer))
+onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
 </script>
 
 <template>
@@ -263,8 +271,11 @@ onUnmounted(() => clearInterval(jobsTimer))
         <div v-for="g in jobGroups" :key="g.module" class="mod-group">
           <div class="mod-title">{{ g.module }}</div>
           <div v-for="c in g.cats" :key="c.cat" class="cat-group">
-            <div class="cat-title muted">{{ c.cat }}</div>
-            <div class="job-grid">
+            <div class="cat-head">
+              <span class="cat-title muted">{{ c.cat }} <span class="cat-count">{{ c.total }}</span></span>
+              <button class="detail-btn" @click="goDetail(c.cat)">详情列表 →</button>
+            </div>
+            <div class="job-grid one-row">
               <div v-for="job in c.items" :key="job.id" class="job-card panel">
                 <div class="job-thumb" :class="{ clickable: job.status === 'done' && job.result }"
                      @click="openPreview(job)" :title="job.status === 'done' ? '点击预览' : ''">
@@ -281,7 +292,7 @@ onUnmounted(() => clearInterval(jobsTimer))
                       {{ JOB_STATUS[job.status]?.label || job.status }}
                     </el-tag>
                   </div>
-                  <div class="job-meta muted">{{ timeAgo(job.created_at) }} · 用时 {{ jobDuration(job) }}</div>
+                  <div class="job-meta muted">{{ timeAgo(job.created_at) }} · 用时 {{ liveDuration(job) }}</div>
                   <!-- 信息类结果(标题/侵权)直接把结果文字显示在卡片上,不必点开预览 -->
                   <div v-if="jobSummary(job)" class="job-summary" :title="jobSummary(job)">{{ jobSummary(job) }}</div>
                   <div v-if="job.status === 'error'" class="job-err" :title="job.error">{{ job.error }}</div>
@@ -294,10 +305,6 @@ onUnmounted(() => clearInterval(jobsTimer))
               </div>
             </div>
           </div>
-        </div>
-
-        <div v-if="hiddenCount > 0 && !showAll" class="more">
-          <el-button @click="showAll = true">显示全部({{ hiddenCount }} 条更多)</el-button>
         </div>
       </el-tab-pane>
 
@@ -488,15 +495,58 @@ onUnmounted(() => clearInterval(jobsTimer))
 .cat-group {
   margin: 0 0 16px;
 }
+.cat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
 .cat-title {
   font-size: 13px;
   font-weight: 600;
-  margin-bottom: 8px;
+}
+.cat-count {
+  display: inline-block;
+  min-width: 18px;
+  text-align: center;
+  font-size: 11px;
+  opacity: 0.7;
+  background: var(--panel2);
+  border-radius: 9px;
+  padding: 0 6px;
+  margin-left: 4px;
+}
+.detail-btn {
+  border: 1px solid var(--line2);
+  background: var(--panel);
+  color: var(--mut);
+  border-radius: 14px;
+  padding: 3px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.detail-btn:hover {
+  border-color: var(--brand);
+  color: var(--fg);
 }
 .job-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 12px;
+}
+/* 概览:每个小功能模块只显示一行(最多 5 个),更多去「详情列表」 */
+.job-grid.one-row {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+@media (max-width: 1280px) {
+  .job-grid.one-row {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (max-width: 1000px) {
+  .job-grid.one-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 .job-card {
   display: flex;
