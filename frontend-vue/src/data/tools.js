@@ -19,12 +19,11 @@ export const TOOLS = [
     inputs: [{ key: 'file', type: 'file', label: '上传图片', required: true }],
   },
   {
-    id: 'matting', name: '一键抠图(成图)', icon: '🪄', cat: '印花提取', ep: 'process',
-    async: false, result: 'triple', cost: 2,
-    desc: '印花专用抠图,替换透明背景',
+    id: 'matting', name: '一键抠图', icon: '🪄', cat: '印花提取', ep: 'matting',
+    async: true, result: 'image', cost: 2,
+    desc: '一键去背景,输出透明 PNG(智能抠图,边缘干净)',
     inputs: [
       { key: 'file', type: 'file', label: '上传图片', required: true },
-      { key: 'template', type: 'dynamicSelect', label: '套图模板', source: 'templates', default: 'tshirt' },
     ],
   },
   // ── 印花设计 ──────────────────────────────

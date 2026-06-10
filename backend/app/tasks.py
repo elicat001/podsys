@@ -382,7 +382,29 @@ def _work_production(job_id: str, job: Job, db: Session) -> dict:
         cmyk=p["cmyk"], proof=p["proof"])
     files = {fmt: storage.output_url(job_id, name) for fmt, name in result["files"].items()}
     proof_url = storage.output_url(job_id, result["proof"]) if result.get("proof") else None
+    # 登记主产物(png 优先)为素材,使删除生产图任务后可在回收站恢复 + 计入存储
+    if job.owner_id is not None:
+        main_fmt = "png" if "png" in result["files"] else next(iter(result["files"]), None)
+        if main_fmt:
+            main_path = storage.output_path(job_id, result["files"][main_fmt])
+            try:
+                img = Image.open(main_path); img.load()
+                save_as_asset(db, job.owner_id, img, "生产图", files[main_fmt], source="generated",
+                              size_bytes=main_path.stat().st_size)
+            except Exception:  # noqa: BLE001 — 入库失败不影响主产物交付
+                pass
     return {"files": files, "proof": proof_url, "meta": result["meta"]}
+
+
+def _work_matting(job_id: str, job: Job, db: Session) -> dict:
+    """一键抠图:去背景 → 透明 PNG。优先 rembg/u2net(干净),兜底 pillow。登记为素材(可回收/计存储)。"""
+    from .ai.matting import cutout_best
+    out = cutout_best(_load_input(job_id)).convert("RGBA")
+    out.save(storage.output_path(job_id, "cutout.png"), format="PNG")
+    url = storage.output_url(job_id, "cutout.png")
+    if job.owner_id is not None:
+        save_as_asset(db, job.owner_id, out, "一键抠图", url, source="generated")
+    return {"image_url": url}
 
 
 def _work_title(job_id: str, job: Job, db: Session) -> dict:
@@ -451,6 +473,7 @@ TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
     "mockup-batch": (_work_mockup_batch, "asset", "n"),
     "mockup-replace": (_work_mockup_replace, "asset", "n"),
     "production": (_work_production, "asset", None),
+    "matting": (_work_matting, "process", None),
     # 分析类(信息结果,丢任务中心)
     "title": (_work_title, None, None),       # 退点在 worker 内按 degrade 处理,不走通用退点
     "ipguard": (_work_ipguard, "process", None),

@@ -5,8 +5,11 @@ uniform-background product photos and lets the whole pipeline run + be verified.
 Swap to `rembg` (open-source U2Net/BiRefNet) or `api` for production quality.
 """
 from __future__ import annotations
+import logging
 from PIL import Image, ImageChops, ImageFilter
 from ..config import settings
+
+log = logging.getLogger(__name__)
 
 
 def _estimate_bg_color(rgb: Image.Image, sample: int = 12) -> tuple[int, int, int]:
@@ -108,3 +111,25 @@ def get_matting_provider():
     if cls is None:
         raise ValueError(f"Unknown matting provider: {key!r} (have {list(_PROVIDERS)})")
     return cls()
+
+
+# ── 一键抠图:优先 rembg(u2net),不可用再退 pillow ──────────────────────────
+_REMBG_SESSION = None
+
+
+def cutout_best(image: Image.Image) -> Image.Image:
+    """通用「一键抠图」:**优先 rembg/u2net**(神经分割,边缘干净、无颜色残留),
+    会话缓存复用;rembg 缺失/失败 → pillow 颜色距离兜底(离线可跑)。返回透明 RGBA。
+
+    与 get_matting_provider() 解耦:抠图工具要"最好的效果",不受 POD_MATTING_PROVIDER
+    (印花提取的离线默认 pillow)影响;但 rembg 不可用时仍优雅降级,不崩。
+    """
+    global _REMBG_SESSION
+    try:
+        from rembg import new_session, remove  # 惰性导入,离线启动不受拖累
+        if _REMBG_SESSION is None:
+            _REMBG_SESSION = new_session("u2net")
+        return remove(image.convert("RGBA"), session=_REMBG_SESSION)
+    except Exception as exc:  # noqa: BLE001 — rembg 缺包/缺模型/推理失败 → 兜底
+        log.warning("rembg 一键抠图不可用,降级 pillow: %s", exc)
+        return PillowMattingProvider().cutout(image)

@@ -5,13 +5,54 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import select, func
+from pathlib import Path
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..models_db import Asset
+from ..config import settings
+from ..models_db import Asset, Job
 
 # 演示配额上限(settings 未配置时的常量):2 GiB
 QUOTA_BYTES = 2 * 1024 ** 3
+
+
+def _owner_job_ids(db: Session, owner_id: int) -> set[str]:
+    """该用户名下所有作业目录的 job_id —— 取自 Job(owner)∪ Asset(owner,含回收站)。
+    Asset.path 形如 /files/{job_id}/{name} 或磁盘路径 <outputs>/{job_id}/{name}。"""
+    ids: set[str] = set()
+    for (jid,) in db.execute(select(Job.id).where(Job.owner_id == owner_id)):
+        if jid:
+            ids.add(jid)
+    out_root = settings.outputs_dir
+    for (path,) in db.execute(select(Asset.path).where(Asset.owner_id == owner_id)):
+        if not path:
+            continue
+        try:
+            if path.startswith("/files/"):
+                jid = path[len("/files/"):].split("/", 1)[0]
+            else:                                   # 磁盘路径:取相对 outputs 的首段
+                jid = Path(path).resolve().relative_to(out_root.resolve()).parts[0]
+            if jid:
+                ids.add(jid)
+        except Exception:  # noqa: BLE001 — 解析不了就跳过
+            pass
+    return ids
+
+
+def _dir_bytes(d: Path) -> int:
+    """目录内所有文件字节(含缩略图缓存 .thumb_*、额外格式、源图预览、打样图等一切产物)。作业目录是平铺的。"""
+    total = 0
+    try:
+        for f in d.iterdir():
+            try:
+                if f.is_file():
+                    total += f.stat().st_size
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return total
 
 
 def usage(db: Session, owner_id: int) -> dict:
@@ -42,9 +83,7 @@ def usage(db: Session, owner_id: int) -> dict:
         bucket["count"] += int(cnt)
         bucket["bytes"] += int(byts)
 
-    active_bytes = collected["bytes"] + material["bytes"]
-
-    # 回收站:deleted=True
+    # 回收站:deleted=True(数量/字节明细仍按 Asset 行统计,给分类用)
     trash_cnt, trash_bytes = db.execute(
         select(
             func.count(Asset.id),
@@ -53,7 +92,9 @@ def usage(db: Session, owner_id: int) -> dict:
     ).one()
     trash = {"count": int(trash_cnt), "bytes": int(trash_bytes)}
 
-    total_bytes = active_bytes + trash["bytes"]
+    # 真实占用:把该用户**所有作业目录**的磁盘大小加起来——这才是"用户的全部东西":
+    # 主产物 + 额外格式(tiff/pdf/psd) + 缩略图缓存 + 源图预览 + 打样图 + 回收站未清的文件,全算上。
+    total_bytes = sum(_dir_bytes(settings.outputs_dir / jid) for jid in _owner_job_ids(db, owner_id))
     quota_bytes = QUOTA_BYTES
     percent = round(total_bytes / quota_bytes * 100, 2) if quota_bytes else 0.0
     over = total_bytes > quota_bytes
