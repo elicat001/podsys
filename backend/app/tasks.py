@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -340,12 +341,29 @@ def _work_mockup_replace(job_id: str, job: Job, db: Session) -> dict:
     if not products:
         raise ValueError("没有可用的产品图")
 
-    urls = []
-    for i, prod in enumerate(products):
-        out = replace_print(prod, new_print, prefer_local=prefer_local)
+    # 并发处理多张产品图:AI 路径并发度 = 网关上限(POD_OPENAI_MAX_CONCURRENCY;中转站不限就调到 10,
+    # 受限则保持 2;_API_GATE 再做全局兜底)。本地路径用适度多核。
+    # 关键:图像处理(调网关 / CPU)放线程并发;**save_as_asset 等 DB 写入回到主线程串行**
+    # (SQLAlchemy session 非线程安全,绝不能多线程共用同一 session)。
+    from .config import settings as _settings
+    workers = min(len(products), 4 if prefer_local else max(1, int(_settings.openai_max_concurrency)))
+
+    def _render(idx_prod):
+        i, prod = idx_prod
+        out = replace_print(prod, new_print, prefer_local=prefer_local)  # 不碰 DB
         name = f"mockup_{i}.png"
         out.save(storage.output_path(job_id, name), format="PNG")
-        url = storage.output_url(job_id, name)
+        return i, out, storage.output_url(job_id, name)
+
+    items = list(enumerate(products))
+    if workers > 1 and len(items) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            results = list(ex.map(_render, items))   # 保序;任一张抛错→整作业 error+按张退点
+    else:
+        results = [_render(ip) for ip in items]
+
+    urls = []
+    for i, out, url in results:
         urls.append(url)
         if job.owner_id is not None:
             save_as_asset(db, job.owner_id, out.convert("RGBA"), f"套图 {i + 1}", url, source="generated")

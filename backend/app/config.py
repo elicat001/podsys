@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     openai_text_stream: bool = True           # 本网关 chat 接口需 stream=true 才吐内容(不流式返回空)。官方 OpenAI 置 false 也可
     openai_timeout: float = 250.0             # 单次调用超时(秒)。本网关 gpt-image 慢且波动,太紧会被掐断→静默回退本地算法(浅色主体被腐蚀=用户报的"白底/像本地")。放宽到 250s 让 AI 真正出图
     openai_max_retries: int = 1               # 重试次数。该网关失败时是"挂满整个超时"型,重试会成倍堆时间;1 次(共2次尝试)覆盖瞬时抖动。需更稳可在 .env 调 POD_OPENAI_MAX_RETRIES=2
-    openai_max_concurrency: int = 2           # 同时在飞的 gpt-image 网关调用数上限(进程级信号量)。本网关并发跑多张会让每张都拖过单次超时→整批 APITimeoutError(图裂变 4 路并发实测全挂)。2=保守;仍超时可在 .env 调 POD_OPENAI_MAX_CONCURRENCY=1
+    openai_max_concurrency: int = 2           # 同时在飞的 gpt-image 网关调用数上限(进程级信号量)。也用作**商品套图多图并发度**(一个套图任务里同时处理几张)。本网关并发跑多张会让每张都拖过单次超时→整批 APITimeoutError(图裂变 4 路并发实测全挂),故 2=保守(中转站限并发时);若中转站不限并发,可在 .env 调 POD_OPENAI_MAX_CONCURRENCY=10 提速;仍超时可调 1
 
     # print extraction
     autocrop_padding: int = 8                # px padding around detected content
