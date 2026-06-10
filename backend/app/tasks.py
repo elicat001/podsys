@@ -113,6 +113,15 @@ def _load_input(job_id: str) -> Image.Image:
     return im
 
 
+def _source_preview_url(job_id: str, img: Image.Image, max_side: int = 640) -> str:
+    """把输入图存一份缩略图到 outputs(/files 可访问),给分析类任务(标题/侵权)当卡片缩略图 + 预览图。
+    保留透明(PNG),≤max_side。"""
+    im = img.convert("RGBA")
+    im.thumbnail((max_side, max_side))
+    im.save(storage.output_path(job_id, "source.png"), format="PNG")
+    return storage.output_url(job_id, "source.png")
+
+
 def _work_generate(job_id: str, job: Job, db: Session) -> dict:
     from .services.generate import text_to_image
     p = job.params
@@ -374,6 +383,11 @@ def _work_title(job_id: str, job: Job, db: Session) -> dict:
     result = studio_tools.generate_title(keywords=p.get("keywords", ""),
                                          category=p.get("category", "apparel"),
                                          img=img, prefer_local=prefer_local)
+    if img is not None:  # 用户上传了设计图 → 存预览图,任务卡片/预览弹窗直接显示原图
+        try:
+            result["image_url"] = _source_preview_url(job_id, img)
+        except Exception:  # noqa: BLE001 — 预览图失败不影响标题结果
+            pass
     if p.get("engine") == "ai" and result.get("degraded") and job.owner_id is not None:
         u = db.get(User, job.owner_id)
         if u is not None:
@@ -385,10 +399,15 @@ def _work_ipguard(job_id: str, job: Job, db: Session) -> dict:
     """侵权风险检索(分析类,信息结果)。本地库扫描,无 AI/本地之分。"""
     from .services import ip_guard
     p = job.params
-    report = ip_guard.scan(_load_input(job_id), title=p.get("title") or None)
+    src = _load_input(job_id)
+    report = ip_guard.scan(src, title=p.get("title") or None)
     if not p.get("verbose"):
         report = {"risk": report.get("risk"), "advice": report.get("advice"),
                   "match_count": len(report.get("matches", [])), "checked": report.get("checked")}
+    try:  # 被检图存预览,任务卡片/预览弹窗直接显示
+        report["image_url"] = _source_preview_url(job_id, src)
+    except Exception:  # noqa: BLE001
+        pass
     return report
 
 

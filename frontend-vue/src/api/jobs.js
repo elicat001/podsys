@@ -73,8 +73,13 @@ export function jobThumb(result) {
 export function jobDownloads(result) {
   if (!result) return []
   const out = []
+  // 信息类结果(标题/侵权)的 image_url 只是"上传原图预览",仅用于缩略图/预览展示,不作为下载项。
+  const isInfo = result.title !== undefined || result.risk !== undefined
   for (const [k, v] of Object.entries(result)) {
-    if (k.endsWith('_url') && typeof v === 'string' && v) out.push([k.replace(/_url$/, ''), v])
+    if (k.endsWith('_url') && typeof v === 'string' && v) {
+      if (isInfo && k === 'image_url') continue
+      out.push([k.replace(/_url$/, ''), v])
+    }
   }
   if (Array.isArray(result.images)) result.images.forEach((u, i) => u && out.push([`图${i + 1}`, u]))
   if (result.files) for (const [fmt, u] of Object.entries(result.files)) if (u) out.push([fmt, u])
