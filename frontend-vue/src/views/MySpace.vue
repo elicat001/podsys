@@ -35,7 +35,8 @@ const PAGE = 40
 let jobsTimer = null
 
 async function loadJobs() {
-  try { jobs.value = await listJobs() } catch (e) { /* 静默 */ }
+  // 不再静默吞错:列表加载失败要让用户(和排障)看见,否则失败时像"任务凭空消失"
+  try { jobs.value = await listJobs() } catch (e) { ElMessage.error('任务列表加载失败:' + (e.message || e)) }
 }
 
 const statusCounts = computed(() => {
@@ -76,6 +77,18 @@ const jobGroups = computed(() => {
 
 function jobTitle(job) {
   return job._tool ? `${job._tool.icon} ${job._tool.name}` : job.kind
+}
+
+// 信息类结果(标题/侵权)在卡片上直接展示的摘要文字;无则空(图像类不显示)。
+function jobSummary(job) {
+  const r = job.result
+  if (!r || job.status !== 'done') return ''
+  if (r.title) return r.title
+  if (r.risk) {
+    const m = { high: '高(慎用)', review: '需复核', safe: '安全' }
+    return `风险:${m[r.risk] || r.risk}` + (r.advice ? ' · ' + r.advice : '')
+  }
+  return ''
 }
 
 // ── 结果预览(点缩略图 / 预览按钮 → 大图弹窗,复用 ResultView)──
@@ -253,10 +266,12 @@ onUnmounted(() => clearInterval(jobsTimer))
             <div class="cat-title muted">{{ c.cat }}</div>
             <div class="job-grid">
               <div v-for="job in c.items" :key="job.id" class="job-card panel">
-                <div class="job-thumb" :class="{ clickable: job.status === 'done' && jobThumb(job.result) }"
+                <div class="job-thumb" :class="{ clickable: job.status === 'done' && job.result }"
                      @click="openPreview(job)" :title="job.status === 'done' ? '点击预览' : ''">
                   <img v-if="job.status === 'done' && jobThumb(job.result)" :src="jobThumb(job.result)" class="checker" />
                   <div v-else-if="job.status === 'error'" class="ph err">✕</div>
+                  <!-- 已完成但无图(标题/侵权等信息类结果)→ 显示工具图标的"完成"态,不再误显示转圈 -->
+                  <div v-else-if="job.status === 'done'" class="ph done">{{ job._tool?.icon || '✓' }}</div>
                   <div v-else class="ph"><span class="spin" /></div>
                 </div>
                 <div class="job-body">
@@ -267,6 +282,8 @@ onUnmounted(() => clearInterval(jobsTimer))
                     </el-tag>
                   </div>
                   <div class="job-meta muted">{{ timeAgo(job.created_at) }} · 用时 {{ jobDuration(job) }}</div>
+                  <!-- 信息类结果(标题/侵权)直接把结果文字显示在卡片上,不必点开预览 -->
+                  <div v-if="jobSummary(job)" class="job-summary" :title="jobSummary(job)">{{ jobSummary(job) }}</div>
                   <div v-if="job.status === 'error'" class="job-err" :title="job.error">{{ job.error }}</div>
                   <div class="job-actions">
                     <button v-if="job.status === 'done' && job.result" class="chip preview" @click="openPreview(job)">👁 预览</button>
@@ -531,6 +548,10 @@ onUnmounted(() => clearInterval(jobsTimer))
   color: var(--err);
   font-size: 22px;
 }
+.job-thumb .ph.done {
+  font-size: 30px;
+  background: var(--panel2);
+}
 .spin {
   width: 22px;
   height: 22px;
@@ -564,6 +585,15 @@ onUnmounted(() => clearInterval(jobsTimer))
 }
 .job-meta {
   font-size: 12px;
+}
+.job-summary {
+  font-size: 12.5px;
+  color: var(--fg);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .job-err {
   font-size: 12px;
