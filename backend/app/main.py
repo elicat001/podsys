@@ -311,26 +311,31 @@ def collect(body: CollectIn, user: User = Depends(current_user)):
     return {"platform": platform, "hires_url": upgrade_to_hires(body.url, platform)}
 
 
+# 产物文件按 (job_id, name) 唯一且不可变(作业产出写一次不再变)→ 可长期 immutable 缓存,
+# 浏览器有效期内连条件请求都不发,重复打开/刷新任务中心更快。(HTML/JS 走另一条 SPA 路由,不受影响)
+_FILE_CACHE = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+
 @app.get("/files/{job_id}/{name}")
 def get_file(job_id: str, name: str, w: int = 0):
     """产物文件。带 ?w=<px> 时返回**缓存的缩略图**(长边≤w),供任务中心列表用——
-    避免把整张几 MP 大图塞进 72px 缩略框解码导致滚动卡顿(首次生成、之后命中盘上缓存)。
+    避免把整张几 MP 大图塞进 72px 缩略框解码导致滚动卡顿(首次生成、之后命中盘上缓存,不重存)。
     非栅格图(svg/pdf)或缩略失败 → 回退原文件。"""
     p = settings.outputs_dir / job_id / name
     if not p.exists():
         raise HTTPException(status_code=404, detail="file not found")
     if w and 0 < w <= 1024 and not name.lower().endswith((".svg", ".pdf")):
         thumb = settings.outputs_dir / job_id / f".thumb_{w}_{name}.png"
-        if not thumb.exists():
+        if not thumb.exists():            # 仅首次生成并存盘;之后直接读这个小文件
             try:
                 im = Image.open(p); im.load()
                 im = im.convert("RGBA")
                 im.thumbnail((w, w))
                 im.save(thumb, format="PNG")
             except Exception:  # noqa: BLE001 — 非图片/解码失败 → 回退原图
-                return FileResponse(p)
-        return FileResponse(thumb)
-    return FileResponse(p)
+                return FileResponse(p, headers=_FILE_CACHE)
+        return FileResponse(thumb, headers=_FILE_CACHE)
+    return FileResponse(p, headers=_FILE_CACHE)
 
 
 # ── 服务前端:Vue 单页应用(history 模式)──

@@ -94,6 +94,39 @@ def test_trash_restore_purge_flow(client, auth_headers, png):
     assert q["trash"]["count"] == 0
 
 
+def test_thumbnail_endpoint_caches_and_purge_cleans(client, png):
+    """/files?w 返回缓存缩略图(更小 + immutable 头 + 盘上缓存、二次不重建);删文件时连缩略图一起删。"""
+    from PIL import Image
+    from app import storage
+    from app.config import settings
+    from app.routers import space as space_router
+
+    # 造一张作业产出图(/files 路径形态)
+    job_id = storage.new_job_id()
+    p = storage.output_path(job_id, "asset.png")
+    Image.open(png(shape="circle")).convert("RGBA").save(p, format="PNG")
+    url = storage.output_url(job_id, "asset.png")  # /files/{job_id}/asset.png
+
+    # 缩略图端点:200 + immutable 缓存头 + 盘上生成缓存 + 确实是小图(≤64)
+    r = client.get(url + "?w=64")
+    assert r.status_code == 200, r.text
+    assert "immutable" in r.headers.get("cache-control", "")
+    thumb = settings.outputs_dir / job_id / ".thumb_64_asset.png.png"
+    assert thumb.is_file(), "缩略图应已缓存到盘"
+    assert max(Image.open(thumb).size) <= 64
+
+    # 二次请求只读缓存、不重建(mtime 不变)
+    mtime = thumb.stat().st_mtime_ns
+    client.get(url + "?w=64")
+    assert thumb.stat().st_mtime_ns == mtime, "二次请求应直接读缓存,不重新生成"
+
+    # 删文件(purge 走的同一函数)→ 原图 + 缩略图缓存都删
+    a = type("A", (), {"path": url})()
+    assert p.is_file()
+    space_router._delete_asset_file(a)
+    assert not p.exists() and not thumb.exists(), "删除应连缩略图缓存一起删"
+
+
 def test_filter_by_source_and_tagged(client, auth_headers, png):
     up = _add_asset(client, auth_headers, png=png, shape="circle", source="upload", seed=21)
     col = _add_asset(client, auth_headers, png=png, shape="rect", source="collected", seed=22)

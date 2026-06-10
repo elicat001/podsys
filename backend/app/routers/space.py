@@ -27,6 +27,12 @@ def _delete_asset_file(asset: Asset) -> None:
         fp = settings.outputs_dir / rel
         if fp.is_file():
             fp.unlink()
+        # 连同该图的缩略图缓存一起删(.thumb_<w>_<name>.png),避免孤儿小文件残留
+        for th in fp.parent.glob(f".thumb_*_{fp.name}.png"):
+            try:
+                th.unlink()
+            except Exception:  # noqa: BLE001
+                pass
     except Exception:  # noqa: BLE001 — 删盘失败不应阻断 DB 清理
         pass
 
