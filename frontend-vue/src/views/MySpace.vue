@@ -86,6 +86,23 @@ function openPreview(job) {
   previewJob.value = job
   showPreview.value = true
 }
+// 预览用的渲染类型:按 result 实际形状推断(不依赖 tool.result——同一 tool_id 可能产单图或多图,
+// 如商品套图 render=单图、replace=多图,若死用 tool.result 会渲染错分支导致空白)。
+function resultType(r) {
+  if (!r) return 'image'
+  if (Array.isArray(r.images) || Array.isArray(r.items)) return 'images'
+  if (r.print_url || r.mockup_url || r.production_url) return 'triple'
+  if (r.files) return 'filesMap'
+  if (r.svg_url) return 'svg'
+  if (r.video_url) return 'video'
+  if (r.risk || r.title !== undefined || r.match_count !== undefined || r.degraded !== undefined) return 'info'
+  if (r.image_url) return 'image'
+  return previewJob.value?._tool?.result || 'image'
+}
+const previewTool = computed(() => ({
+  ...(previewJob.value?._tool || {}),
+  result: resultType(previewJob.value?.result),
+}))
 
 async function delJob(job) {
   try {
@@ -359,7 +376,7 @@ onUnmounted(() => clearInterval(jobsTimer))
     <el-dialog v-model="showPreview" :title="previewJob ? jobTitle(previewJob) : '预览'"
                width="680px" align-center append-to-body class="preview-dlg">
       <div v-if="previewJob" class="preview-body">
-        <ResultView :tool="previewJob._tool || { result: 'image' }" :data="previewJob.result" />
+        <ResultView :tool="previewTool" :data="previewJob.result" />
       </div>
       <template #footer>
         <el-button type="primary" @click="showPreview = false">关闭</el-button>

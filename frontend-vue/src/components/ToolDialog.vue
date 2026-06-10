@@ -33,6 +33,17 @@ watch(() => [dlg.visible, tool.value?.id], async () => {
 })
 
 async function run(eng) {
+  // 快速(本地)运行的必填校验:如标题提取本地必须先填关键词/选类目(智能可不填,见 tool.localRequires)
+  if (eng === 'fast' && Array.isArray(tool.value.localRequires)) {
+    const labelOf = (k) => (tool.value.inputs?.find((f) => f.key === k)?.label || k)
+    for (const k of tool.value.localRequires) {
+      const v = form[k]
+      if (v === undefined || v === null || String(v).trim() === '') {
+        ElMessage.warning(`「快速运行」(本地)需先填写:${labelOf(k)}`)
+        return
+      }
+    }
+  }
   let fd
   try { fd = buildFormData() } catch (e) { ElMessage.warning(e.message); return }
   if (eng) fd.engine = eng  // 快速=fast(本地)/ 智能=ai;不传=auto(单按钮工具)
@@ -41,12 +52,11 @@ async function run(eng) {
   try {
     const resp = await postForm('/' + tool.value.ep, fd)
     auth.refreshBalance() // 扣点已发生,刷新余额
-    // 异步:后端返回 {job_id, status:'pending'} → 丢后台,不等
-    if (resp && resp.status === 'pending' && resp.job_id) {
+    // 异步工具:一律丢后台(无论返回形状),绝不在对话框就地展示/等待。同步工具才就地展示。
+    if (tool.value.async || (resp && resp.status === 'pending' && resp.job_id)) {
       ElMessage.success({ message: '已提交,正在后台处理。可在「我的空间 · 任务中心」查看结果', duration: 3500 })
       dlg.close()
     } else {
-      // 同步:就地展示结果
       result.value = resp
     }
   } catch (e) {

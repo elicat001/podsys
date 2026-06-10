@@ -172,6 +172,7 @@ export const TOOLS = [
   {
     id: 'title', name: '标题提取', icon: '🏷️', cat: '套图标题', ep: 'studio/title',
     async: true, result: 'info', cost: 1, dualEngine: true,
+    localRequires: ['keywords', 'category'],  // 本地(快速)运行必填关键词+类目;智能(AI)可不填
     desc: '生成电商标题',
     inputs: [
       { key: 'keywords', type: 'text', label: '关键词', default: '', placeholder: '例:cat lover, gift' },
