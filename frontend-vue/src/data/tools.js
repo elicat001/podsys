@@ -178,7 +178,7 @@ export const TOOLS = [
       { key: 'keywords', type: 'text', label: '关键词', default: '', placeholder: '例:cat lover, gift' },
       { key: 'category', type: 'select', label: '类目', default: 'apparel',
         options: [['apparel', '服饰'], ['home', '家居'], ['accessory', '配饰'], ['other', '其它']] },
-      { key: 'file', type: 'file', label: '图片(可选,辅助提色)', required: false },
+      { key: 'file', type: 'file', label: '设计图(可选,本地会识别图上文字+主色当标题主体)', required: false },
     ],
   },
   {

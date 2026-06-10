@@ -298,14 +298,16 @@ def _palette(img: Image.Image) -> dict:
     return {"accent": accent, "mono": None, "vivid": vivid, "tone": tone}
 
 
-def smart_title(img: Image.Image | None, keywords: str = "", category: str = "apparel") -> dict:
-    """本地电商标题(无云、无模型):调色板分析 + 关键词主体 + SEO 词库 + 品类话术 + 多模板,
+def smart_title(img: Image.Image | None, keywords: str = "", category: str = "apparel",
+                ocr_text: str = "") -> dict:
+    """本地电商标题(无云、无模型):OCR 文字主体 + 关键词 + 调色板 + SEO 词库 + 品类话术 + 多模板,
     确定性派生(同输入同输出;不同输入产出不同主色/模板/词)。
 
-    仍是规则拼接(不"理解"画面语义),但调色板让"无关键词"也能给出贴切主色描述,模板与搜索词更接近
-    真人 listing。CPU 极轻(缩图 + colorsys 投票),适合高并发。
+    `ocr_text`(由调用方 OCR 设计图得到)非空时作为**标题主体**(就是设计上印的标语/文字,SEO 价值最高);
+    读不出文字才退回关键词/调色板描述。CPU 极轻(缩图 + colorsys 投票),适合高并发。
     """
     kw = [k.strip() for k in (keywords or "").replace("，", ",").split(",") if k.strip()]
+    ocr_words = [w for w in (ocr_text or "").split() if w][:6]   # OCR 短语词(已在 ocr 层去噪)
     # 图指纹:8×8 灰度缩略图 → 让不同设计(即便主色相同)派生不同模板/受众,避免批量标题撞车;同图稳定。
     fp = ""
     if img is not None:
@@ -335,8 +337,17 @@ def smart_title(img: Image.Image | None, keywords: str = "", category: str = "ap
     sell = _TITLE_SELL[(seed // 19) % len(_TITLE_SELL)]
     noun = _TITLE_NOUNS[(seed // 23) % len(_TITLE_NOUNS)]
 
-    # 主体 + 前缀:有关键词→主体=关键词,前缀=主色;无关键词→主体已含主色,前缀改用风格词(避免色名重复)
-    if kw:
+    # 主体 + 前缀,优先级:① OCR 识别到的设计文字(最具体)→ ② 关键词 → ③ 主色描述 → ④ 兜底
+    if ocr_words:
+        # 设计上印的文字本身就是主体;再把没被 OCR 覆盖到的关键词补在后面
+        subj = list(ocr_words)
+        low = {w.lower() for w in subj}
+        for k in kw:
+            if k.lower() not in low and len(subj) < 8:
+                subj.append(k); low.add(k.lower())
+        subject = " ".join(w.title() for w in subj)
+        lead = color_lead or style
+    elif kw:
         subject = " ".join(k.title() for k in kw[:3])
         lead = color_lead or style
     elif color_lead:
@@ -358,11 +369,12 @@ def smart_title(img: Image.Image | None, keywords: str = "", category: str = "ap
     ws = title.split()
     title = " ".join(w for i, w in enumerate(ws) if i == 0 or w.lower() != ws[i - 1].lower())[:140]
 
-    # 标签:用户词 + 主色 + 鲜艳度 + 风格×2 + 品类全部同义词 + 场合 + 通用 SEO;去重(小写)取前 13
+    # 标签:OCR 词 + 用户词 + 主色 + 鲜艳度 + 风格×2 + 品类全部同义词 + 场合 + 通用 SEO;去重(小写)取前 13
     extra = [x for x in [
         (pal["accent"] or "").lower(), (pal["mono"] or "").lower().replace(" & ", " "),
         (pal["vivid"] or "").lower(), style.lower(), style2.lower(),
         *[p.lower() for p in prod], category, occ.lower(), "gift", "trendy print", "pod design",
     ] if x]
-    tags = list(dict.fromkeys([t for t in ([k.lower() for k in kw] + extra) if t]))[:13]
+    lead_tags = [w.lower() for w in ocr_words] + [k.lower() for k in kw]
+    tags = list(dict.fromkeys([t for t in (lead_tags + extra) if t]))[:13]
     return {"title": title, "keywords": tags}

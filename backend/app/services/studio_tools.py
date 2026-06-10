@@ -62,12 +62,13 @@ def _img_data_url(img: Image.Image, max_side: int = 512) -> str:
 
 
 def _placeholder_title(keywords: str, category: str, img: Image.Image | None = None) -> dict:
-    """无 key/无文本模型时:用本地规则引擎派生(多模板+SEO 修饰词+品类话术+主色调)。
+    """无 key/无文本模型时:用本地规则引擎派生(OCR 文字主体 + 多模板 + SEO 词库 + 品类话术 + 调色板)。
 
-    给了图就用图的主色调当前缀(如 Minimalist/Bold Black/具体色名),否则按风格词。
+    给了图先 OCR 识别设计里的清晰文字(标语/typography)当标题主体;读不出再退回关键词/主色。
     """
-    from . import effects
-    r = effects.smart_title(img, keywords=keywords, category=category)
+    from . import effects, ocr
+    ocr_text = ocr.extract_text(img) if img is not None else ""
+    r = effects.smart_title(img, keywords=keywords, category=category, ocr_text=ocr_text)
     return {"title": r["title"], "keywords": r["keywords"], "degraded": True}
 
 

@@ -26,6 +26,8 @@ os.environ["POD_DATA_DIR"] = str(_TMP_DATA_DIR)
 os.environ["POD_OPENAI_API_KEY"] = ""
 os.environ["POD_MATTING_PROVIDER"] = "pillow"
 os.environ["POD_UPSCALE_PROVIDER"] = "pillow"
+# 关闭本地标题 OCR:避免测试依赖系统 tesseract 二进制 + 保持离线确定性/速度(标题走纯规则路径)
+os.environ["POD_TITLE_OCR"] = "false"
 # Celery 强制 eager:任务在测试进程内同步执行,**不连 Redis broker / 不起 worker**。
 # 这样异步端点(印花提取 AI 路径等)在测试里走「入队→立即同步跑完」,可断言 Job 最终态,
 # 且保持离线确定性。env 优先于 .env,celery_app 构造时读取 settings.celery_eager。

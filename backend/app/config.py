@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     # 印花提取引擎:默认走 AI 重绘(gpt-image edit 展平,95% 视觉一致,挂拍/褶皱也能处理);
     # 有 key 才生效,失败/无 key 自动回退本地保真算法(extract_design)。置 false=永远本地。
     print_extract_ai: bool = True
+    # 本地标题 OCR:从设计图里识别文字(标语/typography)当标题主体。需系统装 tesseract-ocr 二进制;
+    # 缺二进制/包时静默降级(不影响出标题)。测试环境关闭以保离线确定性(conftest 强制 false)。
+    title_ocr: bool = True
 
     @property
     def upscale_realesrgan_path(self) -> Path:

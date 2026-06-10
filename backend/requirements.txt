@@ -24,3 +24,7 @@ scipy>=1.11
 opencv-contrib-python-headless>=4.8
 # 转矢量图主引擎:vtracer 工业级彩色描摹(平滑贝塞尔曲线 + 去碎块);缺失时降级到 cv2 轮廓追踪
 vtracer>=0.6
+# 本地标题 OCR:从设计图识别文字当标题主体。pytesseract 只是薄封装(不拉 opencv,无依赖冲突);
+# **还需系统装 tesseract 二进制**:生产 `apt install -y tesseract-ocr tesseract-ocr-eng`,
+# Windows `winget install UB-Mannheim.TesseractOCR`。二进制缺失时静默降级(标题走纯规则,不报错)。
+pytesseract>=0.3.10
