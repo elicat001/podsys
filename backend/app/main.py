@@ -312,10 +312,24 @@ def collect(body: CollectIn, user: User = Depends(current_user)):
 
 
 @app.get("/files/{job_id}/{name}")
-def get_file(job_id: str, name: str):
+def get_file(job_id: str, name: str, w: int = 0):
+    """产物文件。带 ?w=<px> 时返回**缓存的缩略图**(长边≤w),供任务中心列表用——
+    避免把整张几 MP 大图塞进 72px 缩略框解码导致滚动卡顿(首次生成、之后命中盘上缓存)。
+    非栅格图(svg/pdf)或缩略失败 → 回退原文件。"""
     p = settings.outputs_dir / job_id / name
     if not p.exists():
         raise HTTPException(status_code=404, detail="file not found")
+    if w and 0 < w <= 1024 and not name.lower().endswith((".svg", ".pdf")):
+        thumb = settings.outputs_dir / job_id / f".thumb_{w}_{name}.png"
+        if not thumb.exists():
+            try:
+                im = Image.open(p); im.load()
+                im = im.convert("RGBA")
+                im.thumbnail((w, w))
+                im.save(thumb, format="PNG")
+            except Exception:  # noqa: BLE001 — 非图片/解码失败 → 回退原图
+                return FileResponse(p)
+        return FileResponse(thumb)
     return FileResponse(p)
 
 

@@ -289,7 +289,7 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
               <div v-for="job in c.items" :key="job.id" class="job-card panel">
                 <div class="job-thumb" :class="{ clickable: job.status === 'done' && job.result }"
                      @click="openPreview(job)" :title="job.status === 'done' ? '点击预览' : ''">
-                  <img v-if="job.status === 'done' && jobThumb(job.result)" :src="jobThumb(job.result)" class="checker" loading="lazy" decoding="async" />
+                  <img v-if="job.status === 'done' && jobThumb(job.result)" :src="jobThumb(job.result) + '?w=144'" class="checker" loading="lazy" decoding="async" />
                   <div v-else-if="job.status === 'error'" class="ph err">✕</div>
                   <!-- 已完成但无图(标题/侵权等信息类结果)→ 显示工具图标的"完成"态,不再误显示转圈 -->
                   <div v-else-if="job.status === 'done'" class="ph done">{{ job._tool?.icon || '✓' }}</div>
@@ -563,6 +563,9 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
   display: flex;
   gap: 12px;
   padding: 12px;
+  /* 滚动性能:屏幕外的卡片跳过渲染/解码(列表长、缩略图多时显著减卡) */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 132px;
 }
 .job-thumb {
   flex: 0 0 72px;

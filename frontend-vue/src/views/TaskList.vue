@@ -134,7 +134,7 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
     <div v-for="job in items" :key="job.id" class="row panel">
       <!-- 缩略图 / 完成态 -->
       <div class="thumb" :class="{ clickable: job.status === 'done' && job.result }" @click="openPreview(job)">
-        <img v-if="job.status === 'done' && jobThumb(job.result)" :src="jobThumb(job.result)" class="checker" loading="lazy" decoding="async" />
+        <img v-if="job.status === 'done' && jobThumb(job.result)" :src="jobThumb(job.result) + '?w=192'" class="checker" loading="lazy" decoding="async" />
         <div v-else-if="job.status === 'error'" class="ph err">✕</div>
         <div v-else-if="job.status === 'done'" class="ph done">{{ job._tool?.icon || '✓' }}</div>
         <div v-else class="ph"><span class="spin" /></div>
@@ -189,7 +189,7 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
 .fchip { border: 1px solid var(--line2); background: var(--panel); color: var(--mut); border-radius: 16px; padding: 4px 14px; font-size: 13px; cursor: pointer; }
 .fchip.on { border-color: var(--brand); color: var(--fg); background: var(--panel2); }
 .empty { padding: 48px 0; text-align: center; }
-.row { display: flex; gap: 14px; padding: 14px; margin-bottom: 10px; }
+.row { display: flex; gap: 14px; padding: 14px; margin-bottom: 10px; content-visibility: auto; contain-intrinsic-size: auto 140px; }
 .thumb { flex: 0 0 96px; width: 96px; height: 96px; border-radius: 10px; overflow: hidden; }
 .thumb.clickable { cursor: zoom-in; }
 .thumb.clickable:hover { outline: 2px solid var(--brand); outline-offset: 1px; }
