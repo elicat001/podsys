@@ -199,3 +199,40 @@ def test_library_endpoint(client, auth_headers):
     resp = client.get("/api/ip-guard/library", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json()["total"] > 0
+
+
+# ------------------------- 深度检测(视觉模型,mock)-------------------------
+def test_scan_ai_merges_vision_and_escalates(monkeypatch):
+    """深度检测:本地空库=safe,视觉模型识别为 Pikachu/high → 整体升 high + 加 ai-vision 命中。"""
+    monkeypatch.setattr(ip_guard, "load_library", lambda: [])  # 本地无命中
+    monkeypatch.setattr(ip_guard, "_vision_identify",
+                        lambda img, title=None: {"ip": "Pikachu", "owner": "Nintendo",
+                                                 "risk": "high", "reason": "黄色身体红脸颊"})
+    rep = ip_guard.scan_ai(_circle_png())
+    assert rep["risk"] == "high"
+    assert rep["checked"]["ai"] is True and rep["degraded"] is False
+    assert any(m.get("type") == "ai-vision" and m["name"] == "Pikachu" for m in rep["matches"])
+
+
+def test_scan_ai_degrades_when_vision_unavailable(monkeypatch):
+    """视觉模型不可用(无 key/失败)→ 退化为仅本地结果,degraded=True,不抛错。"""
+    monkeypatch.setattr(ip_guard, "load_library", lambda: [])
+
+    def _boom(img, title=None):
+        raise RuntimeError("未配置 AI key")
+
+    monkeypatch.setattr(ip_guard, "_vision_identify", _boom)
+    rep = ip_guard.scan_ai(_circle_png())
+    assert rep["checked"]["ai"] is False and rep["degraded"] is True
+    assert rep["risk"] == "safe"  # 仅本地、空库 → safe
+
+
+def test_scan_ai_without_key_502_refunds(client, auth_headers):
+    """显式深度检测(engine=ai)但无 key → 502 + 退点(测试环境无 key)。"""
+    _ensure_router(client)
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    resp = client.post("/api/ip-guard/scan", headers=auth_headers,
+                       files={"file": ("a.png", _png_bytes(_circle_png()), "image/png")},
+                       data={"engine": "ai"})
+    assert resp.status_code == 502
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0

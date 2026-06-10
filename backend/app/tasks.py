@@ -440,10 +440,15 @@ def _work_ipguard(job_id: str, job: Job, db: Session) -> dict:
     from .services import ip_guard
     p = job.params
     src = _load_input(job_id)
-    report = ip_guard.scan(src, title=p.get("title") or None)
+    # engine=ai → 深度检测(本地信号 + 网关视觉模型);否则 → 快速检测(纯本地)
+    if p.get("engine") == "ai":
+        report = ip_guard.scan_ai(src, title=p.get("title") or None)
+    else:
+        report = ip_guard.scan(src, title=p.get("title") or None)
     if not p.get("verbose"):
         report = {"risk": report.get("risk"), "advice": report.get("advice"),
-                  "match_count": len(report.get("matches", [])), "checked": report.get("checked")}
+                  "match_count": len(report.get("matches", [])), "checked": report.get("checked"),
+                  "degraded": report.get("degraded")}
     try:  # 被检图存预览,任务卡片/预览弹窗直接显示
         report["image_url"] = _source_preview_url(job_id, src)
     except Exception:  # noqa: BLE001

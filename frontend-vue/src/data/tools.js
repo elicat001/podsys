@@ -139,8 +139,8 @@ export const TOOLS = [
   // ── 侵权检测 ──────────────────────────────
   {
     id: 'ipguard', name: '侵权风险过滤', icon: '🛡️', cat: '侵权检测', ep: 'ip-guard/scan',
-    async: true, result: 'info', cost: 2,
-    desc: 'TRO + 艺术家版权库深度检索',
+    async: true, result: 'info', cost: 2, dualEngine: true,
+    desc: '快速=本地(关键词+图上文字OCR+近似图库);深度=再用视觉模型识别角色/品牌/logo',
     inputs: [
       { key: 'file', type: 'file', label: '上传图片', required: true },
       { key: 'title', type: 'text', label: '商品标题(可选)', default: '' },
