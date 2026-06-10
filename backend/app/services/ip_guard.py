@@ -53,7 +53,7 @@ def _advice(risk: str) -> str:
         return "检测到高风险:疑似与受保护品牌/IP/版权作品高度相似或直接引用,强烈建议停止上架并人工法务复核。"
     if risk == "review":
         return "检测到中等风险:存在疑似相似/疑似 IP,建议人工复核确认后再上架。"
-    return "未命中风险信号。注意:本地库仅为演示,正式上架仍建议复核(或用深度检测)。"
+    return "未发现明显侵权风险(结果仅供参考,不构成法律意见)。"
 
 
 def _max_risk(a: str, b: str) -> str:
@@ -199,7 +199,8 @@ def scan_ai(image: Image.Image, title: str | None = None) -> dict:
         report["checked"]["ai"] = True
         report["degraded"] = False
         ai_risk_map = {"high": "high", "medium": "review", "low": "safe"}
-        if ai.get("ip"):
+        # 只有视觉模型判为中/高风险才记为命中并升级;低风险(没认出 IP / 原创)不记命中,避免"匹配但安全"的困惑
+        if ai.get("ip") and ai.get("risk") in ("high", "medium"):
             report["matches"].append({
                 "name": ai["ip"], "brand": ai.get("owner", ""), "type": "ai-vision",
                 "reason": "视觉模型识别为已知 IP" + (f":{ai['reason']}" if ai.get("reason") else ""),
