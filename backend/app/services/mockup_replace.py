@@ -1,13 +1,14 @@
-"""套图模板「印花替换」引擎:把产品照里的原印花换成用户上传的新印花。
+"""套图「印花套用」引擎:把用户上传的设计套到产品照上。
 
-两条路(默认 AI,无 key/失败降级几何):
-- **AI 多图合成(默认,有 key)**:把 [产品照, 新设计] 一起送 gpt-image-2 edit(input_fidelity=high),
-  让模型把设计**真实地印到产品上**——跟随瓶身曲面/褶皱/光影、替换原印花。实测效果远好于几何法
-  (几何平贴搞不定瓶子这种曲面 + 旧印花擦不干净)。代价:模型会**重渲染产品**(可能与原照不完全像素一致),
-  但出的是可直接上架的真实感套图,符合商品套图诉求。
-- **几何兜底(无 key/AI 失败/快速运行)**:检测原印花区→EDT 最近邻抹除得带褶皱的干净底布→新印花
-  等比贴入,乘**底布**明暗场(跟随褶皱,不被旧印花污染)+ 接触阴影。工作分辨率封顶 1600px。
-  平贴(正面 T 恤等)效果好;曲面(瓶身)一般;检测不到产品→居中贴。离线/快速路径用。
+两条路(智能=AI;快速=本地):
+- **AI 多图合成(智能,有 key)**:把 [产品照, 新设计] 一起送 gpt-image-2 edit(input_fidelity=high),
+  让模型把设计**真实地印到产品上**——跟随瓶身曲面/褶皱/光影、并能**替换原有印花**。复杂底图/曲面/
+  需替换原印花的场景用它。代价:会重渲染产品(可能与原照不完全像素一致),但出的是可上架的真实感套图。
+- **本地几何(快速,无 key/AI 失败)**:**只做「干净叠印」——绝不擦除产品原有图案**(实测擦除+重绘
+  对真实照片效果很差、还会把干净产品洗白)。流程:抠出产品本体→在合适位置(服饰胸口 / 杯瓶中部)
+  把设计**等比叠上**,乘产品自身明暗场(跟随曲面/光影)、裁进产品轮廓(不溢出背景)。
+  **适合纯色/干净的服饰、杯子、瓶子等**;若产品本身已有印花,本地不去除它——这类请走「智能(AI)」。
+  工作分辨率封顶 1600px,纯 numpy/scipy,12 核高并发也轻。
 """
 from __future__ import annotations
 
@@ -18,11 +19,11 @@ from PIL import Image, ImageOps
 from scipy import ndimage
 
 from ..config import settings
-from .design_extract import _ANALYZE, _flatten_illumination, _print_alpha, _product_mask
+from .design_extract import _ANALYZE, _product_mask
 
 log = logging.getLogger(__name__)
 
-# 几何法工作分辨率上限(只缩不放):2.5MP 左右,EDT/卷积都很轻,12 核机器高并发也扛得住;
+# 本地法工作分辨率上限(只缩不放):2.5MP 左右,卷积都很轻,12 核机器高并发也扛得住;
 # 电商套图预览 ~1600px 足够,与 AI 路径输出尺寸(1024~1536)同量级。
 _MAX_SIDE = 1600
 
@@ -59,59 +60,21 @@ def _replace_ai(product: Image.Image, new_print: Image.Image) -> Image.Image:
     return out.convert("RGB")
 
 
-def _detect_region(product: Image.Image) -> dict | None:
-    """定位原印花:返回 {bbox:(l,t,r,b), mask: 印花处=True, garment: 产品本体=True}(均全分辨率)。检测不到→None。"""
+def _product_body(product: Image.Image) -> tuple[np.ndarray | None, str]:
+    """抠出产品本体:返回 (全分辨率布尔 mask, kind)。kind ∈ garment/product;抠不到→(None,'none')。
+
+    只要本体轮廓(给定位+裁切用),**不做任何印花检测/擦除**——本地引擎不去碰产品原有图案。
+    """
     full = product.convert("RGB")
     W, H = full.size
     small = full.copy()
     small.thumbnail((_ANALYZE, _ANALYZE))
-    sw, sh = small.size
     mask, kind = _product_mask(small)
     if mask is None:
-        return None
-    orig = np.asarray(small).astype(int)
-    rgb = orig.astype(float)
-    if kind == "garment":
-        rgb = _flatten_illumination(rgb, mask)
-    alpha = _print_alpha(rgb.astype(int), mask, kind)
-    # 较低阈值 + 闭运算 + 填洞:尽量完整覆盖印花本体(含元素间空隙),避免抹除后仍有残影;
-    # 但只取"与主材质色有差异"的像素,故产品本体(纯色瓶身/布料)不会被整体当成印花。
-    region = alpha >= 60
-    region = ndimage.binary_closing(region, structure=np.ones((3, 3), bool), iterations=2)
-    region = ndimage.binary_fill_holes(region)
-    if not region.any():
-        return None
-    ys, xs = np.where(region)
-    sx, sy = W / sw, H / sh
-    bbox = (int(xs.min() * sx), int(ys.min() * sy),
-            int((xs.max() + 1) * sx), int((ys.max() + 1) * sy))
-
-    def _up(small_mask: np.ndarray) -> np.ndarray:
-        return np.asarray(Image.fromarray((small_mask * 255).astype("uint8")).resize(
-            (W, H), Image.NEAREST)) > 0
-
-    return {"bbox": bbox, "mask": _up(region), "garment": _up(mask)}
-
-
-def _inpaint_fabric(arr: np.ndarray, holes: np.ndarray, valid: np.ndarray | None = None) -> np.ndarray:
-    """抹掉旧印花:用最近的**有效布料**像素填充空洞(EDT 最近邻),接缝处轻模糊。
-
-    比"整块填单一中位色"好得多——最近邻把周围布料的褶皱明暗带进填充区,得到干净底布,后续明暗场
-    (shade)才不被旧印花污染。`valid` 给定时只从有效布料(产品本体且非空洞)取色,绝不把背景吸进来。
-    纯 scipy,O(N),~几毫秒。
-    """
-    if not holes.any():
-        return arr
-    inv = (~valid) if valid is not None else holes  # 取色源:valid 区(或退化为非空洞区)
-    ind = ndimage.distance_transform_edt(inv, return_distances=False, return_indices=True)
-    filled = arr[ind[0], ind[1]]          # 每个像素取最近的有效布料像素
-    base = arr.copy()
-    base[holes] = filled[holes]
-    # 最近邻填充会留 Voronoi 条纹:在空洞内用大尺度模糊抹平成局部布料均色,接缝处宽羽化融合。
-    sig = max(8.0, (holes.sum() ** 0.5) / 14)   # 随空洞尺寸自适应模糊半径
-    blur = ndimage.gaussian_filter(base, sigma=(sig, sig, 0))
-    soft = ndimage.gaussian_filter(holes.astype(np.float32), 6.0)[..., None]
-    return base * (1 - soft) + blur * soft
+        return None, "none"
+    mask_full = np.asarray(
+        Image.fromarray((mask * 255).astype("uint8")).resize((W, H), Image.NEAREST)) > 0
+    return mask_full, kind
 
 
 def _prep_print(p: Image.Image) -> Image.Image:
@@ -166,60 +129,58 @@ def replace_print(product: Image.Image, new_print: Image.Image, prefer_local: bo
     return _replace_local(product, new_print)
 
 
-def _replace_local(product: Image.Image, new_print: Image.Image) -> Image.Image:
-    """几何兜底:检测原印花区→EDT 抹除得干净底布→新印花等比贴入,乘底布明暗场(跟随褶皱)+ 接触阴影。
+def _placement(mask: np.ndarray | None, kind: str, W: int, H: int) -> tuple[int, int, int, int]:
+    """选叠印区域(不擦除,只决定设计贴哪、贴多大)。
 
-    检测不到产品/印花时退化为居中贴。明暗场取自**抹除后的底布**(而非含旧印花的原图),旧印花的
-    深色不再错误压暗新印花——这是相对旧版的关键修正。
+    服饰→胸口(水平居中、领口下方),区域偏大;杯/瓶等产品→本体中部偏大;抠不到本体→整图居中。
+    """
+    if mask is None or not mask.any():
+        return int(W * 0.26), int(H * 0.24), int(W * 0.74), int(H * 0.72)
+    ys, xs = np.where(mask)
+    gl, gt, gr, gb = int(xs.min()), int(ys.min()), int(xs.max() + 1), int(ys.max() + 1)
+    gw, gh = gr - gl, gb - gt
+    cx = gl + gw // 2
+    if kind == "garment":           # 胸口:领口下方起,宽约本体 56%
+        bw = int(gw * 0.56)
+        top = gt + int(gh * 0.20)
+        bh = int(gh * 0.46)
+    else:                            # 杯/瓶/其它产品:本体中部,宽约 52%
+        bw = int(gw * 0.52)
+        cy = gt + int(gh * 0.50)
+        bh = int(gh * 0.46)
+        top = cy - bh // 2
+    return cx - bw // 2, top, cx + bw // 2, top + bh
+
+
+def _replace_local(product: Image.Image, new_print: Image.Image) -> Image.Image:
+    """本地「干净叠印」:抠出产品本体→在合适位置把设计等比叠上,乘产品自身明暗场(跟随曲面/光影)、
+    裁进产品轮廓。**绝不擦除产品原有图案**——擦除+重绘对真实照片效果差、还会洗白干净产品。
+
+    适合纯色/干净的服饰、杯、瓶;产品本身已有印花时本地不去除(请走「智能 AI」)。
     """
     full = product.convert("RGB")
     if max(full.size) > _MAX_SIDE:        # 只缩不放,封顶工作分辨率
         full = ImageOps.contain(full, (_MAX_SIDE, _MAX_SIDE))
     W, H = full.size
-    reg = _detect_region(full)
+    mask, kind = _product_body(full)
     arr = np.asarray(full).astype(np.float32)
 
-    if reg is None:  # 兜底:没检测到产品/印花 → 居中贴(不抹除,占 ~52% 宽)
-        bbox = (int(W * 0.24), int(H * 0.22), int(W * 0.76), int(H * 0.74))
-        holes = np.zeros((H, W), bool)
-        valid = None
-    else:
-        garment = reg["garment"]
-        g_area = int(garment.sum()) or 1
-        print_frac = float((reg["mask"] & garment).sum()) / g_area
-        if print_frac > 0.55:
-            # 印花≈整个产品 → 检测不可靠(纯色瓶身/硬质曲面常被误判)。不抹除以免毁掉产品,
-            # 退化为把新印花居中贴在产品本体上(原品可能边缘微露,但完整不破)。曲面属 AI 路径强项。
-            ys, xs = np.where(garment)
-            gl, gt, gr, gb = int(xs.min()), int(ys.min()), int(xs.max() + 1), int(ys.max() + 1)
-            cw, ch = gr - gl, gb - gt
-            bbox = (gl + int(cw * 0.18), gt + int(ch * 0.30), gr - int(cw * 0.18), gt + int(ch * 0.72))
-            holes = np.zeros((H, W), bool)
-            valid = None
-        else:
-            # 抹除"印花本体(闭运算后)+ 适度外扩"∩ 产品本体:扩一圈消残影,但不误删纯色瓶身/布料。
-            d = max(2, int(min(W, H) * 0.012))
-            holes = (ndimage.distance_transform_edt(~reg["mask"]) <= d) & garment
-            valid = garment & ~holes           # 取色只从产品本体的非印花布料,绝不吸入背景
-            if holes.any():                    # bbox 由实际抹除区推出,新印花贴回此处
-                ys, xs = np.where(holes)
-                bbox = (int(xs.min()), int(ys.min()), int(xs.max() + 1), int(ys.max() + 1))
-
-    l, t, r, b = bbox
+    l, t, r, b = _placement(mask, kind, W, H)
     bw, bh = r - l, b - t
     if bw < 8 or bh < 8:
         return full
 
-    # ① 抹掉原印花 → 干净底布(保褶皱明暗)
-    base = _inpaint_fabric(arr, holes, valid)
-
-    # ② 底布明暗场(褶皱/阴影)= 亮度 / bbox 内中位亮度,后面 multiply 到新印花
-    lum = base @ np.array([0.299, 0.587, 0.114], np.float32)
+    # ① 产品自身明暗场(曲面/光影)= 亮度 / 叠印区中位亮度,乘到设计上 → 看起来"印在"产品上
+    lum = arr @ np.array([0.299, 0.587, 0.114], np.float32)
     med = float(np.median(lum[t:b, l:r])) or 1.0
-    shade = np.clip(lum / med, 0.6, 1.35)
+    shade = np.clip(lum / med, 0.62, 1.28)
 
-    # ③ 新印花:确保有 alpha(键掉实底)→ 等比进 bbox 居中
-    fitted, ox, oy = _fit_contain(_prep_print(new_print), bw, bh)
+    # ② 设计:键掉实底背景 → 裁到内容(去透明边距,免得缩成小图)→ 等比进叠印区居中
+    prepped = _prep_print(new_print)
+    ab = prepped.getchannel("A").getbbox()
+    if ab:
+        prepped = prepped.crop(ab)
+    fitted, ox, oy = _fit_contain(prepped, bw, bh)
     fw, fh = fitted.size
     y0, x0 = t + oy, l + ox
     na = np.asarray(fitted).astype(np.float32)
@@ -229,14 +190,14 @@ def _replace_local(product: Image.Image, new_print: Image.Image) -> Image.Image:
         sub = np.ones((fh, fw), np.float32)
     rgb_new = na[..., :3] * sub[..., None]
 
-    # ④ 接触阴影:印花外缘一圈轻微压暗,削弱"贴上去"的悬浮感
-    out = base.copy()
-    ra = np.zeros((H, W), np.float32)
-    ra[y0:y0 + fh, x0:x0 + fw] = a_new[..., 0]
-    halo = np.clip(ndimage.gaussian_filter(ra, 4.0) - ra, 0, 1) * 0.18
-    out *= (1 - halo[..., None])
+    # ③ 裁进产品轮廓:设计 alpha 与产品本体相交,绝不溢出到背景(抠不到本体则不裁)
+    if mask is not None and mask.any():
+        body = mask[y0:y0 + fh, x0:x0 + fw][..., None].astype(np.float32)
+        if body.shape[:2] == (fh, fw):
+            a_new = a_new * body
 
-    # ⑤ 合成
+    # ④ 合成到原图(产品像素原样保留,只在设计处叠加)
+    out = arr.copy()
     dst = out[y0:y0 + fh, x0:x0 + fw, :]
     out[y0:y0 + fh, x0:x0 + fw, :] = dst * (1 - a_new) + rgb_new * a_new
     return Image.fromarray(np.clip(out, 0, 255).astype("uint8"), "RGB")

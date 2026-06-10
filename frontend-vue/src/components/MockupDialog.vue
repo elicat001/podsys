@@ -85,12 +85,12 @@ function goTeamResources() {
 </script>
 
 <template>
-  <el-dialog v-model="dlg.visible" title="👕 商品套图 · 印花替换" width="600px" align-center append-to-body>
+  <el-dialog v-model="dlg.visible" title="👕 商品套图 · 印花套用" width="600px" align-center append-to-body>
     <!-- 步骤条 -->
     <div class="steps">
       <span :class="{ on: step === 1 }">① 选套图来源</span>
       <span class="sep">→</span>
-      <span :class="{ on: step === 2 }">② 上传印花</span>
+      <span :class="{ on: step === 2 }">② 上传设计</span>
     </div>
 
     <!-- 步骤 1:来源 -->
@@ -107,7 +107,7 @@ function goTeamResources() {
           <div class="big">⬆</div>
           <div>{{ mockupFiles.length ? `已选 ${mockupFiles.length} 张产品照(点击重选)` : '点击上传产品照(可多张)' }}</div>
         </label>
-        <p class="muted small">每张产品照里的原印花都会被替换为下一步上传的新印花。</p>
+        <p class="muted small">下一步上传的设计会套到每张产品上(智能=可替换原有印花;快速=干净叠印,适合纯色/干净产品)。</p>
       </div>
 
       <!-- 从团队资源选模板 -->
@@ -130,8 +130,14 @@ function goTeamResources() {
     <!-- 步骤 2:印花 -->
     <div v-else>
       <p class="muted small src-sum">套图来源:{{ sourceSummary }}</p>
-      <ImageUpload v-model="printFile" label="上传新印花(将替换每张产品照的原印花)" />
-      <p class="muted hint">⚡ 快速运行 = 本地几何替换(即时,曲面一般);🤖 智能运行 = AI 真实印制(效果好,需稍等)。后台逐张处理,去任务中心看结果。</p>
+      <ImageUpload v-model="printFile" label="上传设计图(将套到每张产品上)" />
+      <div class="engine-tip">
+        <p><strong>⚡ 快速运行(本地·免等)</strong>:把设计<strong>干净叠印</strong>到产品上,<strong>不擦除产品原有图案</strong>。
+          <span class="ok">适合纯色 / 干净的服饰、杯子、瓶子</span>。</p>
+        <p><strong>🤖 智能运行(AI·稍等)</strong>:真实印制,能<strong>替换原有印花</strong>、贴合曲面褶皱光影。
+          <span class="warn">产品本身已有印花、或想要最真实效果时选这个</span>。</p>
+        <p class="muted small">两种都在后台逐张处理,去「我的空间 · 任务中心」看结果。</p>
+      </div>
     </div>
 
     <template #footer>
@@ -247,6 +253,27 @@ function goTeamResources() {
 .hint {
   font-size: 12px;
   margin: 14px 0 0;
+}
+.engine-tip {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+  background: var(--panel2);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.engine-tip p {
+  margin: 0 0 6px;
+}
+.engine-tip p:last-child {
+  margin-bottom: 0;
+}
+.engine-tip .ok {
+  color: var(--ok, #67c23a);
+}
+.engine-tip .warn {
+  color: var(--warn, #e6a23c);
 }
 .footer {
   display: flex;
