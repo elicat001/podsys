@@ -44,13 +44,18 @@ def test_export_default_all_formats(client, auth_headers, png, tool_result):
     before = _balance(client, auth_headers)
     r = _post(client, auth_headers, png)
     body = tool_result(auth_headers, r)
-    # 四格式都在,URL 指向 /files 且可下载
-    assert set(body["files"].keys()) == {"png", "jpg", "tiff", "pdf"}
+    # 五格式都在(含 PSD),URL 指向 /files 且可下载
+    assert set(body["files"].keys()) == {"png", "jpg", "tiff", "pdf", "psd"}
     for url in body["files"].values():
         assert url.startswith("/files/")
         dl = client.get(url)
         assert dl.status_code == 200, url
         assert len(dl.content) > 0
+    # PSD 必须是合法 PSD:签名 8BPS,且 Pillow 能读回(尺寸一致)
+    psd = client.get(body["files"]["psd"]).content
+    assert psd[:4] == b"8BPS"
+    back = Image.open(io.BytesIO(psd)); back.load()
+    assert back.size == (body["meta"]["width_px"], body["meta"]["height_px"])
     # 30×40cm @ 300DPI = 3543×4724
     assert body["meta"]["width_px"] == 3543
     assert body["meta"]["height_px"] == 4724

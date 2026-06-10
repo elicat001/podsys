@@ -41,7 +41,7 @@ async def production(
     width_cm: float = Form(30.0),
     height_cm: float = Form(40.0),
     dpi: int = Form(300),
-    formats: str = Form("png,jpg,tiff,pdf"),
+    formats: str = Form("png,jpg,tiff,pdf,psd"),
     bg: str = Form("white"),
     bleed_mm: float = Form(0.0),
     safe_mm: float = Form(0.0),
@@ -66,7 +66,7 @@ async def production(
 
     fmts = _parse_formats(formats)
     if not fmts:
-        raise _bad("未指定有效导出格式(png/jpg/tiff/pdf)")
+        raise _bad("未指定有效导出格式(png/jpg/tiff/pdf/psd)")
     if not (1.0 <= width_cm <= 100.0 and 1.0 <= height_cm <= 100.0):
         raise _bad("尺寸需在 1~100cm 之间")
     if not (72 <= dpi <= 600):

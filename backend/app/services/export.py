@@ -17,8 +17,8 @@ from PIL import Image, ImageDraw, ImageFont
 SCALE_MODES = ("contain", "cover", "actual")
 ANCHORS = ("center", "top", "bottom")
 
-# 支持的导出格式(键=对外格式名,值=Pillow 保存用的扩展名/格式)。
-SUPPORTED_FORMATS: tuple[str, ...] = ("png", "jpg", "tiff", "pdf")
+# 支持的导出格式。psd=Photoshop 源文件(自写编码器,保留透明,见 services/psd.py)。
+SUPPORTED_FORMATS: tuple[str, ...] = ("png", "jpg", "tiff", "pdf", "psd")
 # 单张画布像素上限(防超大尺寸×高 DPI 打爆内存;生产稿本就高清,放宽到 1.2 亿)。
 MAX_PX = 120_000_000
 
@@ -146,6 +146,10 @@ def _save_one(
     elif fmt == "pdf":
         img = flat.convert("CMYK") if cmyk else flat
         img.save(path, format="PDF", resolution=float(dpi))
+    elif fmt == "psd":
+        # Photoshop 源文件:保留透明(RGBA);cmyk 不适用(同 png,始终 RGB/RGBA)。自写编码器。
+        from .psd import encode_psd
+        path.write_bytes(encode_psd(canvas, dpi))
     else:  # pragma: no cover - 上游已过滤
         raise ValueError(f"unsupported format: {fmt}")
 
