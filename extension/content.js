@@ -47,72 +47,96 @@
     return url;
   }
 
-  // ---- 商品图判定(支持平台的 CDN 大图)----
-  function isProductImg(img) {
-    const src = img.currentSrc || img.src || "";
-    if (!src || src.startsWith("data:")) return false;
-    if (!SUPPORTED.has(detectPlatform(src))) return false;
-    const w = img.naturalWidth || img.clientWidth || 0;
-    return w >= 140;
+  // ---- 够大判定(滤掉图标/小缩略):用内在宽或渲染框 ≥140px ----
+  function bigEnough(el) {
+    if ((el.naturalWidth || 0) >= 140) return true;
+    const r = el.getBoundingClientRect();
+    return r.width >= 140 && r.height >= 140;
   }
 
-  // ---- 从商品图反查整张卡片,抽取标题/价格/评分/链接(启发式,不依赖易变 CSS 类名)----
-  function cardOf(img) {
-    let el = img.parentElement;
-    for (let i = 0; i < 6 && el; i++) {
-      if (el.querySelector && el.querySelector("a[href]")) return el;
-      el = el.parentElement;
+  // ---- 取图片 URL:支持 <img>、CSS background-image、<video poster>、srcset/data-src(懒加载)----
+  function srcsetTop(ss) {
+    if (!ss) return "";
+    const parts = ss.split(",").map((s) => s.trim().split(/\s+/)[0]).filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : "";  // 末项通常分辨率最大
+  }
+  function bgUrl(el) {
+    let bg = "";
+    try { bg = getComputedStyle(el).backgroundImage || ""; } catch (e) { return ""; }
+    const m = bg.match(/url\(["']?([^"')]+)["']?\)/);
+    return m ? m[1] : "";
+  }
+  function imgUrlOf(el) {
+    if (!el || el.nodeType !== 1) return "";
+    const tag = el.tagName;
+    if (tag === "IMG") return el.currentSrc || el.src || el.getAttribute("data-src") || srcsetTop(el.getAttribute("srcset")) || "";
+    if (tag === "VIDEO") return el.getAttribute("poster") || "";
+    if (tag === "SOURCE") return srcsetTop(el.getAttribute("srcset")) || el.getAttribute("src") || "";
+    return bgUrl(el);
+  }
+  function isSupportedUrl(url) {
+    return !!url && !url.startsWith("data:") && SUPPORTED.has(detectPlatform(url));
+  }
+
+  // ---- 从被悬停元素反查整张卡片,抽取标题/价格/评分/链接(启发式,不依赖易变 CSS 类名)----
+  function cardOf(el) {
+    let node = el;
+    for (let i = 0; i < 7 && node; i++) {
+      if (node.querySelector && node.querySelector("a[href]")) return node;
+      node = node.parentElement;
     }
-    return img.closest("a") || img.parentElement || img;
+    return (el.closest && el.closest("a")) || el.parentElement || el;
   }
   function rootText(root) {
     try { return (root.innerText || root.textContent || "").replace(/\s+/g, " ").trim(); }
     catch (e) { return ""; }
   }
   function pickPrice(root) {
-    const m = rootText(root).match(/(?:US\s*)?[$￥¥€£]\s?\d[\d.,]*/);
+    const m = rootText(root).match(/(?:US\s*)?[$￥¥€£R]\s?\d[\d.,]*/);
     return m ? m[0].replace(/\s+/g, "") : "";
   }
   function pickRating(root) {
-    const star = root.querySelector('[aria-label*="star" i],[aria-label*="rating" i],[aria-label*="评分"]');
+    const star = root.querySelector && root.querySelector('[aria-label*="star" i],[aria-label*="rating" i],[aria-label*="评分"]');
     if (star) { const m = (star.getAttribute("aria-label") || "").match(/([0-5](?:\.\d)?)/); if (m) return m[1]; }
     const m = rootText(root).match(/\b([0-5]\.\d)\b/);
     return m ? m[1] : "";
   }
-  function pickTitle(img, root) {
-    if (img.alt && img.alt.trim().length > 4) return img.alt.trim().slice(0, 240);
-    const cand = root.querySelector("h1,h2,h3,h4,[title]");
+  function pickTitle(el, root) {
+    if (el && el.tagName === "IMG" && el.alt && el.alt.trim().length > 4) return el.alt.trim().slice(0, 240);
+    const im = root.querySelector && root.querySelector("img[alt]");
+    if (im && im.alt && im.alt.trim().length > 4) return im.alt.trim().slice(0, 240);
+    const cand = root.querySelector && root.querySelector("h1,h2,h3,h4,[title]");
     if (cand) {
       const t = (cand.getAttribute("title") || cand.innerText || "").trim();
       if (t.length > 4) return t.slice(0, 240);
     }
     return "";
   }
-  function pickLink(img, root) {
-    const a = root.querySelector("a[href]") || img.closest("a");
+  function pickLink(el, root) {
+    const a = (root.querySelector && root.querySelector("a[href]")) || (el.closest && el.closest("a"));
     if (a) { try { return new URL(a.getAttribute("href"), location.href).toString(); } catch (e) { /* ignore */ } }
     return location.href;
   }
-  function cardFromImg(img) {
-    const raw = img.currentSrc || img.src;
-    const plat = detectPlatform(raw);
-    const root = cardOf(img);
+  function buildCard(url, el) {
+    const plat = detectPlatform(url);
+    const root = cardOf(el);
     return {
-      url: raw,
-      hires_url: upgradeToHiRes(raw, plat),
+      url,
+      hires_url: upgradeToHiRes(url, plat),
       platform: plat,
-      title: pickTitle(img, root),
+      title: pickTitle(el, root),
       price: pickPrice(root),
       rating: pickRating(root),
-      source_url: pickLink(img, root),
+      source_url: pickLink(el, root),
     };
   }
   function gatherCards() {
     const seen = new Set();
     const cards = [];
-    document.querySelectorAll("img").forEach((img) => {
-      if (!isProductImg(img)) return;
-      const c = cardFromImg(img);
+    document.querySelectorAll("img,video").forEach((el) => {
+      const u = imgUrlOf(el);                       // 含懒加载 data-src/srcset、视频海报
+      if (!isSupportedUrl(u) || !bigEnough(el)) return;
+      const c = buildCard(u, el);
       if (seen.has(c.hires_url)) return;
       seen.add(c.hires_url);
       cards.push(c);
@@ -234,59 +258,82 @@
     window.addEventListener("resize", () => { if (panelEl.style.display !== "none") positionPanel(); });
   }
 
-  // ---- 单图悬停按钮(稳:商品图常被覆盖层/链接挡住,要从容器里找图;移到按钮不消失)----
+  // ---- 单图悬停按钮(用 elementsFromPoint 跟踪光标,稳过覆盖层/背景图/悬停视频/懒加载)----
   function makeHoverBtn() {
     const b = document.createElement("button");
     b.id = "pod-hover-btn"; b.textContent = "📥 采集此商品"; b.style.display = "none";
     document.body.appendChild(b);
-    let curImg = null, hideT = null;
+    let curUnit = null, curCard = null, hideT = null, raf = 0, mx = 0, my = 0;
 
     const cancelHide = () => { if (hideT) { clearTimeout(hideT); hideT = null; } };
-    const scheduleHide = () => {
-      cancelHide();
-      hideT = setTimeout(() => { b.style.display = "none"; curImg = null; }, 700);
-    };
+    const hide = () => { b.style.display = "none"; curUnit = null; curCard = null; };
+    const scheduleHide = () => { cancelHide(); hideT = setTimeout(hide, 600); };
 
-    // 从被悬停元素反查商品图:它自己是图就用它;否则在它(及最多 3 层祖先)里找商品图,
-    // 以应对站点用透明覆盖层/<a> 盖住 <img> 导致 e.target 不是图的情况。
-    function findImg(el) {
-      if (!el || el.nodeType !== 1) return null;
-      if (el.tagName === "IMG") return isProductImg(el) ? el : null;
-      let node = el;
-      for (let i = 0; i < 3 && node && node.querySelectorAll; i++) {
-        for (const im of node.querySelectorAll("img")) if (isProductImg(im)) return im;
+    // 在某容器内找第一张「够大的商品图」(<img> / <video poster>),返回 {url, box}
+    function imgInside(node) {
+      if (!node.querySelectorAll) return null;
+      for (const im of node.querySelectorAll("img,video")) {
+        const u = imgUrlOf(im);
+        if (!isSupportedUrl(u)) continue;
+        const r = im.getBoundingClientRect();
+        if (r.width >= 60 && r.height >= 60) return { url: u, box: r };
+      }
+      return null;
+    }
+    // 光标处的「商品单元」:BTN=在按钮上;{el,url,box}=找到商品;null=没有
+    function unitAt(x, y) {
+      const stack = document.elementsFromPoint(x, y) || [];
+      if (stack.indexOf(b) >= 0) return "BTN";
+      // ① 光标正下方的元素直接是商品图(含背景图/视频海报)
+      for (const el of stack) {
+        const u = imgUrlOf(el);
+        if (isSupportedUrl(u)) {
+          const r = el.getBoundingClientRect();
+          if (r.width >= 60 && r.height >= 60) return { el, url: u, box: r };
+        }
+      }
+      // ② 兜底:从最上层元素往上,容器内搜商品图(应对覆盖层/视频盖住图的卡片)
+      let node = stack[0];
+      for (let i = 0; i < 6 && node; i++) {
+        const hit = imgInside(node);
+        if (hit) return { el: node, url: hit.url, box: hit.box };
         node = node.parentElement;
       }
       return null;
     }
-    function showFor(img) {
-      const r = img.getBoundingClientRect();
-      if (r.width < 70 || r.height < 70) return;   // 太小的(图标/小缩略)不弹
-      cancelHide();
-      curImg = img;
+    function position(box) {
       b.style.display = "block";
-      b.style.left = (window.scrollX + r.right - b.offsetWidth - 8) + "px";
-      b.style.top = (window.scrollY + r.top + 8) + "px";
+      b.style.left = (window.scrollX + box.right - b.offsetWidth - 8) + "px";
+      b.style.top = (window.scrollY + box.top + 8) + "px";
+    }
+    function update() {
+      raf = 0;
+      const u = unitAt(mx, my);
+      if (u === "BTN") { cancelHide(); return; }   // 光标在按钮上 → 保持
+      if (u) {
+        cancelHide();
+        if (u.el !== curUnit) {                     // 换了单元才重建/重定位,避免抖动
+          curUnit = u.el;
+          curCard = buildCard(u.url, u.el);
+          position(u.box);
+        }
+      } else if (curUnit) {
+        scheduleHide();
+      }
     }
 
     b.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
     b.addEventListener("click", (e) => {
       e.stopPropagation(); e.preventDefault();
-      if (curImg) collect([cardFromImg(curImg)]);
+      if (curCard) collect([curCard]);
     });
-    b.addEventListener("mouseenter", cancelHide);
-    b.addEventListener("mouseleave", scheduleHide);
 
-    // 单一 mouseover(捕获阶段,绕过站点 stopPropagation):
-    // 悬到商品图/其容器 → 显示;悬到按钮 → 保持;悬到别处 → 延时隐藏(留时间移到按钮)。
-    document.addEventListener("mouseover", (e) => {
-      if (e.target === b) { cancelHide(); return; }
-      const img = findImg(e.target);
-      if (img) showFor(img);
-      else if (curImg) scheduleHide();
-    }, true);
-    // 滚动时位置会失效,直接收起
-    window.addEventListener("scroll", () => { if (curImg) { b.style.display = "none"; curImg = null; } }, { passive: true });
+    // 节流:每帧最多算一次 elementsFromPoint(mousemove 很密)
+    document.addEventListener("mousemove", (e) => {
+      mx = e.clientX; my = e.clientY;
+      if (!raf) raf = requestAnimationFrame(update);
+    }, { passive: true });
+    window.addEventListener("scroll", () => { if (curUnit) hide(); }, { passive: true });
   }
 
   function boot() {
