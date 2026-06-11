@@ -46,6 +46,10 @@ function toggleGroup(g) {
   if (groupAllSel(g)) stSelected.value = stSelected.value.filter((id) => !ids.includes(id))
   else stSelected.value = [...new Set([...stSelected.value, ...ids])]
 }
+// 商品详情弹窗(逐图选 + 看大图 + 来源)
+const showStDetail = ref(false)
+const stDetail = ref(null)
+function openStDetail(g) { stDetail.value = g; showStDetail.value = true }
 
 async function loadStaging() {
   try { staging.value = await listStaging() } catch (e) { /* 静默 */ }
@@ -211,23 +215,24 @@ onMounted(() => { loadTasks(); loadStaging() })
       <div v-if="!stShown.length" class="muted center stempty">
         采集箱为空 —— 用上面的插件去 Temu 采集后,待同步的商品会出现在这里。
       </div>
-      <!-- 智能分类:一块 = 一个商品(可能含多张图),像套图模板 -->
-      <div v-else class="pgroups">
-        <div v-for="g in stGroups" :key="g.key" class="pgroup">
-          <div class="pg-head">
-            <button class="pg-check" :class="{ on: groupAllSel(g) }" @click="toggleGroup(g)"
-                    :title="groupAllSel(g) ? '取消选择本组' : '选择本组全部'">{{ groupAllSel(g) ? '☑' : '☐' }}</button>
-            <span class="pg-title" :title="g.title">{{ g.title || '(无标题)' }}</span>
-            <span v-if="g.price" class="cprice">{{ g.price }}</span>
-            <span v-if="g.rating" class="crate">★ {{ g.rating }}</span>
-            <span class="cplat">{{ g.platform }}</span>
-            <span class="pg-n muted">{{ g.items.length }} 图</span>
-            <a v-if="g.source_url" class="csrc" :href="g.source_url" target="_blank" @click.stop>查看来源 →</a>
+      <!-- 智能分类:一块 = 一个商品,紧凑卡片网格(像套图模板)。点缩略图选/取消整个商品,详情里可逐图选 -->
+      <div v-else class="cbox-grid">
+        <div v-for="g in stGroups" :key="g.key" class="cbox-card" :class="{ sel: groupAllSel(g) }">
+          <div class="cbox-thumb" @click="toggleGroup(g)" :title="groupAllSel(g) ? '取消选择' : '选择本商品'">
+            <img :src="g.items[0].hires_url || g.items[0].url" loading="lazy" decoding="async" />
+            <span class="check">✓</span>
+            <span v-if="g.items.length > 1" class="nbadge">{{ g.items.length }} 图</span>
           </div>
-          <div class="pg-imgs">
-            <div v-for="im in g.items" :key="im.id" class="pimg" :class="{ sel: stSelected.includes(im.id) }" @click="stToggle(im.id)">
-              <img :src="im.hires_url || im.url" loading="lazy" decoding="async" />
-              <span class="check">✓</span>
+          <div class="cbox-body">
+            <div class="cbox-title" :title="g.title">{{ g.title || '(无标题)' }}</div>
+            <div class="cbox-info">
+              <span v-if="g.price" class="cprice">{{ g.price }}</span>
+              <span v-if="g.rating" class="crate">★ {{ g.rating }}</span>
+              <span class="cplat">{{ g.platform }}</span>
+            </div>
+            <div class="cbox-acts">
+              <button class="chip" @click.stop="openStDetail(g)">📄 详情</button>
+              <a v-if="g.source_url" class="chip" :href="g.source_url" target="_blank" @click.stop>🔗 来源</a>
             </div>
           </div>
         </div>
@@ -283,6 +288,30 @@ onMounted(() => { loadTasks(); loadStaging() })
         </div>
       </div>
     </div>
+
+    <!-- 商品详情弹窗:逐图选 / 来源 -->
+    <el-dialog v-model="showStDetail" title="商品详情" width="640px" align-center append-to-body>
+      <div v-if="stDetail">
+        <div class="sd-title" :title="stDetail.title">{{ stDetail.title || '(无标题)' }}</div>
+        <div class="sd-info">
+          <span v-if="stDetail.price" class="cprice">{{ stDetail.price }}</span>
+          <span v-if="stDetail.rating" class="crate">★ {{ stDetail.rating }}</span>
+          <span class="cplat">{{ stDetail.platform }}</span>
+          <a v-if="stDetail.source_url" class="lnk" :href="stDetail.source_url" target="_blank">查看来源 →</a>
+        </div>
+        <div class="sd-imgs">
+          <div v-for="im in stDetail.items" :key="im.id" class="pimg" :class="{ sel: stSelected.includes(im.id) }" @click="stToggle(im.id)">
+            <img :src="im.hires_url || im.url" loading="lazy" decoding="async" />
+            <span class="check">✓</span>
+          </div>
+        </div>
+        <p class="muted sm" style="margin-top: 8px">点图选/取消该商品要同步的图(可只选其中几张)。</p>
+      </div>
+      <template #footer>
+        <button v-if="stDetail" class="chip" @click="toggleGroup(stDetail)">{{ groupAllSel(stDetail) ? '取消整组' : '选择整组' }}</button>
+        <el-button type="primary" @click="showStDetail = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -418,51 +447,107 @@ code.copy:hover {
   padding: 40px 0;
 }
 /* 智能分类:一块=一个商品 */
-.pgroups {
-  display: flex;
-  flex-direction: column;
+/* 智能分类:紧凑商品卡网格(像套图模板) */
+.cbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 12px;
   margin-top: 4px;
 }
-.pgroup {
-  border: 1px solid var(--line);
+.cbox-card {
+  border: 2px solid var(--line);
   border-radius: 10px;
+  overflow: hidden;
   background: var(--panel);
-  padding: 10px 12px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 250px;
 }
-.pg-head {
+.cbox-card.sel {
+  border-color: var(--brand);
+}
+.cbox-thumb {
+  position: relative;
+  aspect-ratio: 1;
+  background: var(--bg2);
+  cursor: pointer;
+}
+.cbox-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.cbox-thumb .check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #1a1208;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  opacity: 0;
+}
+.cbox-card.sel .cbox-thumb .check {
+  opacity: 1;
+}
+.nbadge {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 9px;
+}
+.cbox-body {
+  padding: 8px 9px 9px;
+}
+.cbox-title {
+  font-size: 12.5px;
+  line-height: 1.35;
+  height: 34px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.cbox-info {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 8px;
+  margin: 5px 0;
+  font-size: 12px;
+}
+.cbox-acts {
+  display: flex;
+  gap: 6px;
+}
+.cbox-acts .chip {
+  font-size: 11.5px;
+  padding: 3px 9px;
+  text-decoration: none;
+}
+/* 商品详情弹窗 */
+.sd-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.sd-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
   font-size: 13px;
-  flex-wrap: wrap;
 }
-.pg-check {
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 17px;
-  line-height: 1;
-  padding: 0;
-  color: var(--mut);
-}
-.pg-check.on {
-  color: var(--brand);
-}
-.pg-title {
-  font-weight: 600;
-  max-width: 360px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pg-n {
-  font-size: 11px;
-}
-.pg-imgs {
+.sd-imgs {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
   gap: 8px;
 }
 .pimg {
