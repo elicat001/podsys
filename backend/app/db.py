@@ -1,8 +1,11 @@
 """Database layer — SQLAlchemy 2.0 + SQLite (swap URL for Postgres in prod)."""
 from __future__ import annotations
+
 from collections.abc import Iterator
+
 from sqlalchemy import create_engine, event, inspect, text
-from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
 from .config import settings
 
 settings.ensure_dirs()
@@ -39,6 +42,13 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("jobs", "started_at", "DATETIME"),
     ("jobs", "finished_at", "DATETIME"),
     ("users", "org_id", "INTEGER DEFAULT 1"),   # 团队资源共享维度;现有用户统一到 org 1
+    # batch13:采集→选择→同步,给采集图补富元数据 + 同步状态列
+    ("collected_images", "price", "VARCHAR(32) DEFAULT ''"),
+    ("collected_images", "rating", "VARCHAR(16) DEFAULT ''"),
+    ("collected_images", "source_url", "VARCHAR(1024) DEFAULT ''"),
+    ("collected_images", "synced", "BOOLEAN DEFAULT 0"),
+    ("collected_images", "synced_asset_id", "INTEGER"),
+    ("collected_images", "asset_url", "VARCHAR(1024) DEFAULT ''"),
 ]
 
 
@@ -56,12 +66,14 @@ def _migrate_columns() -> None:
 
 
 def init_db() -> None:
-    from . import models_db  # noqa: F401  (register mappers)
-    from . import models_collect  # noqa: F401  (采集任务/采集图表 — batch7)
-    from . import models_shop  # noqa: F401  (店铺表 — batch7)
-    from . import models_workflow  # noqa: F401  (保存的自定义工作流表 — batch8)
-    from . import models_template  # noqa: F401  (刊登/导出模板表 — batch10)
-    from . import models_team  # noqa: F401  (团队资源:套图模板)
+    from . import (
+        models_collect,  # noqa: F401  (采集任务/采集图表 — batch7)
+        models_db,  # noqa: F401  (register mappers)
+        models_shop,  # noqa: F401  (店铺表 — batch7)
+        models_team,  # noqa: F401  (团队资源:套图模板)
+        models_template,  # noqa: F401  (刊登/导出模板表 — batch10)
+        models_workflow,  # noqa: F401  (保存的自定义工作流表 — batch8)
+    )
     _migrate_columns()  # 先给老表补列(create_all 不补列)
     Base.metadata.create_all(engine)
 

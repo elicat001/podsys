@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client.js'
 import { listJobs, JOB_STATUS, jobThumb, jobDownloads, timeAgo, resultType } from '../api/jobs.js'
 import { listMockupTemplates, createMockupTemplate, deleteMockupTemplate, addTemplateImages, deleteTemplateImage } from '../api/team.js'
+import { listCollected, deleteCollected } from '../api/collect.js'
 import { toolForJob, moduleOfTool } from '../data/tools.js'
 import ResultView from '../components/ResultView.vue'
 
@@ -12,6 +13,8 @@ const route = useRoute()
 const router = useRouter()
 const _initTab = ['trash', 'team'].includes(route.query.tab) ? route.query.tab : 'jobs'
 const tab = ref(_initTab)
+// 任务中心子区:作图(job 任务)/ 找图(采集同步入库的素材,按平台)
+const subTab = ref(route.query.sub === 'find' ? 'find' : 'design')
 
 // ── 存储容量 ──────────────────────────────────────────────
 const quota = ref(null)
@@ -140,6 +143,23 @@ async function delJob(job) {
   loadJobs(); loadQuota()
 }
 
+// ── 找图(采集同步入库,按平台)────────────────────────────
+const collected = ref([])
+async function loadCollected() {
+  try { collected.value = await listCollected() } catch (e) { /* 静默 */ }
+}
+function setSub(s) {
+  subTab.value = s
+  if (s === 'find') loadCollected()
+}
+async function delCollected(im) {
+  try {
+    await ElMessageBox.confirm('从找图移除?对应素材会移入回收站(可恢复)。', '确认移除', { type: 'warning' })
+  } catch (e) { return }
+  await deleteCollected(im.id)
+  ElMessage.success('已移除'); loadCollected(); loadQuota()
+}
+
 // ── 回收站 ────────────────────────────────────────────────
 const trash = ref([])
 async function loadTrash() {
@@ -235,6 +255,7 @@ function onTab(name) {
 onMounted(() => {
   loadJobs(); loadQuota()
   if (tab.value === 'team') loadTeam()
+  if (tab.value === 'jobs' && subTab.value === 'find') loadCollected()
   // 性能优化:把"实时用时"和"列表刷新"拆开——
   // ① 1s 客户端计时:只在有活动任务时推进 now → 驱动"用时"每秒刷新,**不发任何请求**。
   // ② 列表轮询:**仅当有 pending/running 任务**时才每 3s 拉一次(全部完成后自动停,空闲零请求)。
@@ -266,51 +287,99 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
           <span>任务中心 <el-badge v-if="hasActiveJob" :value="statusCounts.active" type="warning" /></span>
         </template>
 
-        <div class="toolbar">
-          <div class="filters">
-            <button v-for="f in [['all','全部'],['active','处理中'],['done','已完成'],['error','失败']]"
-                    :key="f[0]" class="fchip" :class="{ on: statusFilter === f[0] }" @click="statusFilter = f[0]">
-              {{ f[1] }} <span class="fcount">{{ statusCounts[f[0]] }}</span>
-            </button>
-          </div>
-          <el-button size="small" @click="loadJobs">🔄 刷新</el-button>
+        <!-- 子区:作图 / 找图 -->
+        <div class="subtabs">
+          <button class="stab" :class="{ on: subTab === 'design' }" @click="setSub('design')">🎨 作图</button>
+          <button class="stab" :class="{ on: subTab === 'find' }" @click="setSub('find')">🔍 找图</button>
         </div>
 
-        <div v-if="!filtered.length" class="empty muted">暂无任务 —— 去「作图」选个工具运行试试</div>
-
-        <div v-for="g in jobGroups" :key="g.module" class="mod-group">
-          <div class="mod-title">{{ g.module }}</div>
-          <div v-for="c in g.cats" :key="c.cat" class="cat-group">
-            <div class="cat-head">
-              <span class="cat-title muted">{{ c.cat }} <span class="cat-count">{{ c.total }}</span></span>
-              <button class="detail-btn" @click="goDetail(c.cat)">详情列表 →</button>
+        <!-- ===== 作图:任务 + 状态筛选 ===== -->
+        <div v-show="subTab === 'design'">
+          <div class="toolbar">
+            <div class="filters">
+              <button v-for="f in [['all','全部'],['active','处理中'],['done','已完成'],['error','失败']]"
+                      :key="f[0]" class="fchip" :class="{ on: statusFilter === f[0] }" @click="statusFilter = f[0]">
+                {{ f[1] }} <span class="fcount">{{ statusCounts[f[0]] }}</span>
+              </button>
             </div>
-            <div class="job-grid one-row">
-              <div v-for="job in c.items" :key="job.id" class="job-card panel">
-                <div class="job-thumb" :class="{ clickable: job.status === 'done' && job.result }"
-                     @click="openPreview(job)" :title="job.status === 'done' ? '点击预览' : ''">
-                  <img v-if="job.status === 'done' && jobThumb(job.result)" :src="jobThumb(job.result) + '?w=144'" class="checker" loading="lazy" decoding="async" />
-                  <div v-else-if="job.status === 'error'" class="ph err">✕</div>
-                  <!-- 已完成但无图(标题/侵权等信息类结果)→ 显示工具图标的"完成"态,不再误显示转圈 -->
-                  <div v-else-if="job.status === 'done'" class="ph done">{{ job._tool?.icon || '✓' }}</div>
-                  <div v-else class="ph"><span class="spin" /></div>
+            <el-button size="small" @click="loadJobs">🔄 刷新</el-button>
+          </div>
+
+          <div v-if="!filtered.length" class="empty muted">暂无任务 —— 去「作图」选个工具运行试试</div>
+
+          <div v-for="g in jobGroups" :key="g.module" class="mod-group">
+            <div class="mod-title">{{ g.module }}</div>
+            <div v-for="c in g.cats" :key="c.cat" class="cat-group">
+              <div class="cat-head">
+                <span class="cat-title muted">{{ c.cat }} <span class="cat-count">{{ c.total }}</span></span>
+                <button class="detail-btn" @click="goDetail(c.cat)">详情列表 →</button>
+              </div>
+              <div class="job-grid one-row">
+                <div v-for="job in c.items" :key="job.id" class="job-card panel">
+                  <div class="job-thumb" :class="{ clickable: job.status === 'done' && job.result }"
+                       @click="openPreview(job)" :title="job.status === 'done' ? '点击预览' : ''">
+                    <img v-if="job.status === 'done' && jobThumb(job.result)" :src="jobThumb(job.result) + '?w=144'" class="checker" loading="lazy" decoding="async" />
+                    <div v-else-if="job.status === 'error'" class="ph err">✕</div>
+                    <!-- 已完成但无图(标题/侵权等信息类结果)→ 显示工具图标的"完成"态,不再误显示转圈 -->
+                    <div v-else-if="job.status === 'done'" class="ph done">{{ job._tool?.icon || '✓' }}</div>
+                    <div v-else class="ph"><span class="spin" /></div>
+                  </div>
+                  <div class="job-body">
+                    <div class="job-row">
+                      <span class="job-name">{{ jobTitle(job) }}</span>
+                      <el-tag :type="JOB_STATUS[job.status]?.type || 'info'" size="small" effect="light">
+                        {{ JOB_STATUS[job.status]?.label || job.status }}
+                      </el-tag>
+                    </div>
+                    <div class="job-meta muted">{{ timeAgo(job.created_at) }} · 用时 {{ liveDuration(job) }}</div>
+                    <!-- 信息类结果(标题/侵权)直接把结果文字显示在卡片上,不必点开预览 -->
+                    <div v-if="jobSummary(job)" class="job-summary" :title="jobSummary(job)">{{ jobSummary(job) }}</div>
+                    <div v-if="job.status === 'error'" class="job-err" :title="job.error">{{ job.error }}</div>
+                    <div class="job-actions">
+                      <button v-if="job.status === 'done' && job.result" class="chip preview" @click="openPreview(job)">👁 预览</button>
+                      <button v-if="job.result && job.result.title" class="chip copy" @click="copyText(job.result.title, '标题')">📋 复制</button>
+                      <a v-for="([name, url]) in jobDownloads(job.result)" :key="name" class="chip dl" :href="url" target="_blank" download>⬇ {{ name }}</a>
+                      <button class="chip del" @click="delJob(job)">🗑 删除</button>
+                    </div>
+                  </div>
                 </div>
-                <div class="job-body">
-                  <div class="job-row">
-                    <span class="job-name">{{ jobTitle(job) }}</span>
-                    <el-tag :type="JOB_STATUS[job.status]?.type || 'info'" size="small" effect="light">
-                      {{ JOB_STATUS[job.status]?.label || job.status }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== 找图:采集同步入库的素材,按平台分类 ===== -->
+        <div v-show="subTab === 'find'">
+          <div class="toolbar">
+            <span class="muted small">采集 → 同步入库的商品,按来源平台分类</span>
+            <span style="flex: 1" />
+            <el-button size="small" @click="loadCollected">🔄 刷新</el-button>
+            <el-button size="small" type="primary" @click="router.push('/app/find/collect')">+ 去采集</el-button>
+          </div>
+          <div v-if="!collected.length" class="empty muted">还没有找图素材 —— 去「<a class="lnk" @click="router.push('/app/find/collect')">采集</a>」用插件采集并同步</div>
+          <div v-for="grp in collected" :key="grp.platform" class="mod-group">
+            <div class="cat-head">
+              <span class="cat-title muted">{{ grp.platform }} <span class="cat-count">{{ grp.items.length }}</span></span>
+            </div>
+            <div class="find-grid">
+              <div v-for="im in grp.items" :key="im.id" class="find-card panel">
+                <a class="find-thumb" :href="im.asset_url" target="_blank" title="查看大图">
+                  <img :src="im.asset_url + '?w=200'" loading="lazy" decoding="async" />
+                </a>
+                <div class="find-body">
+                  <div class="find-title" :title="im.title">{{ im.title || '(无标题)' }}</div>
+                  <div class="find-info">
+                    <span v-if="im.price" class="cprice">{{ im.price }}</span>
+                    <span v-if="im.rating" class="crate">★ {{ im.rating }}</span>
+                    <el-tag v-if="im.risk === 'high' || im.risk === 'review'" size="small"
+                            :type="im.risk === 'high' ? 'danger' : 'warning'" effect="light">
+                      {{ im.risk === 'high' ? '高风险' : '待核' }}
                     </el-tag>
                   </div>
-                  <div class="job-meta muted">{{ timeAgo(job.created_at) }} · 用时 {{ liveDuration(job) }}</div>
-                  <!-- 信息类结果(标题/侵权)直接把结果文字显示在卡片上,不必点开预览 -->
-                  <div v-if="jobSummary(job)" class="job-summary" :title="jobSummary(job)">{{ jobSummary(job) }}</div>
-                  <div v-if="job.status === 'error'" class="job-err" :title="job.error">{{ job.error }}</div>
-                  <div class="job-actions">
-                    <button v-if="job.status === 'done' && job.result" class="chip preview" @click="openPreview(job)">👁 预览</button>
-                    <button v-if="job.result && job.result.title" class="chip copy" @click="copyText(job.result.title, '标题')">📋 复制</button>
-                    <a v-for="([name, url]) in jobDownloads(job.result)" :key="name" class="chip dl" :href="url" target="_blank" download>⬇ {{ name }}</a>
-                    <button class="chip del" @click="delJob(job)">🗑 删除</button>
+                  <div class="find-acts">
+                    <a v-if="im.source_url" class="fchip2" :href="im.source_url" target="_blank">🔗 来源</a>
+                    <a class="fchip2" :href="im.asset_url" target="_blank" download>⬇ 下载</a>
+                    <button class="fchip2 danger" @click="delCollected(im)">🗑 移除</button>
                   </div>
                 </div>
               </div>
@@ -488,6 +557,109 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
 }
 .small {
   font-size: 12px;
+}
+/* 任务中心子区:作图 / 找图 */
+.subtabs {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 14px;
+}
+.stab {
+  border: 1px solid var(--line2);
+  background: var(--panel);
+  color: var(--mut);
+  border-radius: 18px;
+  padding: 6px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.stab.on {
+  border-color: var(--brand);
+  color: var(--fg);
+  background: var(--panel2);
+}
+.lnk {
+  color: var(--brand);
+  cursor: pointer;
+}
+.lnk:hover {
+  text-decoration: underline;
+}
+/* 找图卡片 */
+.find-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+.find-card {
+  padding: 0;
+  overflow: hidden;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
+}
+.find-thumb {
+  display: block;
+  aspect-ratio: 1;
+  background: var(--bg2);
+}
+.find-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.find-body {
+  padding: 8px 10px 10px;
+}
+.find-title {
+  font-size: 12.5px;
+  line-height: 1.35;
+  height: 34px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.find-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 5px 0;
+  font-size: 12px;
+}
+.cprice {
+  color: var(--brand);
+  font-weight: 800;
+}
+.crate {
+  color: #e6a23c;
+}
+.find-acts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.fchip2 {
+  border: 1px solid var(--line2);
+  background: var(--panel);
+  color: var(--mut);
+  border-radius: 12px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.fchip2:hover {
+  border-color: var(--brand);
+  color: var(--fg);
+}
+.fchip2.danger {
+  color: var(--err);
+}
+.fchip2.danger:hover {
+  border-color: var(--err);
 }
 .empty {
   padding: 48px 0;

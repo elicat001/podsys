@@ -1,14 +1,67 @@
 <script setup>
-import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client.js'
+import { listStaging, deleteStaging, syncImages } from '../api/collect.js'
 
+const router = useRouter()
 const tasks = ref([])
 const source = ref('temu')
 const urls = ref('')
 const detail = ref(null)
 const selected = ref([])
 const showManual = ref(false)
+
+// ── 采集箱:选择 → 同步 ──────────────────────────────────
+const staging = ref([])
+const stSelected = ref([])
+const platformFilter = ref('')
+const syncing = ref(false)
+
+const stShown = computed(() =>
+  platformFilter.value ? staging.value.filter((s) => s.platform === platformFilter.value) : staging.value,
+)
+const platforms = computed(() => [...new Set(staging.value.map((s) => s.platform).filter(Boolean))])
+const allShownSelected = computed(
+  () => stShown.value.length > 0 && stShown.value.every((s) => stSelected.value.includes(s.id)),
+)
+
+async function loadStaging() {
+  try { staging.value = await listStaging() } catch (e) { /* 静默 */ }
+  const ids = new Set(staging.value.map((s) => s.id))
+  stSelected.value = stSelected.value.filter((id) => ids.has(id))
+}
+function stToggle(id) {
+  const i = stSelected.value.indexOf(id)
+  if (i >= 0) stSelected.value.splice(i, 1)
+  else stSelected.value.push(id)
+}
+function stToggleAll() {
+  const shown = stShown.value.map((s) => s.id)
+  if (allShownSelected.value) stSelected.value = stSelected.value.filter((id) => !shown.includes(id))
+  else stSelected.value = [...new Set([...stSelected.value, ...shown])]
+}
+async function doSync() {
+  if (!stSelected.value.length) return ElMessage.warning('请先勾选要同步的采集图')
+  syncing.value = true
+  try {
+    const r = await syncImages(stSelected.value)
+    if (r.synced) ElMessage.success(`同步成功 ${r.synced} 条${r.failed ? `(失败 ${r.failed} 条)` : ''} —— 前往「我的空间 / 找图」查看`)
+    else ElMessage.error(`同步失败${r.errors && r.errors.length ? ':' + r.errors[0] : '(图源取图失败)'}`)
+    stSelected.value = []
+    await loadStaging()
+  } catch (e) { ElMessage.error(e.message || '同步失败') } finally { syncing.value = false }
+}
+async function doDelStaging() {
+  if (!stSelected.value.length) return ElMessage.warning('请先勾选要删除的项')
+  try { await ElMessageBox.confirm(`删除选中的 ${stSelected.value.length} 条暂存采集?`, '确认删除', { type: 'warning' }) }
+  catch (e) { return }
+  await deleteStaging(stSelected.value)
+  stSelected.value = []
+  ElMessage.success('已删除'); loadStaging()
+}
+function goSpaceFind() { router.push({ path: '/app/space', query: { tab: 'jobs', sub: 'find' } }) }
 
 function copyText(t) {
   navigator.clipboard?.writeText(t).then(
@@ -63,13 +116,13 @@ function toggle(id) {
   if (i >= 0) selected.value.splice(i, 1)
   else selected.value.push(id)
 }
-onMounted(loadTasks)
+onMounted(() => { loadTasks(); loadStaging() })
 </script>
 
 <template>
   <div>
     <h2>采集</h2>
-    <p class="muted">装一次浏览器插件,去 Temu 商品页一键采集高清图,直接进素材库并自动侵权查重。</p>
+    <p class="muted">装一次浏览器插件,去 Temu 商品页一键采集商品(图+标题+价格+评分+链接)→ 进下方采集箱 → 勾选「开始同步」入库。</p>
 
     <!-- 插件采集(推荐):像竞品一样,装插件 → 页面内一键采集 -->
     <div class="panel plugin">
@@ -110,8 +163,53 @@ onMounted(loadTasks)
         </div>
       </div>
       <div class="muted sm tip">
-        采集的图进「<router-link to="/app/space" class="lnk">我的空间 / 素材库</router-link>(来源=采集)」,并自动做侵权查重。
+        采集后进下方「采集箱」,勾选同步才入「<router-link to="/app/space" class="lnk">我的空间 / 找图</router-link>」并自动侵权查重。
         ⚠ 仅用于已获授权 / 自有内容场景。
+      </div>
+    </div>
+
+    <!-- 采集箱:选择 → 同步(竞品式) -->
+    <div class="panel stage">
+      <div class="stoolbar">
+        <strong>📥 采集箱</strong>
+        <span class="muted sm">插件采集的内容先进这里;勾选后点「开始同步」才入库(此时才占存储)</span>
+        <span style="flex: 1" />
+        <el-select v-model="platformFilter" size="small" clearable placeholder="全部平台" style="width: 130px">
+          <el-option v-for="p in platforms" :key="p" :value="p" :label="p" />
+        </el-select>
+        <el-button size="small" @click="loadStaging">🔄 刷新</el-button>
+      </div>
+      <div v-if="stShown.length" class="stbar">
+        <button class="chip" @click="stToggleAll">{{ allShownSelected ? '取消全选' : '全选' }}</button>
+        <span class="muted sm">已选 <b>{{ stSelected.length }}</b> / {{ stShown.length }} 条</span>
+        <span style="flex: 1" />
+        <button class="chip del" :disabled="!stSelected.length" @click="doDelStaging">🗑 删除</button>
+        <button class="btn-primary sync" :disabled="!stSelected.length || syncing" @click="doSync">
+          {{ syncing ? '同步中…' : `开始同步 (${stSelected.length})` }}
+        </button>
+      </div>
+      <div v-if="!stShown.length" class="muted center stempty">
+        采集箱为空 —— 用上面的插件去 Temu 采集后,待同步的商品会出现在这里。
+      </div>
+      <div v-else class="cgrid">
+        <div v-for="im in stShown" :key="im.id" class="ccard" :class="{ sel: stSelected.includes(im.id) }" @click="stToggle(im.id)">
+          <div class="cthumb">
+            <img :src="im.hires_url || im.url" loading="lazy" decoding="async" />
+            <span class="check">✓</span>
+          </div>
+          <div class="cmeta">
+            <div class="ctitle" :title="im.title">{{ im.title || '(无标题)' }}</div>
+            <div class="cinfo">
+              <span v-if="im.price" class="cprice">{{ im.price }}</span>
+              <span v-if="im.rating" class="crate">★ {{ im.rating }}</span>
+              <span class="cplat">{{ im.platform }}</span>
+            </div>
+            <a v-if="im.source_url" class="csrc" :href="im.source_url" target="_blank" @click.stop>查看来源 →</a>
+          </div>
+        </div>
+      </div>
+      <div v-if="stShown.length" class="muted sm tofind">
+        同步成功后去 <a class="lnk" @click="goSpaceFind">我的空间 / 找图</a> 查看(按平台分类)。
       </div>
     </div>
 
@@ -245,6 +343,146 @@ code.copy:hover {
 }
 .lnk:hover {
   text-decoration: underline;
+}
+/* 采集箱 */
+.stage {
+  padding: 16px 18px;
+  margin: 8px 0 10px;
+}
+.stoolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.stbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
+.chip {
+  border: 1px solid var(--line2);
+  background: var(--panel);
+  color: var(--mut);
+  border-radius: 14px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.chip:hover {
+  border-color: var(--brand);
+  color: var(--fg);
+}
+.chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.chip.del:hover {
+  border-color: var(--err);
+  color: var(--err);
+}
+.sync {
+  padding: 6px 16px;
+}
+.sync:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.stempty {
+  padding: 40px 0;
+}
+.cgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  margin-top: 4px;
+}
+.ccard {
+  position: relative;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--panel);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 230px;
+}
+.ccard.sel {
+  border-color: var(--brand);
+}
+.cthumb {
+  position: relative;
+  aspect-ratio: 1;
+  background: var(--bg2);
+}
+.cthumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ccard .check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #1a1208;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  opacity: 0;
+}
+.ccard.sel .check {
+  opacity: 1;
+}
+.cmeta {
+  padding: 8px 9px 10px;
+}
+.ctitle {
+  font-size: 12.5px;
+  line-height: 1.35;
+  height: 34px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.cinfo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+  font-size: 12px;
+}
+.cprice {
+  color: var(--brand);
+  font-weight: 800;
+}
+.crate {
+  color: #e6a23c;
+}
+.cplat {
+  margin-left: auto;
+  color: var(--mut);
+  font-size: 11px;
+}
+.csrc {
+  display: inline-block;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--mut);
+  text-decoration: none;
+}
+.csrc:hover {
+  color: var(--brand);
+}
+.tofind {
+  margin-top: 12px;
 }
 .manual-toggle {
   cursor: pointer;

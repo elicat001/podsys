@@ -8,10 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..auth import current_user
 from ..config import settings
 from ..db import get_db
 from ..models_db import Asset, User
-from ..auth import current_user
+from ..services import collect_tasks as collect_svc
 from ..services.quota import usage
 
 router = APIRouter(prefix="/api/space", tags=["space"])
@@ -61,6 +62,22 @@ def _own_asset(db: Session, asset_id: int, owner_id: int) -> Asset:
 @router.get("/quota")
 def get_quota(user: User = Depends(current_user), db: Session = Depends(get_db)):
     return usage(db, user.id)
+
+
+@router.get("/collected")
+def list_collected(platform: str | None = Query(default=None),
+                   user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """找图库:已同步的采集图,按平台分组(Temu/Amazon/…)。"""
+    return {"groups": collect_svc.list_collected(db, owner_id=user.id, platform=platform)}
+
+
+@router.delete("/collected/{image_id}")
+def delete_collected(image_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """从找图移除 → 对应素材进回收站(可恢复/可永久删释放空间)。"""
+    ok = collect_svc.delete_collected(db, owner_id=user.id, image_id=image_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="采集图不存在")
+    return {"id": image_id, "deleted": True}
 
 
 @router.get("/assets")
