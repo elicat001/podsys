@@ -70,7 +70,7 @@
     if (!el || el.nodeType !== 1) return "";
     const tag = el.tagName;
     if (tag === "IMG") return el.currentSrc || el.src || el.getAttribute("data-src") || srcsetTop(el.getAttribute("srcset")) || "";
-    if (tag === "VIDEO") return el.getAttribute("poster") || "";
+    if (tag === "VIDEO") return "";   // 默认一键采集不采集视频(评论图集等图片照常采)
     if (tag === "SOURCE") return srcsetTop(el.getAttribute("srcset")) || el.getAttribute("src") || "";
     return bgUrl(el);
   }

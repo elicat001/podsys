@@ -26,11 +26,24 @@ const platforms = computed(() => [...new Set(staging.value.map((s) => s.platform
 const allShownSelected = computed(
   () => stShown.value.length > 0 && stShown.value.every((s) => stSelected.value.includes(s.id)),
 )
-// 智能分类:按商品(source_url)把暂存图分组,一块=一个商品的多张图;无来源的各自成块。
+// 从来源链接提取「商品唯一标识」做归一:同一商品的不同跟踪链接(/dp/ASIN/ref=...?crid=..)归为一组,
+// 避免同款被拆成多块。Amazon 取 ASIN、Temu 取 goods_id,其余用 origin+去参去 ref 的 path。
+function productKey(url) {
+  if (!url) return ''
+  try {
+    const u = new URL(url)
+    const m = u.pathname.match(/\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Za-z0-9]{10})/)
+    if (m) return 'asin:' + m[1].toUpperCase()
+    const gid = u.searchParams.get('goods_id') || u.searchParams.get('goodsId')
+    if (gid) return 'goods:' + gid
+    return u.origin + u.pathname.replace(/\/ref=.*$/, '')
+  } catch (e) { return url }
+}
+// 智能分类:按商品归一标识把暂存图分组,一块=一个商品的多张图;无来源的各自成块。
 const stGroups = computed(() => {
   const map = new Map()
   for (const it of stShown.value) {
-    const key = it.source_url || `__img_${it.id}`
+    const key = it.source_url ? (productKey(it.source_url) || it.source_url) : `__img_${it.id}`
     let g = map.get(key)
     if (!g) { g = { key, source_url: it.source_url, platform: it.platform, title: '', price: '', rating: '', items: [] }; map.set(key, g) }
     g.items.push(it)
