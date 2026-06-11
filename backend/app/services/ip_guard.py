@@ -149,12 +149,23 @@ def _vision_identify(image: Image.Image, title: str | None = None) -> dict:
     buf = io.BytesIO(); im.save(buf, format="JPEG", quality=85)
     data_url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
     prompt = (
-        "You are an IP/copyright risk checker for print-on-demand products. Look at the image and decide if it "
-        "depicts any copyrighted CHARACTER, trademarked LOGO/BRAND, or famous ARTWORK/artist style. "
-        + (f'Listing title: "{title}". ' if title else "")
-        + 'Respond with JSON ONLY: {"ip":"<name or empty>","owner":"<rights holder or empty>",'
-        '"risk":"high|medium|low","reason":"<short reason in Chinese>"}. '
-        "If nothing recognizable/likely-original, set ip to empty and risk to low."
+        "You are a STRICT but PRECISE IP/copyright risk reviewer for a print-on-demand design. "
+        "The image is artwork a seller wants to print on products. Decide ONLY whether it contains a "
+        "SPECIFIC, RECOGNIZABLE protected entity you can NAME with high confidence:\n"
+        "- a named copyrighted CHARACTER (e.g. Pikachu, Mickey Mouse, Spider-Man, Hello Kitty);\n"
+        "- an exact trademarked LOGO / wordmark (e.g. Nike swoosh, Supreme box logo, LV monogram);\n"
+        "- a specific copyrighted ARTWORK / a particular artist's protected work;\n"
+        "- a real celebrity's likeness.\n"
+        "Be CONSERVATIVE. DO NOT flag: generic objects/animals/plants/food/shapes/patterns; plain product "
+        "photos (blank bottle, mug, shirt); generic 'cartoon style' / 'anime style'; or original-looking art "
+        "you cannot tie to a SPECIFIC named IP. 'Looks similar to' or 'reminds me of' is NOT enough — only "
+        "flag when you can NAME the exact protected IP.\n"
+        + (f'Seller listing title (extra hint): "{title}".\n' if title else "")
+        + "Risk: high = clearly a specific named protected character/logo/celebrity (direct or near-identical use); "
+        "medium = likely references a specific named IP but stylized/derivative (uncertain); "
+        "low = no specific recognizable protected IP (generic / original / just a product).\n"
+        'Respond JSON ONLY: {"ip":"<specific name, empty if none>","owner":"<rights holder, empty if none>",'
+        '"risk":"high|medium|low","reason":"<short reason in Chinese>"}. If risk is low, ip MUST be empty.'
     )
     from openai import OpenAI  # 惰性
     client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url or None,
