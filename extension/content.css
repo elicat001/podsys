@@ -41,8 +41,9 @@
 
 /* 单图悬停采集按钮 */
 #pod-hover-btn {
-  position: absolute; z-index: 2147483647; padding: 4px 9px; border: none; border-radius: 7px;
-  background: rgba(255, 93, 59, .95); color: #fff; font: 700 12px/1 -apple-system, "Microsoft YaHei", sans-serif;
-  cursor: pointer; box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
+  position: absolute; z-index: 2147483647; padding: 6px 12px; border: none; border-radius: 8px;
+  background: linear-gradient(135deg, #ff7a18, #ff5d3b); color: #fff; white-space: nowrap;
+  font: 700 13px/1 -apple-system, "Microsoft YaHei", sans-serif;
+  cursor: pointer; box-shadow: 0 3px 12px rgba(0, 0, 0, .5); transition: filter .12s ease;
 }
-#pod-hover-btn:hover { background: #ff5d3b; }
+#pod-hover-btn:hover { filter: brightness(1.08); }

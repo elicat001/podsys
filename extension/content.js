@@ -234,29 +234,59 @@
     window.addEventListener("resize", () => { if (panelEl.style.display !== "none") positionPanel(); });
   }
 
-  // ---- 单图悬停按钮 ----
+  // ---- 单图悬停按钮(稳:商品图常被覆盖层/链接挡住,要从容器里找图;移到按钮不消失)----
   function makeHoverBtn() {
     const b = document.createElement("button");
-    b.id = "pod-hover-btn"; b.textContent = "采集此商品"; b.style.display = "none";
+    b.id = "pod-hover-btn"; b.textContent = "📥 采集此商品"; b.style.display = "none";
     document.body.appendChild(b);
-    let curImg = null;
-    b.onclick = (e) => { e.stopPropagation(); if (curImg) collect([cardFromImg(curImg)]); };
-    let hideT = null;
-    document.addEventListener("mouseover", (e) => {
-      const img = e.target && e.target.tagName === "IMG" ? e.target : null;
-      if (img && isProductImg(img)) {
-        const r = img.getBoundingClientRect();
-        b.style.left = window.scrollX + r.right - 96 + "px";
-        b.style.top = window.scrollY + r.top + 6 + "px";
-        curImg = img;
-        b.style.display = "block";
-        if (hideT) { clearTimeout(hideT); hideT = null; }
+    let curImg = null, hideT = null;
+
+    const cancelHide = () => { if (hideT) { clearTimeout(hideT); hideT = null; } };
+    const scheduleHide = () => {
+      cancelHide();
+      hideT = setTimeout(() => { b.style.display = "none"; curImg = null; }, 700);
+    };
+
+    // 从被悬停元素反查商品图:它自己是图就用它;否则在它(及最多 3 层祖先)里找商品图,
+    // 以应对站点用透明覆盖层/<a> 盖住 <img> 导致 e.target 不是图的情况。
+    function findImg(el) {
+      if (!el || el.nodeType !== 1) return null;
+      if (el.tagName === "IMG") return isProductImg(el) ? el : null;
+      let node = el;
+      for (let i = 0; i < 3 && node && node.querySelectorAll; i++) {
+        for (const im of node.querySelectorAll("img")) if (isProductImg(im)) return im;
+        node = node.parentElement;
       }
+      return null;
+    }
+    function showFor(img) {
+      const r = img.getBoundingClientRect();
+      if (r.width < 70 || r.height < 70) return;   // 太小的(图标/小缩略)不弹
+      cancelHide();
+      curImg = img;
+      b.style.display = "block";
+      b.style.left = (window.scrollX + r.right - b.offsetWidth - 8) + "px";
+      b.style.top = (window.scrollY + r.top + 8) + "px";
+    }
+
+    b.addEventListener("mousedown", (e) => { e.stopPropagation(); e.preventDefault(); });
+    b.addEventListener("click", (e) => {
+      e.stopPropagation(); e.preventDefault();
+      if (curImg) collect([cardFromImg(curImg)]);
     });
-    document.addEventListener("mouseout", (e) => {
-      if (e.target === b) return;
-      hideT = setTimeout(() => { b.style.display = "none"; }, 400);
-    });
+    b.addEventListener("mouseenter", cancelHide);
+    b.addEventListener("mouseleave", scheduleHide);
+
+    // 单一 mouseover(捕获阶段,绕过站点 stopPropagation):
+    // 悬到商品图/其容器 → 显示;悬到按钮 → 保持;悬到别处 → 延时隐藏(留时间移到按钮)。
+    document.addEventListener("mouseover", (e) => {
+      if (e.target === b) { cancelHide(); return; }
+      const img = findImg(e.target);
+      if (img) showFor(img);
+      else if (curImg) scheduleHide();
+    }, true);
+    // 滚动时位置会失效,直接收起
+    window.addEventListener("scroll", () => { if (curImg) { b.style.display = "none"; curImg = null; } }, { passive: true });
   }
 
   function boot() {
