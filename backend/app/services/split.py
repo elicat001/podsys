@@ -4,7 +4,7 @@ from PIL import Image
 
 
 def split_panels(img: Image.Image, mode: str = "horizontal", panels: int = 3,
-                 rows: int = 2, cols: int = 2, gap_ratio: float = 0.0) -> list[Image.Image]:
+                 rows: int = 2, cols: int = 2) -> list[Image.Image]:
     """mode: horizontal(横向N联) | vertical(纵向N联) | grid(rows×cols)。"""
     img = img.convert("RGBA")
     w, h = img.size
