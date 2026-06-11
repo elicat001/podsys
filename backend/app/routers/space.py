@@ -4,10 +4,14 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import storage
 from ..auth import current_user
 from ..config import settings
 from ..db import get_db
@@ -19,13 +23,24 @@ router = APIRouter(prefix="/api/space", tags=["space"])
 
 
 def _delete_asset_file(asset: Asset) -> None:
-    """删除素材对应的磁盘文件以真正释放空间。asset.path 形如 /files/{job_id}/{name}。"""
+    """删除素材对应的磁盘文件以真正释放空间。
+    兼容两种 path:① /files/{job_id}/{name}(现行);② outputs 下的磁盘绝对路径(历史遗留,
+    ecd3ac3 之前 /api/assets 这么存)。两者都能定位文件 + 连带删缩略图缓存。"""
     p = asset.path or ""
-    if not p.startswith("/files/"):
+    fp: Path | None = None
+    if p.startswith("/files/"):
+        fp = settings.outputs_dir / p[len("/files/"):]
+    else:
+        try:
+            cand = Path(p)
+            # 只删 outputs 目录下的文件,绝不越界删别处
+            cand.resolve().relative_to(settings.outputs_dir.resolve())
+            fp = cand
+        except Exception:  # noqa: BLE001 — 非 outputs 下路径 → 不处理
+            fp = None
+    if fp is None:
         return
-    rel = p[len("/files/"):]  # {job_id}/{name}
     try:
-        fp = settings.outputs_dir / rel
         if fp.is_file():
             fp.unlink()
         # 连同该图的缩略图缓存一起删(.thumb_<w>_<name>.png),避免孤儿小文件残留
@@ -47,6 +62,7 @@ def _serialize(a: Asset) -> dict:
         "batch": a.batch,
         "tags": a.tags or [],
         "size_bytes": a.size_bytes,
+        "url": storage.url_from_path(a.path),   # 对外 /files/ 直链(供管理页缩略图/下载)
         "created_at": a.created_at.isoformat() if a.created_at else None,
     }
 
@@ -152,3 +168,36 @@ def purge_asset(asset_id: int, user: User = Depends(current_user), db: Session =
     _delete_asset_file(asset)  # 真删盘释放空间(不只是删 DB 行)
     db.delete(asset); db.commit()
     return {"id": asset_id, "purged": True}
+
+
+class IdsIn(BaseModel):
+    ids: list[int] = Field(default_factory=list, max_length=1000)
+
+
+@router.post("/assets/trash-batch")
+def trash_batch(body: IdsIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """批量移入回收站(管理页多选清理)。只动本人资产。"""
+    if not body.ids:
+        return {"trashed": 0}
+    rows = db.execute(
+        select(Asset).where(Asset.owner_id == user.id, Asset.id.in_(body.ids))
+    ).scalars().all()
+    for a in rows:
+        a.deleted = True
+    db.commit()
+    return {"trashed": len(rows)}
+
+
+@router.delete("/trash")
+def empty_trash(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """清空回收站:逐条删盘 + 删行,真正释放存储。"""
+    rows = db.execute(
+        select(Asset).where(Asset.owner_id == user.id, Asset.deleted == True)  # noqa: E712
+    ).scalars().all()
+    n = 0
+    for a in rows:
+        _delete_asset_file(a)
+        db.delete(a)
+        n += 1
+    db.commit()
+    return {"purged": n}

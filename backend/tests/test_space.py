@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 
-from app.db import Base, engine, SessionLocal
+from app.db import Base, SessionLocal, engine
 from app.main import app
 from app.models_db import Asset
 from app.routers import space as space_router
@@ -132,6 +132,7 @@ def test_purge_removes_disk_file_and_drops_quota(client, auth_headers, png):
 def test_thumbnail_endpoint_caches_and_purge_cleans(client, png):
     """/files?w 返回缓存缩略图(更小 + immutable 头 + 盘上缓存、二次不重建);删文件时连缩略图一起删。"""
     from PIL import Image
+
     from app import storage
     from app.config import settings
     from app.routers import space as space_router
@@ -215,6 +216,67 @@ def test_cannot_trash_others_asset(client, auth_headers, png):
     assert r.status_code == 404
     r = client.delete(f"/api/space/assets/{other_id}/purge", headers=auth_headers)
     assert r.status_code == 404
+
+
+def test_purge_legacy_disk_path_asset(client, auth_headers, png):
+    """历史遗留:Asset.path 存的是磁盘绝对路径(ecd3ac3 之前的存法),purge 也要能删盘。"""
+    from app import storage
+
+    aid = _add_asset(client, auth_headers, png=png, shape="rect", source="upload", seed=201)
+    db = SessionLocal()
+    try:
+        a = db.get(Asset, aid)
+        disk = storage.path_from_url(a.path)
+        assert disk is not None and disk.is_file()
+        a.path = str(disk)   # 模拟历史:存磁盘绝对路径
+        db.add(a); db.commit()
+    finally:
+        db.close()
+
+    r = client.delete(f"/api/space/assets/{aid}/purge", headers=auth_headers)
+    assert r.status_code == 200 and r.json()["purged"] is True
+    assert not disk.exists(), "磁盘路径的历史资产 purge 也应删盘"
+
+
+def test_assets_serialize_includes_url(client, auth_headers, png):
+    aid = _add_asset(client, auth_headers, png=png, shape="circle", source="upload", seed=210)
+    r = client.get("/api/space/assets", headers=auth_headers)
+    item = next(it for it in r.json()["items"] if it["id"] == aid)
+    assert item["url"] and item["url"].startswith("/files/")
+
+
+def test_trash_batch(client, auth_headers, png):
+    a1 = _add_asset(client, auth_headers, png=png, shape="circle", source="upload", seed=220)
+    a2 = _add_asset(client, auth_headers, png=png, shape="rect", source="upload", seed=221)
+    r = client.post("/api/space/assets/trash-batch", headers=auth_headers, json={"ids": [a1, a2]})
+    assert r.status_code == 200 and r.json()["trashed"] == 2
+    live = {it["id"] for it in client.get("/api/space/assets", headers=auth_headers).json()["items"]}
+    assert a1 not in live and a2 not in live
+    trash = {it["id"] for it in client.get("/api/space/trash", headers=auth_headers).json()["items"]}
+    assert a1 in trash and a2 in trash
+
+
+def test_empty_trash_releases_storage(client, auth_headers, png):
+    from app import storage
+
+    aid = _add_asset(client, auth_headers, png=png, shape="noise", source="upload", seed=230)
+    db = SessionLocal()
+    try:
+        disk = storage.path_from_url(db.get(Asset, aid).path)
+    finally:
+        db.close()
+    assert disk is not None and disk.is_file()
+
+    client.post(f"/api/space/assets/{aid}/trash", headers=auth_headers)
+    r = client.delete("/api/space/trash", headers=auth_headers)
+    assert r.status_code == 200 and r.json()["purged"] >= 1
+    assert not disk.exists(), "清空回收站应真删盘"
+    assert client.get("/api/space/trash", headers=auth_headers).json()["items"] == []
+
+
+def test_batch_endpoints_require_auth(client):
+    assert client.post("/api/space/assets/trash-batch", json={"ids": [1]}).status_code == 401
+    assert client.delete("/api/space/trash").status_code == 401
 
 
 def test_requires_auth(client):

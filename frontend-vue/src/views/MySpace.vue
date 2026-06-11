@@ -167,6 +167,56 @@ function openColDetail(im) { colDetail.value = im; showColDetail.value = true }
 function riskType(r) { return r === 'high' ? 'danger' : r === 'review' ? 'warning' : r === 'safe' ? 'success' : 'info' }
 function riskLabel(r) { return ({ high: '高风险', review: '待复核', safe: '安全' })[r] || '未知' }
 
+// ── 素材库管理(按来源/风险/名称筛选 + 批量移回收站 + 分页)──
+const LIB_PAGE = 24
+const SRC_LABEL = { upload: '上传', collected: '采集', generated: '生成' }
+const libAssets = ref([])
+const libTotal = ref(0)
+const libSel = ref([])
+const libSource = ref('')
+const libRisk = ref('')
+const libQuery = ref('')
+const libPage = ref(0)
+const libPages = computed(() => Math.max(1, Math.ceil(libTotal.value / LIB_PAGE)))
+const libAllSel = computed(() => libAssets.value.length > 0 && libAssets.value.every((a) => libSel.value.includes(a.id)))
+function srcLabel(s) { return SRC_LABEL[s] || s }
+async function loadLibrary() {
+  try {
+    const params = { limit: LIB_PAGE, offset: libPage.value * LIB_PAGE }
+    if (libSource.value) params.source = libSource.value
+    if (libRisk.value) params.risk = libRisk.value
+    if (libQuery.value.trim()) params.q = libQuery.value.trim()
+    const d = (await api.get('/space/assets', { params })).data
+    libAssets.value = d.items || []
+    libTotal.value = d.total || 0
+  } catch (e) { /* 静默 */ }
+  const ids = new Set(libAssets.value.map((a) => a.id))
+  libSel.value = libSel.value.filter((id) => ids.has(id))
+}
+function libReload() { libPage.value = 0; loadLibrary() }
+function libGoto(p) { libPage.value = p; loadLibrary() }
+function libToggle(id) { const i = libSel.value.indexOf(id); if (i >= 0) libSel.value.splice(i, 1); else libSel.value.push(id) }
+function libToggleAll() {
+  const ids = libAssets.value.map((a) => a.id)
+  if (libAllSel.value) libSel.value = libSel.value.filter((id) => !ids.includes(id))
+  else libSel.value = [...new Set([...libSel.value, ...ids])]
+}
+async function libTrashBatch() {
+  if (!libSel.value.length) return ElMessage.warning('请先勾选要清理的素材')
+  try { await ElMessageBox.confirm(`把选中的 ${libSel.value.length} 个素材移入回收站?(可恢复)`, '确认', { type: 'warning' }) }
+  catch (e) { return }
+  const r = (await api.post('/space/assets/trash-batch', { ids: libSel.value })).data
+  ElMessage.success(`已移入回收站 ${r.trashed} 个`)
+  libSel.value = []; loadLibrary(); loadQuota()
+}
+async function emptyTrash() {
+  if (!trash.value.length) return ElMessage.info('回收站已空')
+  try { await ElMessageBox.confirm('清空回收站会永久删除并释放存储,不可恢复,确定?', '确认清空', { type: 'warning' }) }
+  catch (e) { return }
+  const r = (await api.delete('/space/trash')).data
+  ElMessage.success(`已永久删除 ${r.purged} 个`); loadTrash(); loadQuota()
+}
+
 // ── 回收站 ────────────────────────────────────────────────
 const trash = ref([])
 async function loadTrash() {
@@ -256,6 +306,7 @@ async function delImg(im) {
 function onTab(name) {
   if (name === 'trash') loadTrash()
   else if (name === 'team') loadTeam()
+  else if (name === 'library') { loadLibrary(); loadQuota() }
   else { loadJobs(); loadQuota() }
 }
 
@@ -395,6 +446,65 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
         </div>
       </el-tab-pane>
 
+      <el-tab-pane label="素材库" name="library">
+        <!-- 用量分类 -->
+        <div v-if="quota" class="cat-usage">
+          <span class="cu-item"><b>素材</b> {{ quota.by_category?.material?.count || 0 }} 个 · {{ fmtBytes(quota.by_category?.material?.bytes) }}</span>
+          <span class="cu-item"><b>采集</b> {{ quota.by_category?.collected?.count || 0 }} 个 · {{ fmtBytes(quota.by_category?.collected?.bytes) }}</span>
+          <span class="cu-item"><b>回收站</b> {{ quota.trash?.count || 0 }} 个 · {{ fmtBytes(quota.trash?.bytes) }}</span>
+        </div>
+        <!-- 筛选 -->
+        <div class="toolbar lib-tools">
+          <el-select v-model="libSource" size="small" clearable placeholder="全部来源" style="width: 120px" @change="libReload">
+            <el-option value="upload" label="上传" />
+            <el-option value="collected" label="采集" />
+            <el-option value="generated" label="生成" />
+          </el-select>
+          <el-select v-model="libRisk" size="small" clearable placeholder="全部风险" style="width: 120px" @change="libReload">
+            <el-option value="safe" label="安全" />
+            <el-option value="review" label="待复核" />
+            <el-option value="high" label="高风险" />
+          </el-select>
+          <el-input v-model="libQuery" size="small" clearable placeholder="按名称搜索" style="width: 180px"
+                    @keyup.enter="libReload" @clear="libReload" />
+          <el-button size="small" @click="libReload">🔍 查询</el-button>
+          <span style="flex: 1" />
+          <el-button size="small" @click="loadLibrary">🔄 刷新</el-button>
+        </div>
+        <!-- 批量条 -->
+        <div v-if="libAssets.length" class="libbar">
+          <button class="fchip2" @click="libToggleAll">{{ libAllSel ? '取消全选' : '全选本页' }}</button>
+          <span class="muted small">已选 <b>{{ libSel.length }}</b> · 共 {{ libTotal }} 个</span>
+          <span style="flex: 1" />
+          <button class="fchip2 danger" :disabled="!libSel.length" @click="libTrashBatch">🗑 移入回收站 ({{ libSel.length }})</button>
+        </div>
+
+        <div v-if="!libAssets.length" class="empty muted">没有素材 —— 去作图/采集产出后会出现在这里</div>
+        <div v-else class="lib-grid">
+          <div v-for="a in libAssets" :key="a.id" class="lib-card" :class="{ sel: libSel.includes(a.id) }" @click="libToggle(a.id)">
+            <div class="lib-thumb">
+              <img v-if="a.url" :src="a.url + '?w=144'" class="checker" loading="lazy" decoding="async" />
+              <div v-else class="ph">—</div>
+              <span class="check">✓</span>
+            </div>
+            <div class="lib-meta">
+              <div class="lib-name" :title="a.name">{{ a.name }}</div>
+              <div class="lib-tags">
+                <span class="tag-src">{{ srcLabel(a.source) }}</span>
+                <span v-if="a.risk === 'high' || a.risk === 'review'" class="tag-risk" :class="a.risk">{{ a.risk === 'high' ? '高危' : '待核' }}</span>
+                <span class="muted">{{ fmtBytes(a.size_bytes) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- 分页 -->
+        <div v-if="libPages > 1" class="lib-pager">
+          <el-button size="small" :disabled="libPage === 0" @click="libGoto(libPage - 1)">上一页</el-button>
+          <span class="muted small">{{ libPage + 1 }} / {{ libPages }}</span>
+          <el-button size="small" :disabled="libPage >= libPages - 1" @click="libGoto(libPage + 1)">下一页</el-button>
+        </div>
+      </el-tab-pane>
+
       <el-tab-pane label="团队资源" name="team">
         <div class="toolbar">
           <strong>套图模板</strong>
@@ -465,7 +575,11 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
       </el-tab-pane>
 
       <el-tab-pane label="回收站" name="trash">
-        <p class="muted small" style="margin: 4px 0 12px">永久删除会真正释放存储空间。</p>
+        <div class="toolbar" style="margin-bottom: 12px">
+          <span class="muted small">永久删除会真正释放存储空间。</span>
+          <span style="flex: 1" />
+          <el-button size="small" type="danger" plain :disabled="!trash.length" @click="emptyTrash">🗑 清空回收站 ({{ trash.length }})</el-button>
+        </div>
         <el-table :data="trash" empty-text="回收站为空">
           <el-table-column prop="id" label="ID" width="70" />
           <el-table-column prop="name" label="名称" />
@@ -757,6 +871,132 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
   .col-detail {
     grid-template-columns: 1fr;
   }
+}
+/* 素材库管理 */
+.cat-usage {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 4px 0 14px;
+}
+.cu-item {
+  background: var(--panel2);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  color: var(--mut);
+}
+.cu-item b {
+  color: var(--fg);
+  margin-right: 4px;
+}
+.lib-tools {
+  margin-bottom: 10px;
+}
+.libbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 12px;
+  flex-wrap: wrap;
+}
+.lib-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+.lib-card {
+  position: relative;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--panel);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 210px;
+}
+.lib-card.sel {
+  border-color: var(--brand);
+}
+.lib-thumb {
+  position: relative;
+  aspect-ratio: 1;
+  background: var(--bg2);
+}
+.lib-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.lib-thumb .ph {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--mut);
+}
+.lib-card .check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #1a1208;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  opacity: 0;
+}
+.lib-card.sel .check {
+  opacity: 1;
+}
+.lib-meta {
+  padding: 7px 9px 9px;
+}
+.lib-name {
+  font-size: 12px;
+  line-height: 1.35;
+  height: 32px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.lib-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.tag-src {
+  background: var(--panel2);
+  border-radius: 5px;
+  padding: 1px 6px;
+  color: var(--mut);
+}
+.tag-risk {
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-weight: 700;
+}
+.tag-risk.high {
+  background: rgba(255, 93, 108, 0.18);
+  color: #ff5d6c;
+}
+.tag-risk.review {
+  background: rgba(230, 162, 60, 0.18);
+  color: #e6a23c;
+}
+.lib-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 18px 0;
 }
 .empty {
   padding: 48px 0;
