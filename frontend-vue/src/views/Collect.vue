@@ -8,6 +8,14 @@ const source = ref('temu')
 const urls = ref('')
 const detail = ref(null)
 const selected = ref([])
+const showManual = ref(false)
+
+function copyText(t) {
+  navigator.clipboard?.writeText(t).then(
+    () => ElMessage.success('已复制'),
+    () => ElMessage.warning('复制失败,请手动复制'),
+  )
+}
 
 async function loadTasks() {
   try { tasks.value = (await api.get('/collect-tasks')).data || [] } catch (e) {}
@@ -37,8 +45,54 @@ onMounted(loadTasks)
 <template>
   <div>
     <h2>采集</h2>
-    <p class="muted">粘贴商品/图片 URL,自动检测平台 + 高清升级,批量选入素材库。</p>
-    <div class="cols">
+    <p class="muted">装一次浏览器插件,去 Temu 商品页一键采集高清图,直接进素材库并自动侵权查重。</p>
+
+    <!-- 插件采集(推荐):像竞品一样,装插件 → 页面内一键采集 -->
+    <div class="panel plugin">
+      <div class="phead">
+        <div>
+          <div class="ptitle">🦏 插件采集 <span class="badge">推荐</span></div>
+          <div class="muted sm">在 Temu 页面右下角浮出采集面板,整页/单图一键采,带你的登录态、绕过反爬。</div>
+        </div>
+        <a class="btn-primary dl" href="/api/extension/download" download>⬇ 下载采集插件</a>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <span class="num">1</span>
+          <div>
+            <b>下载并解压插件</b>
+            <div class="muted sm">点右上「下载采集插件」得到 zip,解压出 <code>pod-collector</code> 文件夹。</div>
+          </div>
+        </div>
+        <div class="step">
+          <span class="num">2</span>
+          <div>
+            <b>加载到浏览器(一次)</b>
+            <div class="muted sm">
+              复制
+              <code class="copy" @click="copyText('chrome://extensions')">chrome://extensions</code>
+              到地址栏打开 → 开「开发者模式」→「加载已解压的扩展程序」→ 选上一步的 <code>pod-collector</code> 文件夹。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <span class="num">3</span>
+          <div>
+            <b>登录后去 Temu 采集</b>
+            <div class="muted sm">本站登录一次(插件读取登录态)→ 打开 Temu 商品页 → 点「全部采集本页」或悬停图点「采集此图」。</div>
+          </div>
+        </div>
+      </div>
+      <div class="muted sm tip">
+        采集的图进「<router-link to="/app/space" class="lnk">我的空间 / 素材库</router-link>(来源=采集)」,并自动做侵权查重。
+        ⚠ 仅用于已获授权 / 自有内容场景。
+      </div>
+    </div>
+
+    <div class="manual-toggle muted sm" @click="showManual = !showManual">
+      {{ showManual ? '▾' : '▸' }} 没装插件?也可手动粘贴 URL 采集(备用)
+    </div>
+    <div v-show="showManual" class="cols">
       <div class="panel side">
         <h4>新建采集</h4>
         <el-select v-model="source" style="width: 100%; margin-bottom: 10px">
@@ -85,6 +139,101 @@ onMounted(loadTasks)
 </template>
 
 <style scoped>
+.plugin {
+  padding: 18px 20px;
+  margin: 14px 0 10px;
+}
+.phead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.ptitle {
+  font-size: 16px;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+.badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: #1a1208;
+  background: var(--brand);
+  border-radius: 6px;
+  padding: 1px 7px;
+  margin-left: 4px;
+  vertical-align: 2px;
+}
+.dl {
+  white-space: nowrap;
+  text-decoration: none;
+}
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin: 16px 0 12px;
+}
+.step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.step .num {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #1a1208;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+}
+.step b {
+  display: block;
+  margin-bottom: 2px;
+}
+code {
+  background: var(--panel2);
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-size: 12px;
+}
+code.copy {
+  cursor: pointer;
+  border: 1px dashed var(--line);
+}
+code.copy:hover {
+  border-color: var(--brand);
+}
+.tip {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.lnk {
+  color: var(--brand);
+  text-decoration: none;
+}
+.lnk:hover {
+  text-decoration: underline;
+}
+.manual-toggle {
+  cursor: pointer;
+  user-select: none;
+  margin: 6px 0;
+  display: inline-block;
+}
+.manual-toggle:hover {
+  color: var(--text);
+}
+@media (max-width: 720px) {
+  .steps {
+    grid-template-columns: 1fr;
+  }
+}
 .cols {
   display: grid;
   grid-template-columns: 300px 1fr;
