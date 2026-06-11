@@ -26,6 +26,26 @@ const platforms = computed(() => [...new Set(staging.value.map((s) => s.platform
 const allShownSelected = computed(
   () => stShown.value.length > 0 && stShown.value.every((s) => stSelected.value.includes(s.id)),
 )
+// 智能分类:按商品(source_url)把暂存图分组,一块=一个商品的多张图;无来源的各自成块。
+const stGroups = computed(() => {
+  const map = new Map()
+  for (const it of stShown.value) {
+    const key = it.source_url || `__img_${it.id}`
+    let g = map.get(key)
+    if (!g) { g = { key, source_url: it.source_url, platform: it.platform, title: '', price: '', rating: '', items: [] }; map.set(key, g) }
+    g.items.push(it)
+    if (!g.title && it.title) g.title = it.title
+    if (!g.price && it.price) g.price = it.price
+    if (!g.rating && it.rating) g.rating = it.rating
+  }
+  return [...map.values()]
+})
+function groupAllSel(g) { return g.items.length > 0 && g.items.every((it) => stSelected.value.includes(it.id)) }
+function toggleGroup(g) {
+  const ids = g.items.map((it) => it.id)
+  if (groupAllSel(g)) stSelected.value = stSelected.value.filter((id) => !ids.includes(id))
+  else stSelected.value = [...new Set([...stSelected.value, ...ids])]
+}
 
 async function loadStaging() {
   try { staging.value = await listStaging() } catch (e) { /* 静默 */ }
@@ -191,20 +211,24 @@ onMounted(() => { loadTasks(); loadStaging() })
       <div v-if="!stShown.length" class="muted center stempty">
         采集箱为空 —— 用上面的插件去 Temu 采集后,待同步的商品会出现在这里。
       </div>
-      <div v-else class="cgrid">
-        <div v-for="im in stShown" :key="im.id" class="ccard" :class="{ sel: stSelected.includes(im.id) }" @click="stToggle(im.id)">
-          <div class="cthumb">
-            <img :src="im.hires_url || im.url" loading="lazy" decoding="async" />
-            <span class="check">✓</span>
+      <!-- 智能分类:一块 = 一个商品(可能含多张图),像套图模板 -->
+      <div v-else class="pgroups">
+        <div v-for="g in stGroups" :key="g.key" class="pgroup">
+          <div class="pg-head">
+            <button class="pg-check" :class="{ on: groupAllSel(g) }" @click="toggleGroup(g)"
+                    :title="groupAllSel(g) ? '取消选择本组' : '选择本组全部'">{{ groupAllSel(g) ? '☑' : '☐' }}</button>
+            <span class="pg-title" :title="g.title">{{ g.title || '(无标题)' }}</span>
+            <span v-if="g.price" class="cprice">{{ g.price }}</span>
+            <span v-if="g.rating" class="crate">★ {{ g.rating }}</span>
+            <span class="cplat">{{ g.platform }}</span>
+            <span class="pg-n muted">{{ g.items.length }} 图</span>
+            <a v-if="g.source_url" class="csrc" :href="g.source_url" target="_blank" @click.stop>查看来源 →</a>
           </div>
-          <div class="cmeta">
-            <div class="ctitle" :title="im.title">{{ im.title || '(无标题)' }}</div>
-            <div class="cinfo">
-              <span v-if="im.price" class="cprice">{{ im.price }}</span>
-              <span v-if="im.rating" class="crate">★ {{ im.rating }}</span>
-              <span class="cplat">{{ im.platform }}</span>
+          <div class="pg-imgs">
+            <div v-for="im in g.items" :key="im.id" class="pimg" :class="{ sel: stSelected.includes(im.id) }" @click="stToggle(im.id)">
+              <img :src="im.hires_url || im.url" loading="lazy" decoding="async" />
+              <span class="check">✓</span>
             </div>
-            <a v-if="im.source_url" class="csrc" :href="im.source_url" target="_blank" @click.stop>查看来源 →</a>
           </div>
         </div>
       </div>
@@ -393,71 +417,91 @@ code.copy:hover {
 .stempty {
   padding: 40px 0;
 }
-.cgrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+/* 智能分类:一块=一个商品 */
+.pgroups {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   margin-top: 4px;
 }
-.ccard {
-  position: relative;
-  border: 2px solid var(--line);
+.pgroup {
+  border: 1px solid var(--line);
   border-radius: 10px;
-  overflow: hidden;
-  cursor: pointer;
   background: var(--panel);
-  content-visibility: auto;
-  contain-intrinsic-size: auto 230px;
+  padding: 10px 12px;
 }
-.ccard.sel {
-  border-color: var(--brand);
+.pg-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  flex-wrap: wrap;
 }
-.cthumb {
+.pg-check {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+  padding: 0;
+  color: var(--mut);
+}
+.pg-check.on {
+  color: var(--brand);
+}
+.pg-title {
+  font-weight: 600;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pg-n {
+  font-size: 11px;
+}
+.pg-imgs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+.pimg {
   position: relative;
   aspect-ratio: 1;
+  border: 2px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
   background: var(--bg2);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }
-.cthumb img {
+.pimg.sel {
+  border-color: var(--brand);
+}
+.pimg img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
-.ccard .check {
+.pimg .check {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 22px;
-  height: 22px;
+  top: 5px;
+  right: 5px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background: var(--brand);
   color: #1a1208;
   display: grid;
   place-items: center;
   font-weight: 800;
+  font-size: 12px;
   opacity: 0;
 }
-.ccard.sel .check {
+.pimg.sel .check {
   opacity: 1;
-}
-.cmeta {
-  padding: 8px 9px 10px;
-}
-.ctitle {
-  font-size: 12.5px;
-  line-height: 1.35;
-  height: 34px;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-.cinfo {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 5px;
-  font-size: 12px;
 }
 .cprice {
   color: var(--brand);
@@ -472,8 +516,6 @@ code.copy:hover {
   font-size: 11px;
 }
 .csrc {
-  display: inline-block;
-  margin-top: 5px;
   font-size: 11px;
   color: var(--mut);
   text-decoration: none;

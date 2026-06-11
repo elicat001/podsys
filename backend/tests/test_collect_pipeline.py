@@ -74,6 +74,35 @@ def test_full_pipeline(client, auth_headers, monkeypatch):
     assert client.get("/api/collect-tasks/staging", headers=auth_headers).json()["items"] == []
 
 
+def test_looks_like_junk_unit():
+    # 真商品图 → 不是 junk
+    assert cs._looks_like_junk("https://m.media-amazon.com/images/I/71abc.jpg", "amazon") is False
+    assert cs._looks_like_junk("https://img.kwcdn.com/p/abc.jpg", "temu") is False
+    # 亚马逊非 /images/I/(导航雪碧图/UI) → junk
+    assert cs._looks_like_junk("https://m.media-amazon.com/images/G/01/nav_sprite.png", "amazon") is True
+    assert cs._looks_like_junk("https://m.media-amazon.com/images/S/xx.png", "amazon") is True
+    # 通用关键词 logo/icon/sprite/favicon → junk
+    assert cs._looks_like_junk("https://cdn.x.com/assets/logo.svg", "unknown") is True
+    assert cs._looks_like_junk("https://cdn.x.com/icons/cart.png", "unknown") is True
+    assert cs._looks_like_junk("https://cdn.x.com/sprite-nav.png", "unknown") is True
+    assert cs._looks_like_junk("", "amazon") is True
+
+
+def test_ingest_filters_junk(client, auth_headers):
+    r = client.post("/api/collect-tasks/ingest", headers=auth_headers, json={
+        "source": "plugin", "platform": "amazon", "items": [
+            {"url": "https://m.media-amazon.com/images/I/71real.jpg", "title": "Real Cup"},
+            {"url": "https://m.media-amazon.com/images/G/01/nav_sprite._CB.png", "title": "sprite"},
+            {"url": "https://m.media-amazon.com/images/S/abcd.png", "title": "ui"},
+            {"url": "https://cdn.x.com/assets/brand-logo.svg", "title": "logo", "platform": "unknown"},
+        ],
+    })
+    assert r.status_code == 200
+    assert r.json()["count"] == 1  # 只留真商品图,商标/雪碧图/UI 全过滤
+    items = client.get("/api/collect-tasks/staging", headers=auth_headers).json()["items"]
+    assert len(items) == 1 and items[0]["title"] == "Real Cup"
+
+
 def test_ingest_requires_auth(client):
     r = client.post("/api/collect-tasks/ingest", json={"items": [{"url": "https://x/a.jpg"}]})
     assert r.status_code in (401, 403)

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import io
+import re
 import ssl
 import urllib.error
 import urllib.request
@@ -144,6 +145,31 @@ def image_to_dict(img: CollectedImage) -> dict:
     }
 
 
+# 「非商品图」特征(品牌商标 / 导航雪碧图 / UI 图标 / 占位图等):URL 里常见这些词,一律不采。
+_JUNK_URL_RE = re.compile(
+    r"sprite|nav[-_]?sprite|/logos?[-_/.]|[-_/]logo[-_/.]|favicon|/icons?[-_/.]|"
+    r"[-_/]icon[-_/.]|/badges?[-_/.]|placeholder|loading|grey-?pixel|transparent[-_]?pixel|"
+    r"/captcha|x-locale|prime[-_]?(?:logo|badge)|/g/01/|smile\.amazon",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_junk(url: str, platform: str) -> bool:
+    """是否「非商品图」(品牌商标/导航雪碧图/UI 图标等)→ 采集时过滤。
+
+    - 通用:URL 含 sprite/logo/icon/favicon/placeholder 等关键词;
+    - 亚马逊:商品主图在 `/images/I/`,而 `/images/G/`、`/images/S/` 等是站点 UI/品牌/导航资源。
+    """
+    u = (url or "").lower()
+    if not u:
+        return True
+    if _JUNK_URL_RE.search(u):
+        return True
+    if platform == "amazon" and "/images/" in u and "/images/i/" not in u:
+        return True
+    return False
+
+
 # ── 采集→选择→同步 ──────────────────────────────────────────
 
 def ingest(
@@ -164,6 +190,8 @@ def ingest(
         if not url:
             continue
         plat = (it.get("platform") or platform_hint or detect_platform(url)) or "unknown"
+        if _looks_like_junk(url, plat):
+            continue  # 品牌商标/导航雪碧图/UI 图标 → 不采
         hires = (it.get("hires_url") or "").strip() or upgrade_to_hires(url, plat)
         db.add(
             CollectedImage(
