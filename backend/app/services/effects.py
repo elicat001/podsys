@@ -205,13 +205,6 @@ def procedural_pattern(prompt: str, size: int = 1024) -> Image.Image:
     return img
 
 
-# ---------- 元素融合:原图 + 程序化纹理 真实混合 ----------
-def fuse(img: Image.Image, prompt: str) -> Image.Image:
-    rgb = img.convert("RGB")
-    tex = procedural_pattern(prompt, max(rgb.size)).resize(rgb.size, Image.LANCZOS)
-    return ImageChops.overlay(rgb, tex)
-
-
 # ---------- 标题:OCR 文字 + 关键词 + 调色板派生(纯规则,无云、无模型) ----------
 # 本地电商标题引擎。原则:**所有出现在标题/搜索词里的信息都要"有据可依"**——
 #   主体来自 OCR 识别的设计文字 / 用户关键词;受众·场合从这些词里**推断**(dad→男士/父亲节);

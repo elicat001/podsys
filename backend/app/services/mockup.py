@@ -4,7 +4,6 @@
 - 服装配色变体:同一印花可套到 白/黑/灰/藏青/沙/红 等多色产品上(`GARMENT_COLORS`)。
 - 真实感融合:用 soft-light 把产品的明暗/褶皱叠加到印花上(印花跟着布料起伏),
   再加一层柔和接触阴影,不再是平铺贴纸。
-- 批量套图:`render_variants` 一次出「多模板 × 多配色」一整组,供上架。
 
 仍为纯 Pillow、无外部素材;生产环境可把 `_draw_body` 换成真实产品照 + 标定印区。
 """
@@ -216,13 +215,3 @@ def render_batch(print_img: Image.Image, template_ids: list[str]) -> dict[str, I
     return {tid: render_mockup(print_img, tid) for tid in template_ids}
 
 
-def render_variants(print_img: Image.Image,
-                    combos: list[tuple[str, str | None]]) -> list[tuple[str, str, Image.Image]]:
-    """批量套图:combos=[(template_id, color), ...] → [(template_id, color, image), ...]。"""
-    res = []
-    for tid, color in combos:
-        t = BUILTIN.get(tid) or BUILTIN["tshirt"]
-        c = color or t.default_color
-        img, _engine = render_product(print_img, tid, c)
-        res.append((t.id, c, img))
-    return res

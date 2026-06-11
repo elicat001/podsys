@@ -1,4 +1,4 @@
-"""印花设计工具(E1):图裂变 / 元素融合 / 风格转绘 / 梗图印花。
+"""印花设计工具(E1):图裂变 / 风格转绘 / 梗图印花。
 
 全部走 gpt-image edit(`app/ai/openai_image.py` 的 `OpenAIImageClient.edit`)。
 本模块只负责「prompt 拼装 + gpt 调用」,router 负责鉴权/扣点/退点/存盘。
@@ -44,16 +44,6 @@ def variants_prompt(extra: str = "") -> str:
     )
     extra = (extra or "").strip()
     return f"{base} {extra}".strip() if extra else base
-
-
-def fuse_prompt(prompt: str) -> str:
-    """元素融合 prompt:把输入图与给定 prompt 融合出新爆款印花。"""
-    prompt = (prompt or "").strip()
-    return (
-        "Fuse the elements of this image with the following idea to create a new "
-        f"bestseller POD print design: {prompt}. Blend them naturally into a single "
-        "cohesive, commercially appealing print."
-    )
 
 
 def restyle_prompt(style: str) -> str:
@@ -106,13 +96,6 @@ def make_variants(image: Image.Image, n: int, prompt: str = "", prefer_local: bo
             return list(ex.map(lambda _: client.edit(src, p), range(n)))
     # 本地(快速 / 无 key):主体感知离线裂变(只给印花换色,人/背景不变);定位不可用时回退整图改色
     return effects.print_colorway_variants(image, n)
-
-
-def make_fuse(image: Image.Image, prompt: str) -> Image.Image:
-    """元素融合。"""
-    if _has_key():
-        return _client().edit(image, fuse_prompt(prompt))
-    return effects.fuse(image, prompt)
 
 
 def make_restyle(image: Image.Image, style: str) -> Image.Image:

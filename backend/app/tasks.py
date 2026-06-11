@@ -164,16 +164,6 @@ def _work_variants(job_id: str, job: Job, db: Session) -> dict:
     return {"images": urls}
 
 
-def _work_fuse(job_id: str, job: Job, db: Session) -> dict:
-    from .services import design_tools
-    out = design_tools.make_fuse(_load_input(job_id), job.params["prompt"])
-    out.save(storage.output_path(job_id, "fused.png"), format="PNG")
-    url = storage.output_url(job_id, "fused.png")
-    if job.owner_id is not None:
-        save_as_asset(db, job.owner_id, out, "元素融合", url, source="generated")
-    return {"image_url": url}
-
-
 def _work_restyle(job_id: str, job: Job, db: Session) -> dict:
     from .services import design_tools
     style = job.params["style"]
@@ -219,66 +209,12 @@ def _work_gptedit(job_id: str, job: Job, db: Session) -> dict:
     return {"image_url": url}
 
 
-def _work_tryon(job_id: str, job: Job, db: Session) -> dict:
-    from .services import studio_tools
-    out = studio_tools.model_tryon(_load_input(job_id), size=job.params.get("size", "auto"))
-    out.save(storage.output_path(job_id, "tryon.png"), format="PNG")
-    return {"image_url": storage.output_url(job_id, "tryon.png")}
-
-
-def _work_pet(job_id: str, job: Job, db: Session) -> dict:
-    from .services import studio_tools
-    p = job.params
-    out = studio_tools.pet_costume(_load_input(job_id), costume=p.get("costume", "royal european"),
-                                   size=p.get("size", "auto"))
-    out.save(storage.output_path(job_id, "pet.png"), format="PNG")
-    return {"image_url": storage.output_url(job_id, "pet.png")}
-
-
-def _work_group(job_id: str, job: Job, db: Session) -> dict:
-    from .services import studio_tools
-    p = job.params
-    out = studio_tools.group_photo(_load_input(job_id), p["prompt"], size=p.get("size", "auto"))
-    out.save(storage.output_path(job_id, "group.png"), format="PNG")
-    return {"image_url": storage.output_url(job_id, "group.png")}
-
-
 def _work_vectorize(job_id: str, job: Job, db: Session) -> dict:
     from .services.vectorize import to_svg
     colors = int(job.params.get("colors", 8))
     svg, rect_count = to_svg(_load_input(job_id), colors=colors, preset=job.params.get("preset", "auto"))
     storage.output_path(job_id, "vector.svg").write_text(svg, encoding="utf-8")
     return {"svg_url": storage.output_url(job_id, "vector.svg"), "rect_count": rect_count, "colors": colors}
-
-
-# ── 本地产出类工具(原同步,现也丢后台,见各 router)──────────────────────────
-def _work_seamless(job_id: str, job: Job, db: Session) -> dict:
-    from .services import seamless as seamless_svc
-    out = seamless_svc.seamless_pattern(_load_input(job_id), repeat=int(job.params.get("repeat", 2)))
-    out.save(storage.output_path(job_id, "seamless.png"), format="PNG")
-    url = storage.output_url(job_id, "seamless.png")
-    if job.owner_id is not None:
-        save_as_asset(db, job.owner_id, out, "四方连续图", url, source="generated")
-    return {"image_url": url}
-
-
-def _work_compress(job_id: str, job: Job, db: Session) -> dict:
-    from .services.image_tools import compress_image
-    raw = storage.upload_path(job_id).read_bytes()
-    src = Image.open(io.BytesIO(raw)); src.load()
-    p = job.params
-    out_img, encoded, info = compress_image(
-        src, target_w=int(p.get("target_w", 0)), target_h=int(p.get("target_h", 0)),
-        quality=int(p.get("quality", 85)), fmt=p.get("fmt", "jpeg"))
-    ext = "jpg" if info["pil_format"] == "JPEG" else info["format"]
-    name = f"compressed.{ext}"
-    storage.output_path(job_id, name).write_bytes(encoded)  # 落编码后字节,与 output_bytes 一致
-    url = storage.output_url(job_id, name)
-    if job.owner_id is not None:
-        save_as_asset(db, job.owner_id, out_img, "裁剪压缩", url, source="generated",
-                      size_bytes=info["output_bytes"])
-    return {"image_url": url, "original_bytes": len(raw), "output_bytes": info["output_bytes"],
-            "width": info["width"], "height": info["height"], "format": info["format"]}
 
 
 def _work_mockup(job_id: str, job: Job, db: Session) -> dict:
@@ -293,22 +229,6 @@ def _work_mockup(job_id: str, job: Job, db: Session) -> dict:
     if job.owner_id is not None:
         save_as_asset(db, job.owner_id, img, f"套图 {template}", url, source="generated")
     return {"image_url": url, "template": template, "color": color, "engine": engine}
-
-
-def _work_mockup_batch(job_id: str, job: Job, db: Session) -> dict:
-    from .services import mockup
-    combos = [(t, c) for t, c in job.params.get("combos", [])]  # [[tid,color],...] → [(tid,color)]
-    rendered = mockup.render_variants(_load_input(job_id), combos)
-    items, urls = [], []
-    for tid, color, im in rendered:
-        name = f"mockup_{tid}_{color}.png"
-        im.save(storage.output_path(job_id, name), format="PNG")
-        url = storage.output_url(job_id, name)
-        if job.owner_id is not None:
-            save_as_asset(db, job.owner_id, im, f"套图 {tid}/{color}", url, source="generated")
-        items.append({"template": tid, "color": color, "url": url})
-        urls.append(url)
-    return {"items": items, "images": urls, "count": len(items)}
 
 
 def _work_mockup_replace(job_id: str, job: Job, db: Session) -> dict:
@@ -461,21 +381,12 @@ TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
     "generate": (_work_generate, "generate", None),
     "edit": (_work_edit, "edit", None),
     "variants": (_work_variants, "edit", "n"),
-    "fuse": (_work_fuse, "edit", None),
     "restyle": (_work_restyle, "edit", None),
     "meme": (_work_meme, "edit", None),
     "upscale": (_work_upscale, "process", None),
-    "expand": (_work_gptedit, "edit", None),
     "dewatermark": (_work_gptedit, "edit", None),
-    "tryon": (_work_tryon, "edit", None),
-    "pet-costume": (_work_pet, "edit", None),
-    "group-photo": (_work_group, "edit", None),
     "vectorize": (_work_vectorize, "process", None),
-    # 本地产出类(原同步,现丢后台)
-    "seamless": (_work_seamless, "process", None),
-    "compress": (_work_compress, "process", None),
     "mockup": (_work_mockup, "asset", None),
-    "mockup-batch": (_work_mockup_batch, "asset", "n"),
     "mockup-replace": (_work_mockup_replace, "asset", "n"),
     "production": (_work_production, "asset", None),
     "matting": (_work_matting, "process", None),

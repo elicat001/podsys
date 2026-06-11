@@ -29,15 +29,6 @@ def test_variants_requires_auth(dt_client, png):
     assert resp.status_code == 401
 
 
-def test_fuse_requires_auth(dt_client, png):
-    resp = dt_client.post(
-        "/api/design-tools/fuse",
-        files={"file": ("a.png", png(), "image/png")},
-        data={"prompt": "cat astronaut"},
-    )
-    assert resp.status_code == 401
-
-
 def test_restyle_requires_auth(dt_client, png):
     resp = dt_client.post(
         "/api/design-tools/restyle",
@@ -71,15 +62,6 @@ def test_variants_no_key_offline_real(client, dt_client, auth_headers, png, tool
         files={"file": ("a.png", png(), "image/png")}, data={"n": "3"})
     assert len(tool_result(auth_headers, resp)["images"]) == 3  # 后台本地换色 → 轮询 3 张
     assert _balance(client, auth_headers) == before - 3 * 4
-
-
-def test_fuse_no_key_offline_real(client, dt_client, auth_headers, png):
-    before = _balance(client, auth_headers)
-    resp = dt_client.post("/api/design-tools/fuse", headers=auth_headers,
-        files={"file": ("a.png", png(), "image/png")}, data={"prompt": "galaxy cat"})
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["image_url"]
-    assert _balance(client, auth_headers) == before - 4
 
 
 def test_restyle_no_key_offline_real(client, dt_client, auth_headers, png):
@@ -125,7 +107,6 @@ def test_variants_too_many_rejected(client, dt_client, auth_headers, png):
 def test_prompt_builders():
     assert "Temu 2D flat" in design_tools_router.design_tools.restyle_prompt("Temu 2D flat")
     assert "Monday" in design_tools_router.design_tools.meme_prompt("Monday")
-    assert "galaxy" in design_tools_router.design_tools.fuse_prompt("galaxy")
     assert design_tools_router.design_tools.variants_prompt("")  # 非空
 
 

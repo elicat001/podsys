@@ -20,25 +20,6 @@ def test_seamless_service_dimensions():
     assert pat.size == (400, 320)  # 2x2 镜像块 再 2x2 平铺
 
 
-def test_seamless_endpoint_charges_and_returns(client, auth_headers, tool_result):
-    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
-    r = client.post("/api/design-tools/seamless", headers=auth_headers,
-                    data={"repeat": 2}, files={"file": ("x.png", _png((100, 80)), "image/png")})
-    res = tool_result(auth_headers, r)  # 异步:轮询取产物(eager 下立即完成)
-    got = client.get(res["image_url"])
-    assert got.status_code == 200 and Image.open(io.BytesIO(got.content)).size == (400, 320)
-    bal1 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
-    assert bal1 == bal0 - 2  # process 扣 2
-
-
-def test_seamless_bad_repeat_refunds(client, auth_headers):
-    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
-    r = client.post("/api/design-tools/seamless", headers=auth_headers,
-                    data={"repeat": 99}, files={"file": ("x.png", _png(), "image/png")})
-    assert r.status_code == 400
-    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0
-
-
 # ---------- ip_guard verbose 分级(P2-2) ----------
 def test_ipguard_default_hides_details(client, auth_headers, tool_result):
     r = client.post("/api/ip-guard/scan", headers=auth_headers,
@@ -56,42 +37,3 @@ def test_ipguard_verbose_shows_matches(client, auth_headers, tool_result):
     assert "matches" in tool_result(auth_headers, r)
 
 
-# ---------- gpt-image KEY 路径计费(P2-3:之前无 key 无法测的成功/失败分支,用 mock 覆盖) ----------
-# 注:有 key 时 gpt-image 端点改为后台作业(避免 HTTP 超时 Failed to fetch):
-# 提交即返回 {job_id, status:pending},真正出图在后台跑。TestClient 会同步执行
-# BackgroundTasks,故 POST 返回后作业已 done/error,可直接轮询 /api/jobs/{id}。
-def test_tryon_with_key_success_charges(client, auth_headers, monkeypatch):
-    from app.config import settings
-    from app.ai import openai_image
-    monkeypatch.setattr(settings, "openai_api_key", "test-key")
-    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit",
-                        lambda self, image, prompt, mask=None, size="auto", background="auto":
-                        Image.new("RGBA", (64, 64), (10, 20, 30, 255)))
-    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
-    r = client.post("/api/studio/tryon", headers=auth_headers,
-                    files={"file": ("x.png", _png(), "image/png")})
-    assert r.status_code == 200, r.text
-    jid = r.json()["job_id"]  # 后台作业:立即返回 job_id
-    job = client.get(f"/api/jobs/{jid}", headers=auth_headers).json()
-    assert job["status"] == "done", job
-    assert job["result"]["image_url"]
-    bal1 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
-    assert bal1 == bal0 - 4, f"有 key 成功应扣 4(edit): {bal0}->{bal1}"
-
-
-def test_tryon_with_key_failure_refunds(client, auth_headers, monkeypatch):
-    from app.config import settings
-    from app.ai import openai_image
-    monkeypatch.setattr(settings, "openai_api_key", "test-key")
-    def _boom(self, image, prompt, mask=None, size="auto", background="auto"):
-        raise RuntimeError("upstream 500")
-    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _boom)
-    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
-    r = client.post("/api/studio/tryon", headers=auth_headers,
-                    files={"file": ("x.png", _png(), "image/png")})
-    assert r.status_code == 200, r.text  # 提交成功;失败发生在后台
-    jid = r.json()["job_id"]
-    job = client.get(f"/api/jobs/{jid}", headers=auth_headers).json()
-    assert job["status"] == "error", job
-    bal1 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
-    assert bal1 == bal0, f"有 key 失败应退点(后台): {bal0}->{bal1}"

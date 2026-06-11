@@ -1,10 +1,7 @@
-"""套图&标题&来图定制工具组(E3)。
+"""标题提取工具(E3)。
 
-- 标题提取:有 OpenAI key 时调 **文本** 模型(chat.completions)生成电商标题 +
-  关键词;无 key 时降级为基于入参拼的占位标题(不调 AI、不扣点)。
-- 模特试衣 / 宠物换装 / 合照:复用 gpt-image edit(`OpenAIImageClient.edit`),
-  无 key 时构造客户端即抛 RuntimeError -> 路由层 502 + 退点。
-
+有 OpenAI key 时调 **文本** 模型(chat.completions)识图生成电商标题 + 关键词;
+无 key 时降级为本地规则引擎派生的占位标题(不调 AI、不扣点)。
 只暴露纯逻辑 / AI 封装,鉴权与扣点由 router 层负责。
 """
 from __future__ import annotations
@@ -15,22 +12,7 @@ import json
 
 from PIL import Image
 
-from ..ai.openai_image import OpenAIImageClient
 from ..config import settings
-
-# ---- 试衣 / 换装 / 合照的 prompt 模板 -------------------------------------
-TRYON_PROMPT = (
-    "Place this clothing print/design realistically onto a fashion model wearing "
-    "the apparel. Keep the design's colors, text and proportions intact. "
-    "Studio e-commerce photo, natural lighting, front view."
-)
-
-
-def _pet_prompt(costume: str) -> str:
-    return (
-        f"Dress the pet in this photo in a {costume} costume. Keep the pet's face "
-        "and posture natural and cute. Clean studio background, e-commerce ready."
-    )
 
 
 def has_openai_key() -> bool:
@@ -141,25 +123,3 @@ def generate_title(keywords: str = "", category: str = "apparel",
         return _placeholder_title(keywords, category, img)
 
 
-# ---- gpt-image edit 系(试衣 / 换装 / 合照)-------------------------------
-def model_tryon(garment: Image.Image, size: str = "auto") -> Image.Image:
-    """模特试衣:服饰印花图 -> 模特上身图。无 key 时构造即抛 RuntimeError。"""
-    client = OpenAIImageClient()
-    return client.edit(garment, TRYON_PROMPT, size=size)
-
-
-def pet_costume(pet: Image.Image, costume: str = "royal european",
-                size: str = "auto") -> Image.Image:
-    """宠物换装。无 key 时构造即抛 RuntimeError。"""
-    client = OpenAIImageClient()
-    return client.edit(pet, _pet_prompt(costume), size=size)
-
-
-def group_photo(base: Image.Image, prompt: str, size: str = "auto") -> Image.Image:
-    """合照:按 prompt 把主体合成进同一张照片。无 key 时构造即抛 RuntimeError。"""
-    client = OpenAIImageClient()
-    full = (
-        "Create a natural group photo. " + prompt.strip() +
-        " Keep faces and subjects realistic and well-composed."
-    )
-    return client.edit(base, full, size=size)

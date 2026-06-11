@@ -52,19 +52,3 @@ def test_variants_insufficient_credits_402(client, auth_headers, monkeypatch):
     assert r.status_code == 402, r.text
 
 
-# ---------- P1-4:studio 坏图也要退点 ----------
-def test_studio_tryon_bad_image_refunds(client, auth_headers):
-    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
-    r = client.post("/api/studio/tryon", headers=auth_headers,
-                    files={"file": ("x.png", io.BytesIO(b"not an image"), "image/png")})
-    assert r.status_code == 400, r.text
-    bal1 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
-    assert bal1 == bal0, f"坏图应退点: {bal0}->{bal1}"
-
-
-# ---------- P1-1:compress 目标尺寸过大被拒(不 OOM) ----------
-def test_compress_rejects_oversize(client, auth_headers):
-    r = client.post("/api/image-tools/compress", headers=auth_headers,
-                    data={"target_w": 60000, "target_h": 60000, "fmt": "jpeg"},
-                    files={"file": ("x.png", _png(), "image/png")})
-    assert r.status_code == 400, r.text  # service 抛 ValueError -> 400

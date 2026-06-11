@@ -48,15 +48,6 @@ export const TOOLS = [
     ],
   },
   {
-    id: 'fuse', name: '元素融合', icon: '🔥', cat: '印花设计', ep: 'design-tools/fuse',
-    async: true, result: 'image', cost: 4,
-    desc: '融合双爆款元素,生成新款',
-    inputs: [
-      { key: 'file', type: 'file', label: '上传原图', required: true },
-      { key: 'prompt', type: 'text', label: '融合描述', required: true, placeholder: '例:把骷髅和玫瑰融合' },
-    ],
-  },
-  {
     id: 'restyle', name: '风格转绘', icon: '🎨', cat: '印花设计', ep: 'design-tools/restyle',
     async: true, result: 'image', cost: 4,
     desc: '转成目标风格(Temu 2D flat 等)',
@@ -75,15 +66,6 @@ export const TOOLS = [
       { key: 'prompt', type: 'text', label: '补充提示(可选)', default: '' },
     ],
   },
-  {
-    id: 'seamless', name: '四方连续图', icon: '🔲', cat: '印花设计', ep: 'design-tools/seamless',
-    async: true, result: 'image', cost: 2,
-    desc: '无缝连续印花,服饰家纺',
-    inputs: [
-      { key: 'file', type: 'file', label: '上传原图', required: true },
-      { key: 'repeat', type: 'number', label: '平铺倍数', default: 2, min: 1, max: 6 },
-    ],
-  },
   // ── 图案处理 ──────────────────────────────
   {
     id: 'upscale', name: '图像提质', icon: '🔍', cat: '图案处理', ep: 'image-tools/upscale',
@@ -92,15 +74,6 @@ export const TOOLS = [
     inputs: [
       { key: 'file', type: 'file', label: '上传图片', required: true },
       { key: 'scale', type: 'number', label: '放大倍数', default: 1, min: 1, max: 4, step: 0.5 },
-    ],
-  },
-  {
-    id: 'expand', name: '扩图', icon: '⤢', cat: '图案处理', ep: 'image-tools/expand',
-    async: true, result: 'image', cost: 4,
-    desc: '外延构图调整',
-    inputs: [
-      { key: 'file', type: 'file', label: '上传图片', required: true },
-      { key: 'prompt', type: 'text', label: '补充描述(可选)', default: '' },
     ],
   },
   {
@@ -121,19 +94,6 @@ export const TOOLS = [
       { key: 'preset', type: 'select', label: '精细度', default: 'auto',
         options: [['auto', '自动'], ['logo', '极简(logo)'], ['fine', '极致细节']] },
       { key: 'colors', type: 'number', label: '颜色数', default: 8, min: 2, max: 64 },
-    ],
-  },
-  {
-    id: 'compress', name: '裁剪压缩', icon: '🗜️', cat: '图案处理', ep: 'image-tools/compress',
-    async: true, result: 'info', cost: 2,
-    desc: '压缩体积/改尺寸/格式',
-    inputs: [
-      { key: 'file', type: 'file', label: '上传图片', required: true },
-      { key: 'target_w', type: 'number', label: '目标宽 px(0=不改)', default: 1200, min: 0, max: 10000 },
-      { key: 'target_h', type: 'number', label: '目标高 px(0=按比例)', default: 0, min: 0, max: 10000 },
-      { key: 'quality', type: 'number', label: 'JPG 质量', default: 85, min: 1, max: 100 },
-      { key: 'fmt', type: 'select', label: '输出格式', default: 'jpeg',
-        options: [['jpeg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP']] },
     ],
   },
   // ── 侵权检测 ──────────────────────────────
@@ -159,16 +119,6 @@ export const TOOLS = [
     ],
   },
   {
-    id: 'mockupbatch', name: '批量套图', icon: '🗂️', cat: '套图标题', ep: 'mockup/batch',
-    async: true, result: 'images', cost: 1, costPerN: 'templates',
-    desc: '多产品 × 多配色,一次出整组(≤12)',
-    inputs: [
-      { key: 'file', type: 'file', label: '上传印花', required: true },
-      { key: 'templates', type: 'checkboxGroup', label: '产品(多选)', source: 'templates', required: true, join: ',' },
-      { key: 'colors', type: 'checkboxGroup', label: '配色(多选,留空=各默认)', source: 'allColors', join: ',' },
-    ],
-  },
-  {
     id: 'title', name: '标题提取', icon: '🏷️', cat: '套图标题', ep: 'studio/title',
     async: true, result: 'info', cost: 1, dualEngine: true,
     localRequires: ['keywords', 'category'],  // 本地(快速)运行必填关键词+类目;智能(AI)可不填
@@ -178,33 +128,6 @@ export const TOOLS = [
       { key: 'category', type: 'select', label: '类目', default: 'apparel',
         options: [['apparel', '服饰'], ['home', '家居'], ['accessory', '配饰'], ['other', '其它']] },
       { key: 'file', type: 'file', label: '设计图(可选,本地会识别图上文字+主色当标题主体)', required: false },
-    ],
-  },
-  {
-    id: 'tryon', name: '模特试衣', icon: '🧍', cat: '套图标题', ep: 'studio/tryon',
-    async: true, result: 'image', cost: 4,
-    desc: '服饰印花生成上身图',
-    inputs: [{ key: 'file', type: 'file', label: '上传服饰印花', required: true }],
-  },
-  // ── 来图定制 ──────────────────────────────
-  {
-    id: 'pet', name: '宠物换装', icon: '🐾', cat: '来图定制', ep: 'studio/pet-costume',
-    async: true, result: 'image', cost: 4,
-    desc: '宠物造型换装 30+',
-    inputs: [
-      { key: 'file', type: 'file', label: '上传宠物图', required: true },
-      { key: 'costume', type: 'select', label: '造型', default: 'royal european',
-        options: [['royal european', '欧洲皇室'], ['superhero', '超级英雄'], ['kimono', '和服'],
-          ['cowboy', '牛仔'], ['astronaut', '宇航员'], ['wizard', '巫师']] },
-    ],
-  },
-  {
-    id: 'group', name: '合照', icon: '👨‍👩‍👧', cat: '来图定制', ep: 'studio/group-photo',
-    async: true, result: 'image', cost: 4,
-    desc: '智能生成合照',
-    inputs: [
-      { key: 'file', type: 'file', label: '上传基础图', required: true },
-      { key: 'prompt', type: 'text', label: '合照描述', required: true, placeholder: '例:全家福,海边日落' },
     ],
   },
   // ── 履约 ──────────────────────────────────
@@ -239,11 +162,11 @@ export const TOOLS = [
 export const TOOL_BY_ID = Object.fromEntries(TOOLS.map((t) => [t.id, t]))
 
 // 作图模块下的工具分类(顺序即画廊分区顺序)。视频工具(videogen)归「视频」大模块,不在此。
-export const TOOL_CATS = ['印花提取', '印花设计', '图案处理', '侵权检测', '套图标题', '来图定制', '履约']
+export const TOOL_CATS = ['印花提取', '印花设计', '图案处理', '侵权检测', '套图标题', '履约']
 
 // 后端作业的 kind ↔ 前端工具 id 多数同名;少数不同名,这里登记别名。
 // (优先用 job.tool_id;为空时用 kind 经此别名映射,再查 TOOL_BY_ID。)
-const KIND_ALIAS = { process: 'matting', 'pet-costume': 'pet', 'group-photo': 'group', 'print-extract': 'extract' }
+const KIND_ALIAS = { process: 'matting', 'print-extract': 'extract' }
 
 // 把一条作业(job)映射回它对应的工具声明,用于「任务中心」展示名称/图标/分组。找不到返回 null。
 export function toolForJob(job) {

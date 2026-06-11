@@ -1,14 +1,17 @@
 """素材库 + 侵权检测。"""
 from __future__ import annotations
+
 import io
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import select
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from PIL import Image
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from .. import storage
+from ..auth import current_user
 from ..db import get_db
 from ..models_db import Asset, User
-from ..auth import current_user
-from .. import storage
 from ..services.infringement import check_image
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])

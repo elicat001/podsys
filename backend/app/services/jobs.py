@@ -24,14 +24,13 @@ def _now() -> datetime:
 STUCK_MINUTES = 30
 
 # kind → 退点 op(与各 router 的 charge_for/扣点 op 对齐)。未列出的默认 "edit"。
-# 注意:按张多扣的 kind(variants/mockup-batch/mockup-replace)退点笔数 = params["n"](见 reap)。
+# 注意:按张多扣的 kind(variants/mockup-replace)退点笔数 = params["n"](见 reap)。
 _KIND_REFUND_OP = {
     "process": "process", "print-extract": "process", "upscale": "process", "vectorize": "process",
-    "seamless": "process", "compress": "process", "ipguard": "process",
+    "ipguard": "process",
     "generate": "generate",
-    "edit": "edit", "variants": "edit", "fuse": "edit", "restyle": "edit", "meme": "edit",
-    "expand": "edit", "dewatermark": "edit", "tryon": "edit", "pet-costume": "edit", "group-photo": "edit",
-    "mockup": "asset", "mockup-batch": "asset", "mockup-replace": "asset", "production": "asset",
+    "edit": "edit", "variants": "edit", "restyle": "edit", "meme": "edit", "dewatermark": "edit",
+    "mockup": "asset", "mockup-replace": "asset", "production": "asset",
     "title": "title",
 }
 
@@ -63,7 +62,7 @@ def reap_stuck_jobs(db: Session, minutes: int = STUCK_MINUTES) -> int:
             from .billing import refund
             params = job.params or {}
             op = _KIND_REFUND_OP.get(job.kind, "edit")
-            # 按张多扣的(variants/mockup-batch/mockup-replace)退 n 笔,对齐扣点;其余 1 笔。
+            # 按张多扣的(variants/mockup-replace)退 n 笔,对齐扣点;其余 1 笔。
             n = int(params.get("n", 1) or 1)
             # 标题「快速」本就免费(只有「智能/AI」扣点),不退;避免给未扣点的任务白送积分。
             if job.kind == "title" and params.get("engine") != "ai":

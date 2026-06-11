@@ -73,52 +73,6 @@ async def variants(
                          raw=raw, params={"n": n, "prompt": prompt, "engine": eng}, n=n)
 
 
-@router.post("/seamless")
-def seamless(
-    file: UploadFile = File(...),
-    repeat: int = Form(2),
-    user: User = Depends(charge_for("process")),
-    db: Session = Depends(get_db),
-):
-    """四方连续图(离线 Pillow,op=process 扣 2)→ Celery 后台作业,前端轮询。"""
-    raw = file.file.read()
-    read_image_or_refund(raw, db, user, "process")  # 读图失败 → 400 + 退点
-    if not (1 <= repeat <= 8):  # 参数非法同步早拦截(400),不进后台
-        refund(db, user, "process")
-        raise HTTPException(status_code=400, detail="repeat 必须在 1~8 之间")
-    return submit_celery(run_tool, db, user, kind="seamless", tool_id="seamless", op="process",
-                         raw=raw, params={"repeat": repeat})
-
-
-@router.post("/fuse")
-async def fuse(
-    file: UploadFile = File(...),
-    prompt: str = Form(...),
-    user: User = Depends(charge_for("edit")),
-    db: Session = Depends(get_db),
-):
-    """元素融合:把输入图与 prompt 融合出新爆款。"""
-    raw = await file.read()
-    src = _read_or_refund(raw, db, user)
-    if settings.openai_api_key:
-        return submit_celery(run_tool, db, user, kind="fuse", tool_id="fuse", op="edit",
-                             raw=raw, params={"prompt": prompt})
-    try:
-        out_img = design_tools.make_fuse(src, prompt)
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        refund(db, user, "edit")
-        raise HTTPException(status_code=502, detail="元素融合失败,请稍后重试") from exc
-
-    job_id = storage.new_job_id()
-    name = "fused.png"
-    out_img.save(storage.output_path(job_id, name), format="PNG")
-    url = storage.output_url(job_id, name)
-    save_as_asset(db, user.id, out_img, "元素融合", url, source="generated")
-    return {"job_id": job_id, "image_url": url}
-
-
 @router.post("/restyle")
 async def restyle(
     file: UploadFile = File(...),

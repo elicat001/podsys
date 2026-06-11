@@ -1,4 +1,4 @@
-"""图案处理工具路由:扩图 / 去水印(gpt-image edit)+ 裁剪压缩(离线 Pillow)。
+"""图案处理工具路由:图像提质(本地超分)/ 去水印(gpt-image edit)。
 
 计费/错误范式同 main.py:charge_for 预扣 → 读图失败或 AI 失败 → refund + HTTPException。
 """
@@ -23,12 +23,6 @@ from ..web_utils import submit_celery
 
 router = APIRouter(prefix="/api/image-tools", tags=["image-tools"])
 
-# 扩图(outpaint)用的 prompt 模板
-_EXPAND_PROMPT = (
-    "Outpaint and extend this image naturally beyond its current borders, "
-    "seamlessly continuing the existing content, lighting and style to fill "
-    "a larger canvas. Keep the original subject intact and centered."
-)
 _DEWATERMARK_PROMPT = (
     "Remove any watermarks, logos, text overlays and signatures from this image. "
     "Cleanly reconstruct the underlying content so the result looks natural and "
@@ -89,26 +83,6 @@ async def upscale(
     return JSONResponse({"job_id": job_id, "image_url": url, "width": out.width, "height": out.height})
 
 
-@router.post("/expand")
-async def expand(
-    file: UploadFile = File(...),
-    prompt: str = Form(""),
-    size: str = Form("auto"),
-    user: User = Depends(charge_for("edit")),
-    db: Session = Depends(get_db),
-):
-    """扩图(outpaint):有 key 走 gpt-image(后台作业),无 key 走本地离线引擎。"""
-    raw = await file.read()
-    full_prompt = f"{_EXPAND_PROMPT} {prompt}".strip()
-    from ..services.effects import outpaint_reflect
-    if settings.openai_api_key:  # gpt-image 耗时 -> Celery 后台作业,前端轮询
-        _read_image(raw, db, user, "edit")  # 读图失败 → 400 + 退点
-        return JSONResponse(submit_celery(run_tool, db, user, kind="expand", tool_id="expand",
-                                          op="edit", raw=raw, params={"prompt": full_prompt, "size": size}))
-    job_id = _edit_endpoint(raw, full_prompt, size, db, user, offline=lambda im: outpaint_reflect(im, 1.5))
-    return JSONResponse({"job_id": job_id, "image_url": storage.output_url(job_id, "result.png")})
-
-
 @router.post("/dewatermark")
 async def dewatermark(
     file: UploadFile = File(...),
@@ -127,32 +101,3 @@ async def dewatermark(
                                           op="edit", raw=raw, params={"prompt": full_prompt, "size": size}))
     job_id = _edit_endpoint(raw, full_prompt, size, db, user, offline=_dw)
     return JSONResponse({"job_id": job_id, "image_url": storage.output_url(job_id, "result.png")})
-
-
-@router.post("/compress")
-def compress(
-    file: UploadFile = File(...),
-    target_w: int = Form(0),
-    target_h: int = Form(0),
-    quality: int = Form(85),
-    fmt: str = Form("jpeg"),
-    user: User = Depends(charge_for("process")),
-    db: Session = Depends(get_db),
-):
-    """裁剪压缩(纯离线 Pillow,op=process 扣 2)→ Celery 后台作业,前端轮询。
-
-    结果带原始/压缩后字节数 + 尺寸/格式(worker 内算,见 tasks._work_compress)。
-    """
-    raw = file.file.read()
-    _read_image(raw, db, user, "process")  # 读图失败 → 400 + 退点
-    # 参数非法同步早拦截(400),不进后台:超大目标尺寸 / 非法格式 / 质量越界
-    from ..services.image_tools import MAX_TARGET_PIXELS
-    if target_w and target_h and target_w * target_h > MAX_TARGET_PIXELS:
-        refund(db, user, "process")
-        raise HTTPException(status_code=400, detail="目标尺寸过大(像素数超上限)")
-    if fmt not in ("png", "jpeg", "webp") or not (1 <= quality <= 100):
-        refund(db, user, "process")
-        raise HTTPException(status_code=400, detail="格式或质量参数非法")
-    return JSONResponse(submit_celery(
-        run_tool, db, user, kind="compress", tool_id="compress", op="process", raw=raw,
-        params={"target_w": target_w, "target_h": target_h, "quality": quality, "fmt": fmt}))

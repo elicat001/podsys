@@ -1,0 +1,4 @@
+backend/uvicorn.local.log
+
+# 本地手动起 uvicorn 的日志,不入库
+uvicorn.local.log
