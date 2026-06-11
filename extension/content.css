@@ -1,0 +1,24 @@
+/* PODStudio 采集助手 — 注入 UI 样式(高 z-index,避免被电商页盖住) */
+#pod-panel {
+  position: fixed; right: 18px; bottom: 18px; z-index: 2147483646;
+  width: 220px; padding: 12px; border-radius: 12px;
+  background: #1c1c20; color: #eee; box-shadow: 0 8px 28px rgba(0,0,0,.45);
+  font: 13px/1.5 -apple-system, "Microsoft YaHei", sans-serif;
+}
+#pod-panel .pod-hd { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 10px; }
+#pod-panel .pod-x { cursor: pointer; opacity: .6; font-size: 16px; }
+#pod-panel .pod-x:hover { opacity: 1; }
+#pod-panel .pod-all {
+  width: 100%; padding: 9px; border: none; border-radius: 9px; cursor: pointer;
+  background: linear-gradient(135deg,#ff7a18,#ff5d3b); color: #fff; font-weight: 700; font-size: 13px;
+}
+#pod-panel .pod-all:hover { filter: brightness(1.06); }
+#pod-panel .pod-st { margin: 9px 0 6px; min-height: 18px; font-size: 12px; color: #bbb; }
+#pod-panel .pod-link { color: #ff8a3d; font-size: 12px; text-decoration: none; }
+#pod-panel .pod-link:hover { text-decoration: underline; }
+#pod-hover-btn {
+  position: absolute; z-index: 2147483647; padding: 4px 9px; border: none; border-radius: 7px;
+  background: rgba(255,93,59,.95); color: #fff; font: 700 12px/1 -apple-system, "Microsoft YaHei", sans-serif;
+  cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.4);
+}
+#pod-hover-btn:hover { background: #ff5d3b; }

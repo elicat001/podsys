@@ -1,21 +1,29 @@
 {
   "manifest_version": 3,
   "name": "PODStudio 采集助手",
-  "version": "0.1.0",
-  "description": "从 Temu/Amazon/Etsy/TikTok 商品页采集高清图，一键发送到 PODStudio 工作站。",
-  "permissions": ["activeTab", "scripting", "storage", "downloads"],
+  "version": "0.2.0",
+  "description": "在 Temu 商品页一键采集高清图,直接进 PODStudio 素材库(带登录态,绕过反爬)。",
+  "permissions": ["storage"],
   "host_permissions": [
     "*://*.temu.com/*",
-    "*://*.amazon.com/*",
-    "*://*.etsy.com/*",
-    "*://*.tiktok.com/*"
+    "*://*.kwcdn.com/*",
+    "*://*.temucdn.com/*",
+    "https://pod.kejing.online/*",
+    "http://localhost:10000/*",
+    "http://localhost:5173/*"
   ],
   "action": { "default_popup": "popup.html", "default_title": "PODStudio 采集助手" },
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
-      "matches": ["*://*.temu.com/*", "*://*.amazon.com/*", "*://*.etsy.com/*", "*://*.tiktok.com/*"],
+      "matches": ["*://*.temu.com/*"],
       "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://pod.kejing.online/*", "http://localhost:5173/*", "http://localhost:10000/*"],
+      "js": ["auth.js"],
       "run_at": "document_idle"
     }
   ]

@@ -1,32 +1,21 @@
-// PODStudio 采集助手 — popup 逻辑 (MVP 骨架)
-let selected = null;
+// PODStudio 采集助手 — popup:显示登录态 + 选择 PODStudio 地址 + 打开站点登录。
+const apiSel = document.getElementById("api");
+const openLink = document.getElementById("open");
+const loginEl = document.getElementById("login");
 
-document.getElementById("scan").onclick = async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  chrome.tabs.sendMessage(tab.id, { type: "COLLECT_IMAGES" }, (resp) => {
-    const grid = document.getElementById("grid");
-    grid.innerHTML = "";
-    (resp?.images || []).forEach((url) => {
-      const img = document.createElement("img");
-      img.src = url;
-      img.onclick = () => {
-        document.querySelectorAll("#grid img").forEach((i) => i.classList.remove("sel"));
-        img.classList.add("sel");
-        selected = url;
-        document.getElementById("send").disabled = false;
-      };
-      grid.appendChild(img);
-    });
-    setStatus(`找到 ${resp?.images?.length || 0} 张图`);
-  });
+function refreshOpen() { openLink.href = apiSel.value; }
+
+chrome.storage.local.get(["pod_token", "pod_api"], ({ pod_token, pod_api }) => {
+  if (pod_api) apiSel.value = pod_api;
+  refreshOpen();
+  if (pod_token) {
+    loginEl.innerHTML = '登录状态:<span class="ok">已登录 ✓</span>';
+  } else {
+    loginEl.innerHTML = '登录状态:<span class="bad">未登录</span> — 请先打开站点登录';
+  }
+});
+
+apiSel.onchange = () => {
+  chrome.storage.local.set({ pod_api: apiSel.value });
+  refreshOpen();
 };
-
-document.getElementById("send").onclick = () => {
-  if (!selected) return;
-  setStatus("发送中…");
-  chrome.runtime.sendMessage({ type: "SEND_TO_POD", imageUrl: selected }, (resp) => {
-    setStatus(resp?.ok ? "已发送，作业号 " + resp.data.job_id : "失败: " + (resp?.error || ""));
-  });
-};
-
-function setStatus(t) { document.querySelector("#status small").textContent = t; }

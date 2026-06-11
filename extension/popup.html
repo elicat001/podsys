@@ -1,22 +1,36 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head><meta charset="UTF-8" />
-<style>
-  body{width:320px;font-family:system-ui,"Microsoft YaHei",sans-serif;margin:0;padding:12px;background:#181b22;color:#e6e8ec}
-  h3{margin:0 0 8px;font-size:14px}
-  button{width:100%;padding:8px;margin-top:8px;border:0;border-radius:6px;background:#4f8cff;color:#fff;cursor:pointer}
-  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
-  .grid img{width:100%;border:1px solid #2a2f3a;border-radius:4px;cursor:pointer}
-  .grid img.sel{outline:2px solid #4f8cff}
-  small{color:#9aa3b2}
-</style></head>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { width: 280px; margin: 0; padding: 14px; font: 13px/1.6 -apple-system, "Microsoft YaHei", sans-serif; background: #1c1c20; color: #eee; }
+    h1 { font-size: 15px; margin: 0 0 10px; }
+    .row { margin: 8px 0; }
+    .ok { color: #5fd07a; } .bad { color: #ff7a6b; } .mut { color: #9a9a9a; font-size: 12px; }
+    a.btn { display: inline-block; padding: 7px 12px; border: none; border-radius: 8px; cursor: pointer;
+      background: linear-gradient(135deg,#ff7a18,#ff5d3b); color: #fff; font-weight: 700; text-decoration: none; font-size: 13px; }
+    select { width: 100%; padding: 6px; border-radius: 7px; background: #2a2a30; color: #eee; border: 1px solid #3a3a42; }
+    ol { padding-left: 18px; margin: 8px 0; } li { margin: 3px 0; font-size: 12px; color: #cfcfcf; }
+  </style>
+</head>
 <body>
-  <h3>PODStudio 采集助手</h3>
-  <small>在 Temu/Amazon/Etsy/TikTok 商品页采集高清图</small>
-  <button id="scan">扫描本页图片</button>
-  <div class="grid" id="grid"></div>
-  <button id="send" disabled>发送选中图到工作站</button>
-  <div id="status"><small></small></div>
+  <h1>🦏 PODStudio 采集助手</h1>
+  <div class="row" id="login">登录状态:检测中…</div>
+  <div class="row">
+    <div class="mut">PODStudio 地址</div>
+    <select id="api">
+      <option value="https://pod.kejing.online">线上 pod.kejing.online</option>
+      <option value="http://localhost:10000">本地 localhost:10000</option>
+    </select>
+  </div>
+  <div class="row"><a class="btn" id="open" target="_blank">打开 PODStudio 登录 →</a></div>
+  <ol>
+    <li>先在 PODStudio 网站登录(本插件读取登录态)。</li>
+    <li>打开 Temu 商品页,右下角会出现采集面板。</li>
+    <li>点「全部采集本页」,或悬停某张图点「采集此图」。</li>
+    <li>采集的图进「我的空间 / 素材库」,并自动做侵权查重。</li>
+  </ol>
+  <div class="mut">仅用于已获授权 / 自有内容场景。</div>
   <script src="popup.js"></script>
 </body>
 </html>
