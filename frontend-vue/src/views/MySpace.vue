@@ -158,7 +158,14 @@ async function delCollected(im) {
   } catch (e) { return }
   await deleteCollected(im.id)
   ElMessage.success('已移除'); loadCollected(); loadQuota()
+  if (colDetail.value && colDetail.value.id === im.id) showColDetail.value = false
 }
+// 找图详情对话框
+const showColDetail = ref(false)
+const colDetail = ref(null)
+function openColDetail(im) { colDetail.value = im; showColDetail.value = true }
+function riskType(r) { return r === 'high' ? 'danger' : r === 'review' ? 'warning' : r === 'safe' ? 'success' : 'info' }
+function riskLabel(r) { return ({ high: '高风险', review: '待复核', safe: '安全' })[r] || '未知' }
 
 // ── 回收站 ────────────────────────────────────────────────
 const trash = ref([])
@@ -377,7 +384,7 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
                     </el-tag>
                   </div>
                   <div class="find-acts">
-                    <a v-if="im.source_url" class="fchip2" :href="im.source_url" target="_blank">🔗 来源</a>
+                    <button class="fchip2 primary" @click="openColDetail(im)">📄 详情</button>
                     <a class="fchip2" :href="im.asset_url" target="_blank" download>⬇ 下载</a>
                     <button class="fchip2 danger" @click="delCollected(im)">🗑 移除</button>
                   </div>
@@ -475,6 +482,43 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
         </el-table>
       </el-tab-pane>
     </el-tabs>
+
+    <!-- 找图详情弹窗 -->
+    <el-dialog v-model="showColDetail" title="采集详情" width="640px" align-center append-to-body>
+      <div v-if="colDetail" class="col-detail">
+        <a class="cd-img" :href="colDetail.asset_url" target="_blank" title="查看原图">
+          <img :src="colDetail.asset_url" />
+        </a>
+        <div class="cd-info">
+          <div class="cd-row">
+            <span class="cd-label">标题</span>
+            <div class="cd-val">
+              <span class="cd-title">{{ colDetail.title || '(无标题)' }}</span>
+              <button class="fchip2" @click="copyText(colDetail.title || '', '标题')">📋 复制标题</button>
+            </div>
+          </div>
+          <div class="cd-row"><span class="cd-label">平台</span><span>{{ colDetail.platform || '—' }}</span></div>
+          <div v-if="colDetail.price" class="cd-row"><span class="cd-label">价格</span><span class="cprice">{{ colDetail.price }}</span></div>
+          <div v-if="colDetail.rating" class="cd-row"><span class="cd-label">评分</span><span class="crate">★ {{ colDetail.rating }}</span></div>
+          <div class="cd-row">
+            <span class="cd-label">侵权</span>
+            <el-tag size="small" :type="riskType(colDetail.risk)" effect="light">{{ riskLabel(colDetail.risk) }}</el-tag>
+          </div>
+          <div v-if="colDetail.source_url" class="cd-row">
+            <span class="cd-label">来源</span>
+            <div class="cd-val">
+              <a :href="colDetail.source_url" target="_blank" class="lnk">打开商品页 →</a>
+              <button class="fchip2" @click="copyText(colDetail.source_url, '链接')">📋 复制链接</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <a v-if="colDetail" class="fchip2" :href="colDetail.asset_url" target="_blank" download style="margin-right: 8px">⬇ 下载原图</a>
+        <el-button v-if="colDetail" type="danger" plain @click="delCollected(colDetail)">移除</el-button>
+        <el-button type="primary" @click="showColDetail = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 结果预览弹窗(复用 ResultView,与作图页一致的大图/下载/旋转体验)-->
     <el-dialog v-model="showPreview" :title="previewJob ? jobTitle(previewJob) : '预览'"
@@ -660,6 +704,59 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
 }
 .fchip2.danger:hover {
   border-color: var(--err);
+}
+.fchip2.primary {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+/* 采集详情对话框 */
+.col-detail {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 18px;
+}
+.cd-img {
+  display: block;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg2);
+  aspect-ratio: 1;
+}
+.cd-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.cd-info {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cd-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 13px;
+}
+.cd-label {
+  flex: 0 0 44px;
+  color: var(--mut);
+}
+.cd-val {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.cd-title {
+  line-height: 1.4;
+}
+@media (max-width: 600px) {
+  .col-detail {
+    grid-template-columns: 1fr;
+  }
 }
 .empty {
   padding: 48px 0;

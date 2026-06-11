@@ -21,6 +21,10 @@ from app.services.collectors import detect_platform, upgrade_to_hires
         ("https://img.kwcdn.com/product/a.jpg", "temu"),
         ("https://p16.tiktokcdn.com/obj/a.jpeg", "tiktok"),
         ("https://www.tiktok.com/@x", "tiktok"),
+        ("https://shopee.com.my/product/1", "shopee"),
+        ("https://down-my.img.susercontent.com/file/abc_tn", "shopee"),
+        ("https://www.mercadolivre.com.br/p/1", "mercadolibre"),
+        ("https://http2.mlstatic.com/D_NQ_NP_123-MLB.webp", "mercadolibre"),
         ("https://example.com/some/image.png", "unknown"),
     ],
 )
@@ -84,6 +88,28 @@ def test_upgrade_temu_strips_oss_process_keeps_others():
     out = upgrade_to_hires(src)
     assert "x-oss-process" not in out
     assert "id=42" in out
+
+
+# --- upgrade_to_hires:shopee -----------------------------------------------
+def test_upgrade_shopee_strips_tn_suffix():
+    src = "https://down-my.img.susercontent.com/file/abc123_tn"
+    assert upgrade_to_hires(src) == "https://down-my.img.susercontent.com/file/abc123"
+
+
+def test_upgrade_shopee_tn_with_scaling_query():
+    src = "https://cf.shopee.com.my/file/abc123_tn?width=200"
+    assert upgrade_to_hires(src) == "https://cf.shopee.com.my/file/abc123"
+
+
+# --- upgrade_to_hires:mercadolibre -----------------------------------------
+def test_upgrade_ml_bumps_to_2x():
+    src = "https://http2.mlstatic.com/D_NQ_NP_123456-MLB.webp"
+    assert upgrade_to_hires(src) == "https://http2.mlstatic.com/D_NQ_NP_2X_123456-MLB.webp"
+
+
+def test_upgrade_ml_already_2x_is_noop():
+    src = "https://http2.mlstatic.com/D_NQ_NP_2X_123456-MLB.webp"
+    assert upgrade_to_hires(src) == src
 
 
 # --- upgrade_to_hires:unknown ----------------------------------------------

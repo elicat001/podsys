@@ -1,4 +1,4 @@
-// PODStudio 采集助手 — content script(Temu 商品页)
+// PODStudio 采集助手 — content script(Temu / Amazon / Shopee / MercadoLibre / TikTok Shop 商品页)
 // 职责:注入一个可拖动的悬浮球(默认右上角),点击展开采集面板;扫描商品卡(图+标题+价格+评分+链接),
 // 交给 background 带登录态回传到采集箱(/api/collect-tasks/ingest,只暂存,选择同步才入库)。
 //
@@ -15,12 +15,15 @@
     "imageview2", "imageview", "width", "w", "height", "h",
     "quality", "q", "x-oss-process", "imagemogr2", "thumbnail", "format",
   ]);
+  const SUPPORTED = new Set(["temu", "amazon", "shopee", "mercadolibre", "tiktok", "etsy"]);
   function detectPlatform(url) {
     let host = "";
     try { host = new URL(url).hostname.toLowerCase(); } catch (e) { host = (url || "").toLowerCase(); }
     if (/(^|\.)amazon\.|media-amazon\.|ssl-images-amazon\./.test(host)) return "amazon";
     if (/etsy\.|etsystatic\./.test(host)) return "etsy";
     if (/temu\.|kwcdn\.|temucdn\./.test(host)) return "temu";
+    if (/shopee\.|susercontent\.|shopeemobile\./.test(host)) return "shopee";
+    if (/mercadoli(?:bre|vre)\.|mlstatic\./.test(host)) return "mercadolibre";
     if (/tiktok\.|tiktokcdn|ttwstatic\.|ibyteimg\./.test(host)) return "tiktok";
     return "unknown";
   }
@@ -37,17 +40,20 @@
     platform = platform || detectPlatform(url);
     if (platform === "amazon") { let out = url, prev = null; while (out !== prev) { prev = out; out = out.replace(AMAZON_SIZE_SEG, ""); } return out; }
     if (platform === "etsy") return url.replace(ETSY_SIZE_SEG, "il_fullxfull");
+    // shopee:去缩放 query + 去缩略图后缀 _tn;mercadolibre:把 D_NQ_NP_ 提到 2X 高清
+    if (platform === "shopee") return stripScalingQuery(url).replace(/_tn(?=$|\?)/i, "");
+    if (platform === "mercadolibre") return url.replace(/D_NQ_NP_(?!2X_)/i, "D_NQ_NP_2X_");
     if (platform === "temu" || platform === "tiktok") return stripScalingQuery(url);
     return url;
   }
 
-  // ---- 商品图判定(只收 temu CDN、足够大的)----
+  // ---- 商品图判定(支持平台的 CDN 大图)----
   function isProductImg(img) {
     const src = img.currentSrc || img.src || "";
     if (!src || src.startsWith("data:")) return false;
-    if (detectPlatform(src) !== "temu") return false;
+    if (!SUPPORTED.has(detectPlatform(src))) return false;
     const w = img.naturalWidth || img.clientWidth || 0;
-    return w >= 120;
+    return w >= 140;
   }
 
   // ---- 从商品图反查整张卡片,抽取标题/价格/评分/链接(启发式,不依赖易变 CSS 类名)----

@@ -1,14 +1,11 @@
 {
   "manifest_version": 3,
   "name": "PODStudio 采集助手",
-  "version": "0.3.1",
-  "description": "在 Temu 商品页一键采集整页商品(图+标题+价格+评分+链接)到 PODStudio 采集箱,勾选同步入库。",
+  "version": "0.4.0",
+  "description": "在 Temu/Amazon/Shopee/MercadoLibre/TikTok Shop 商品页一键采集商品(图+标题+价格+评分+链接)到 PODStudio 采集箱,勾选同步入库。",
   "permissions": ["storage"],
   "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "host_permissions": [
-    "*://*.temu.com/*",
-    "*://*.kwcdn.com/*",
-    "*://*.temucdn.com/*",
     "https://pod.kejing.online/*",
     "http://localhost:10000/*",
     "http://localhost:5173/*"
@@ -21,7 +18,22 @@
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
-      "matches": ["*://*.temu.com/*"],
+      "matches": [
+        "*://*.temu.com/*",
+        "*://*.amazon.com/*", "*://*.amazon.co.uk/*", "*://*.amazon.de/*", "*://*.amazon.co.jp/*",
+        "*://*.amazon.ca/*", "*://*.amazon.fr/*", "*://*.amazon.it/*", "*://*.amazon.es/*",
+        "*://*.amazon.com.mx/*", "*://*.amazon.com.br/*", "*://*.amazon.com.au/*", "*://*.amazon.in/*",
+        "*://*.amazon.nl/*", "*://*.amazon.sg/*", "*://*.amazon.ae/*", "*://*.amazon.sa/*",
+        "*://*.amazon.se/*", "*://*.amazon.pl/*", "*://*.amazon.com.tr/*",
+        "*://*.shopee.com/*", "*://*.shopee.com.my/*", "*://*.shopee.sg/*", "*://*.shopee.tw/*",
+        "*://*.shopee.co.id/*", "*://*.shopee.ph/*", "*://*.shopee.vn/*", "*://*.shopee.com.br/*",
+        "*://*.shopee.cl/*", "*://*.shopee.co.th/*", "*://*.shopee.com.co/*", "*://*.shopee.com.mx/*",
+        "*://*.mercadolivre.com.br/*", "*://*.mercadolibre.com.ar/*", "*://*.mercadolibre.com.mx/*",
+        "*://*.mercadolibre.com.co/*", "*://*.mercadolibre.cl/*", "*://*.mercadolibre.com.pe/*",
+        "*://*.mercadolibre.com.uy/*", "*://*.mercadolibre.com.ec/*", "*://*.mercadolibre.com.ve/*",
+        "*://*.mercadolibre.com.bo/*", "*://*.mercadolibre.com.do/*",
+        "*://*.tiktok.com/*"
+      ],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"

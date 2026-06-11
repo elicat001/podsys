@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 __all__ = ["detect_platform", "upgrade_to_hires"]
 
@@ -28,6 +28,8 @@ _PLATFORM_HOST_MARKERS: list[tuple[str, tuple[str, ...]]] = [
     ("amazon", ("amazon.", "media-amazon.", "ssl-images-amazon.")),
     ("etsy", ("etsy.", "etsystatic.")),
     ("temu", ("temu.", "kwcdn.")),                       # temu CDN 常用 kwcdn
+    ("shopee", ("shopee.", "susercontent.", "shopeemobile.")),   # shopee CDN
+    ("mercadolibre", ("mercadolibre.", "mercadolivre.", "mlstatic.")),  # 美客多 CDN=mlstatic
     ("tiktok", ("tiktok.", "tiktokcdn", "ttwstatic.", "ibyteimg.")),
 ]
 
@@ -38,6 +40,12 @@ _AMAZON_SIZE_SEG = re.compile(r"\.(?:_[A-Z0-9,]+)+_(?=\.)")
 # etsy 文件名里的尺寸段,如 `il_340x270`、`il_600x600`、`il_794xN`。
 # 不用 IGNORECASE:etsy 真实 URL 一律小写 il_,避免把大写误改并把模板写成小写造成大小写不一致(评审 P1-2)。
 _ETSY_SIZE_SEG = re.compile(r"il_\d+x[\dN]+")
+
+# shopee 缩略图后缀 `_tn`(位于路径末尾或 query 前);去掉得原图。
+_SHOPEE_TN_SEG = re.compile(r"_tn(?=$|\?)", re.IGNORECASE)
+
+# mercadolibre/mercadolivre 图片分辨率前缀:`D_NQ_NP_<id>` 为标清,`D_NQ_NP_2X_<id>` 为 2 倍高清。
+_ML_RES_SEG = re.compile(r"D_NQ_NP_(?!2X_)", re.IGNORECASE)
 
 # query 中代表「签名/鉴权」的参数;一旦出现就保守地完全不动该 URL,
 # 以免重排/重编码破坏签名(评审 P1-4)。
@@ -149,6 +157,14 @@ def upgrade_to_hires(url: str, platform: str | None = None) -> str:
 
     if platform == "etsy":
         return _ETSY_SIZE_SEG.sub("il_fullxfull", url)
+
+    if platform == "shopee":
+        # 去缩放 query + 去缩略图后缀 _tn
+        return _SHOPEE_TN_SEG.sub("", _strip_scaling_query(url))
+
+    if platform == "mercadolibre":
+        # 把标清 D_NQ_NP_ 提到 2X 高清
+        return _ML_RES_SEG.sub("D_NQ_NP_2X_", url)
 
     if platform in ("temu", "tiktok"):
         return _strip_scaling_query(url)
