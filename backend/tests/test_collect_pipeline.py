@@ -98,7 +98,9 @@ def test_ingest_filters_junk(client, auth_headers):
         ],
     })
     assert r.status_code == 200
-    assert r.json()["count"] == 1  # 只留真商品图,商标/雪碧图/UI 全过滤
+    body = r.json()
+    assert body["count"] == 1  # 只留真商品图,商标/雪碧图/UI 全过滤
+    assert body["filtered"] == 3  # 4 张里过滤掉 3 张非商品图
     items = client.get("/api/collect-tasks/staging", headers=auth_headers).json()["items"]
     assert len(items) == 1 and items[0]["title"] == "Real Cup"
 

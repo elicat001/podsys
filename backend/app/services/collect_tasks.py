@@ -216,7 +216,8 @@ def list_staging(db: Session, owner_id: int, platform: str | None = None) -> lis
     if platform:
         conds.append(CollectedImage.platform == platform)
     rows = db.execute(
-        select(CollectedImage).join(CollectionTask).where(*conds).order_by(CollectedImage.id.desc())
+        # 按 id 升序 = 采集顺序(页面上的第一张/主图在前),卡片缩略图即主图,直观好认
+        select(CollectedImage).join(CollectionTask).where(*conds).order_by(CollectedImage.id.asc())
     ).scalars().all()
     return [image_to_dict(i) for i in rows]
 

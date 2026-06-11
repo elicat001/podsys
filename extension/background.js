@@ -33,7 +33,7 @@ async function ingestCards(cards, cfg) {
   if (r.status === 401) throw new Error("登录失效,请重新登录 PODStudio");
   if (!r.ok) throw new Error("ingest " + r.status);
   const d = await r.json();
-  return d.count || 0;
+  return { count: d.count || 0, filtered: d.filtered || 0 };
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -42,8 +42,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const cfg = await getCfg();
       if (!cfg.token) { sendResponse({ ok: false, error: "未登录" }); return; }
       try {
-        const count = await ingestCards(msg.cards, cfg);
-        sendResponse({ ok: count > 0, count, error: count ? "" : "没有有效商品" });
+        const { count, filtered } = await ingestCards(msg.cards, cfg);
+        sendResponse({ ok: count > 0, count, filtered, error: count ? "" : "没有有效商品" });
       } catch (e) {
         sendResponse({ ok: false, error: String((e && e.message) || e) });
       }

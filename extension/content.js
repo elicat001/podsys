@@ -179,7 +179,10 @@
     setStatus(`采集中… 共 ${cards.length} 个商品`);
     chrome.runtime.sendMessage({ type: "COLLECT", cards }, (resp) => {
       if (chrome.runtime.lastError) { setStatus("出错: " + chrome.runtime.lastError.message); return; }
-      if (resp && resp.ok) setStatus(`✓ 已采集 ${resp.count} 个到采集箱,去采集页勾选同步`);
+      if (resp && resp.ok) {
+        const f = resp.filtered ? `(已过滤 ${resp.filtered} 个非商品图)` : "";
+        setStatus(`✓ 已采集 ${resp.count} 个商品到采集箱${f},去采集页勾选同步`);
+      }
       else setStatus("失败: " + ((resp && resp.error) || "未知"));
     });
   }

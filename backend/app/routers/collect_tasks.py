@@ -82,7 +82,8 @@ def ingest(body: IngestIn, user: User = Depends(current_user), db: Session = Dep
     if not items:
         raise HTTPException(status_code=400, detail="items 不能为空")
     task = svc.ingest(db, owner_id=user.id, items=items, source=body.source, platform_hint=body.platform)
-    return {"task_id": task.id, "count": task.count, "status": "collected"}
+    # filtered = 收到但被「非商品图」过滤掉的张数(商标/雪碧图/UI),前端据此提示用户「已自动过滤」
+    return {"task_id": task.id, "count": task.count, "filtered": max(0, len(items) - task.count), "status": "collected"}
 
 
 @router.get("/staging")
