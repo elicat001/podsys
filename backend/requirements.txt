@@ -28,3 +28,6 @@ vtracer>=0.6
 # **还需系统装 tesseract 二进制**:生产 `apt install -y tesseract-ocr tesseract-ocr-eng`,
 # Windows `winget install UB-Mannheim.TesseractOCR`。二进制缺失时静默降级(标题走纯规则,不报错)。
 pytesseract>=0.3.10
+# 采集同步时服务端取 CDN 图的 SSL 根证书包(本机/Windows 系统 CA 链常缺失会报
+# CERTIFICATE_VERIFY_FAILED;certifi 自带完整 CA 解决)。本就是 openai/httpx 的传递依赖,这里显式登记。
+certifi>=2024.2

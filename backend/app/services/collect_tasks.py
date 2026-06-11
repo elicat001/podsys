@@ -8,7 +8,10 @@
 from __future__ import annotations
 
 import io
+import ssl
+import urllib.error
 import urllib.request
+from functools import lru_cache
 from urllib.parse import urlparse
 
 from PIL import Image
@@ -38,6 +41,22 @@ def _origin(url: str) -> str:
     return ""
 
 
+@lru_cache(maxsize=1)
+def _verified_ctx() -> ssl.SSLContext:
+    """带 CA 根证书的 SSL 上下文。优先用 certifi 的 CA bundle —— 本机(尤其 Windows)
+    系统 CA 链常缺失,会报 CERTIFICATE_VERIFY_FAILED;certifi 自带一份完整 CA 解决之。"""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # noqa: BLE001
+        return ssl.create_default_context()
+
+
+def _read_url(req: urllib.request.Request, ctx: ssl.SSLContext) -> bytes:
+    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:  # noqa: S310
+        return resp.read(_MAX_FETCH_BYTES + 1)
+
+
 def _fetch_image(url: str, referer: str = "") -> Image.Image:
     """服务端取 CDN 图(带浏览器 UA + Referer 过基础防盗链)。
     抽成独立函数:测试里 monkeypatch 它即可离线、不触网。"""
@@ -45,8 +64,14 @@ def _fetch_image(url: str, referer: str = "") -> Image.Image:
     if referer:
         headers["Referer"] = referer
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 (固定 http(s) CDN 图)
-        data = resp.read(_MAX_FETCH_BYTES + 1)
+    try:
+        data = _read_url(req, _verified_ctx())
+    except urllib.error.URLError as e:
+        # 本机 CA 链不全(Windows 常见)→ 取「公开商品图」非敏感数据,退一步用不校验上下文重试。
+        reason = getattr(e, "reason", None)
+        if not (isinstance(reason, ssl.SSLError) or "CERTIFICATE_VERIFY" in str(e)):
+            raise
+        data = _read_url(req, ssl._create_unverified_context())  # noqa: S323
     if len(data) > _MAX_FETCH_BYTES:
         raise ValueError("图片过大,超出上限")
     img = Image.open(io.BytesIO(data))
