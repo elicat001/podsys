@@ -35,10 +35,9 @@ def test_list_steps_ok(client, auth_headers):
     assert r.status_code == 200, r.text
     steps = r.json()
     ids = {s["id"] for s in steps}
-    expected = {"extract", "split", "mockup", "production", "title",
-                "variants", "compress", "seamless"}
+    expected = {"extract", "split", "mockup", "production", "title", "variants"}
     assert expected <= ids
-    assert len(steps) >= 8
+    assert len(steps) >= 6
     for s in steps:
         assert "id" in s
         assert "label" in s
@@ -58,7 +57,7 @@ def test_run_custom_ok(client, auth_headers, png):
     r = client.post(
         "/api/workflows/run-custom",
         headers=auth_headers,
-        data={"steps": "extract,mockup,compress", "params": "{}"},
+        data={"steps": "extract,mockup,production", "params": "{}"},
         files={"file": ("in.png", png(), "image/png")},
     )
     assert r.status_code == 200, r.text
@@ -75,8 +74,8 @@ def test_run_custom_ok(client, auth_headers, png):
     job = jr.json()
     assert job["status"] == "done", job
     outputs = job["result"]["outputs"]
-    assert any("compressed." in o for o in outputs), outputs
-    assert job["result"]["steps_run"] == ["extract", "mockup", "compress"]
+    assert any("production.png" in o for o in outputs), outputs
+    assert job["result"]["steps_run"] == ["extract", "mockup", "production"]
 
 
 def test_run_custom_invalid_step_refunds(client, auth_headers, png):

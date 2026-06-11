@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 from PIL import Image, ImageDraw
 
-from app.services.workflow import run_workflow, list_workflows, STEP_REGISTRY
+from app.services.workflow import run_workflow, STEP_REGISTRY
 
 
 def _png() -> io.BytesIO:
@@ -29,15 +29,14 @@ def test_run_workflow_offline_produces_outputs(tmp_path, monkeypatch):
 
 
 def test_tee_full_pipeline_offline(monkeypatch):
-    """全链路离线:variants 现在走本地引擎产出真实变体,compress/生产/标题均真实产出。"""
+    """全链路离线:variants 走本地引擎产出真实变体,套图/生产/标题均真实产出。"""
     img = Image.open(_png())
     out = run_workflow(img, "tee-full", job_id="wffull1")
     # batch11:variants 无 key 也能跑(本地配色裂变),产出 variant_*
     assert any("variant_" in u for u in out["outputs"])
-    # compress 真实产出 + 生产图 + 标题
-    assert "compress" in out["meta"] and out["meta"]["compress"]["output_bytes"] > 0
+    # 套图 + 生产图 + 标题
+    assert any("mockup_" in u for u in out["outputs"])
     assert any("production.png" in u for u in out["outputs"])
-    assert any("compressed." in u for u in out["outputs"])
     assert out["meta"].get("title")
 
 

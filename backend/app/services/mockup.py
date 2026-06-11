@@ -210,8 +210,5 @@ def render_product(print_img: Image.Image, template_id: str = "tshirt",
     return render_mockup(print_img, template_id, color), "local"
 
 
-def render_batch(print_img: Image.Image, template_ids: list[str]) -> dict[str, Image.Image]:
-    """一次把同一印花贴到多个产品模板(各用其默认配色)。"""
-    return {tid: render_mockup(print_img, tid) for tid in template_ids}
 
 

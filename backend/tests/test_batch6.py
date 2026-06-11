@@ -1,4 +1,4 @@
-"""Batch 6:四方连续图(离线)+ ip_guard verbose 分级 + gpt-image key 路径计费(mock)。"""
+"""Batch 6:ip_guard verbose 分级(P2-2)。"""
 from __future__ import annotations
 import io
 from PIL import Image, ImageDraw
@@ -8,16 +8,6 @@ def _png(size=(120, 100)) -> io.BytesIO:
     img = Image.new("RGB", size, (255, 255, 255))
     ImageDraw.Draw(img).ellipse([20, 20, 90, 80], fill=(200, 60, 40))
     buf = io.BytesIO(); img.save(buf, "PNG"); buf.seek(0); return buf
-
-
-# ---------- 四方连续图(离线真实) ----------
-def test_seamless_service_dimensions():
-    from app.services.seamless import mirror_block, seamless_pattern
-    img = Image.open(_png((100, 80)))
-    blk = mirror_block(img)
-    assert blk.size == (200, 160) and blk.mode == "RGBA"
-    pat = seamless_pattern(img, repeat=2)
-    assert pat.size == (400, 320)  # 2x2 镜像块 再 2x2 平铺
 
 
 # ---------- ip_guard verbose 分级(P2-2) ----------

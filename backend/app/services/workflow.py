@@ -95,18 +95,6 @@ def _variants(ctx: dict) -> None:
         _save(ctx, f"variant_{i+1}.png", im)
 
 
-@step("seamless")  # 四方连续图(离线,服饰家纺连续印花)
-def _seamless(ctx: dict) -> None:
-    from .seamless import seamless_pattern
-    try:
-        out = seamless_pattern(ctx["image"], repeat=int(ctx["params"].get("repeat", 2)))
-    except ValueError as exc:
-        ctx["meta"].setdefault("skipped", []).append(f"seamless({exc})")
-        return
-    ctx["image"] = out
-    _save(ctx, "seamless.png", out)
-
-
 @step("video")  # 商品展示视频(离线 GIF,流水线末端出短片)
 def _video(ctx: dict) -> None:
     from .video import make_showcase
@@ -118,27 +106,6 @@ def _video(ctx: dict) -> None:
     storage.output_path(ctx["job_id"], "showcase.gif").write_bytes(res["bytes"])
     ctx["outputs"].append(storage.output_url(ctx["job_id"], "showcase.gif"))
     ctx["meta"]["video"] = {k: res[k] for k in ("frames", "width", "height", "duration_ms")}
-
-
-@step("compress")  # 裁剪压缩(离线,导出前归一化尺寸/体积/格式)
-def _compress(ctx: dict) -> None:
-    from .image_tools import compress_image
-    try:
-        final, encoded, info = compress_image(
-            ctx["image"],
-            target_w=int(ctx["params"].get("target_w", 0)),
-            target_h=int(ctx["params"].get("target_h", 0)),
-            quality=int(ctx["params"].get("quality", 85)),
-            fmt=ctx["params"].get("fmt", "jpeg"),
-        )
-    except ValueError as exc:  # 非法 fmt/尺寸越界 → 跳过,不让整条工作流 500
-        ctx["meta"].setdefault("skipped", []).append(f"compress({exc})")
-        return
-    fmt = info.get("format", "jpeg")
-    name = f"compressed.{fmt}"
-    storage.output_path(ctx["job_id"], name).write_bytes(encoded)
-    ctx["outputs"].append(storage.output_url(ctx["job_id"], name))
-    ctx["meta"]["compress"] = info
 
 
 # ---------------- 预设工作流(对标灵图首页卡片) ----------------
@@ -162,10 +129,10 @@ WORKFLOWS: dict[str, dict] = {
         "defaults": {"templates": ["canvas"], "split_mode": "horizontal", "panels": 3},
     },
     "tee-full": {
-        "label": "T恤-全链路(提取·裂变·套图·压缩·生产·标题)",
-        "desc": "输入图 → 提取 → 图裂变(需AI,无key跳过)→ 套图 → 压缩 → 生产图 → 标题",
-        "steps": ["extract", "variants", "mockup", "compress", "production", "title"],
-        "defaults": {"templates": ["tshirt"], "variant_n": 3, "fmt": "jpeg", "target_w": 1200},
+        "label": "T恤-全链路(提取·裂变·套图·生产·标题)",
+        "desc": "输入图 → 提取 → 图裂变(需AI,无key跳过)→ 套图 → 生产图 → 标题",
+        "steps": ["extract", "variants", "mockup", "production", "title"],
+        "defaults": {"templates": ["tshirt"], "variant_n": 3},
     },
 }
 
@@ -178,8 +145,6 @@ STEP_META: dict[str, dict] = {
     "extract":    {"label": "印花提取",   "category": "印花提取", "needs_ai": False, "offline": True},
     "variants":   {"label": "图裂变(AI)", "category": "印花设计", "needs_ai": True,  "offline": False},
     "split":      {"label": "多联裂变",   "category": "图案处理", "needs_ai": False, "offline": True},
-    "seamless":   {"label": "四方连续图", "category": "图案处理", "needs_ai": False, "offline": True},
-    "compress":   {"label": "裁剪压缩",   "category": "图案处理", "needs_ai": False, "offline": True},
     "mockup":     {"label": "商品套图",   "category": "套图标题", "needs_ai": False, "offline": True},
     "title":      {"label": "标题提取",   "category": "套图标题", "needs_ai": False, "offline": True},
     "production": {"label": "履约生产图", "category": "履约",     "needs_ai": False, "offline": True},

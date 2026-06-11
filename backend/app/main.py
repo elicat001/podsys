@@ -27,7 +27,6 @@ from .web_utils import submit_celery
 from sqlalchemy.orm import Session
 from .routers import auth as auth_router
 from .routers import assets as assets_router
-from .routers import design as design_router
 from .routers import products as products_router
 from .routers import jobs as jobs_router
 from .routers import billing as billing_router
@@ -80,7 +79,6 @@ async def _no_cache_html(request, call_next):
 
 app.include_router(auth_router.router)
 app.include_router(assets_router.router)
-app.include_router(design_router.router)
 app.include_router(products_router.router)
 app.include_router(jobs_router.router)
 app.include_router(billing_router.router)

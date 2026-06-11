@@ -24,7 +24,7 @@ def test_run_custom_rejects_ai_step_and_refunds(client, auth_headers):
 
 def test_run_custom_offline_still_ok(client, auth_headers):
     r = client.post("/api/workflows/run-custom", headers=auth_headers,
-                    data={"steps": "extract,mockup,compress", "params": "{}"},
+                    data={"steps": "extract,mockup,production", "params": "{}"},
                     files={"file": ("x.png", _png(), "image/png")})
     assert r.status_code == 200, r.text
     jid = r.json()["job_id"]
