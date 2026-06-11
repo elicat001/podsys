@@ -17,6 +17,30 @@ function copyText(t) {
   )
 }
 
+const downloading = ref(false)
+async function downloadExt() {
+  if (downloading.value) return
+  downloading.value = true
+  try {
+    const resp = await fetch('/api/extension/download', { cache: 'no-store' })
+    if (!resp.ok) throw new Error('HTTP ' + resp.status)
+    const blob = await resp.blob()
+    if (blob.type && blob.type.includes('json')) throw new Error('后端未就绪')
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'pod-collector-extension.zip'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(a.href)
+    ElMessage.success('插件已下载,解压后按下方第 2 步加载')
+  } catch (e) {
+    ElMessage.error('下载失败:' + (e.message || e) + ' — 后端可能未启动,请稍后重试')
+  } finally {
+    downloading.value = false
+  }
+}
+
 async function loadTasks() {
   try { tasks.value = (await api.get('/collect-tasks')).data || [] } catch (e) {}
 }
@@ -54,7 +78,9 @@ onMounted(loadTasks)
           <div class="ptitle">🦏 插件采集 <span class="badge">推荐</span></div>
           <div class="muted sm">在 Temu 页面右下角浮出采集面板,整页/单图一键采,带你的登录态、绕过反爬。</div>
         </div>
-        <a class="btn-primary dl" href="/api/extension/download" download>⬇ 下载采集插件</a>
+        <button class="btn-primary dl" :disabled="downloading" @click="downloadExt">
+          {{ downloading ? '下载中…' : '⬇ 下载采集插件' }}
+        </button>
       </div>
       <div class="steps">
         <div class="step">
