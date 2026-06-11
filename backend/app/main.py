@@ -6,6 +6,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Bac
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
 from .config import settings
@@ -56,6 +57,15 @@ from .routers import extension as extension_router
 app = FastAPI(title="PODStudio API", version="0.3.0")
 settings.ensure_dirs()
 init_db()
+
+# 仅放行「浏览器扩展」跨源访问(采集助手 background SW 回传)。
+# 限定 chrome-extension:// 来源 → 不对任意网站开放;且所有接口仍需 Bearer 鉴权,无 cookie 凭据,风险低。
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"chrome-extension://.*",
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.middleware("http")

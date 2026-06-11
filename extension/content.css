@@ -1,24 +1,48 @@
 /* PODStudio 采集助手 — 注入 UI 样式(高 z-index,避免被电商页盖住) */
+
+/* 悬浮球:默认右上角,可拖动,点击展开面板 */
+#pod-ball {
+  position: fixed; top: 84px; right: 22px; z-index: 2147483646;
+  width: 50px; height: 50px; border-radius: 50%;
+  background: linear-gradient(135deg, #ff7a18, #ff5d3b); color: #fff;
+  font-size: 24px; display: flex; align-items: center; justify-content: center;
+  cursor: grab; box-shadow: 0 4px 16px rgba(0, 0, 0, .45); user-select: none;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+#pod-ball:hover { transform: scale(1.06); box-shadow: 0 6px 22px rgba(255, 93, 59, .5); }
+#pod-ball:active { cursor: grabbing; }
+#pod-ball .pod-badge {
+  position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px;
+  padding: 0 4px; border-radius: 9px; background: #1c1c20; color: #fff;
+  font-size: 11px; line-height: 18px; text-align: center;
+  border: 1.5px solid #ff5d3b; font-family: -apple-system, "Microsoft YaHei", sans-serif; font-weight: 700;
+}
+
+/* 采集面板(点击悬浮球展开;位置由 JS 贴着球计算) */
 #pod-panel {
-  position: fixed; right: 18px; bottom: 18px; z-index: 2147483646;
-  width: 220px; padding: 12px; border-radius: 12px;
-  background: #1c1c20; color: #eee; box-shadow: 0 8px 28px rgba(0,0,0,.45);
+  position: fixed; z-index: 2147483646;
+  width: 240px; padding: 12px; border-radius: 12px;
+  background: #1c1c20; color: #eee; box-shadow: 0 8px 28px rgba(0, 0, 0, .5);
   font: 13px/1.5 -apple-system, "Microsoft YaHei", sans-serif;
 }
 #pod-panel .pod-hd { display: flex; justify-content: space-between; align-items: center; font-weight: 700; margin-bottom: 10px; }
-#pod-panel .pod-x { cursor: pointer; opacity: .6; font-size: 16px; }
+#pod-panel .pod-x { cursor: pointer; opacity: .6; font-size: 18px; line-height: 1; }
 #pod-panel .pod-x:hover { opacity: 1; }
 #pod-panel .pod-all {
   width: 100%; padding: 9px; border: none; border-radius: 9px; cursor: pointer;
-  background: linear-gradient(135deg,#ff7a18,#ff5d3b); color: #fff; font-weight: 700; font-size: 13px;
+  background: linear-gradient(135deg, #ff7a18, #ff5d3b); color: #fff; font-weight: 700; font-size: 13px;
 }
 #pod-panel .pod-all:hover { filter: brightness(1.06); }
 #pod-panel .pod-st { margin: 9px 0 6px; min-height: 18px; font-size: 12px; color: #bbb; }
+#pod-panel .pod-target { font-size: 11px; color: #888; margin: 4px 0 8px; word-break: break-all; }
+#pod-panel .pod-target b { color: #bbb; font-weight: 600; }
 #pod-panel .pod-link { color: #ff8a3d; font-size: 12px; text-decoration: none; }
 #pod-panel .pod-link:hover { text-decoration: underline; }
+
+/* 单图悬停采集按钮 */
 #pod-hover-btn {
   position: absolute; z-index: 2147483647; padding: 4px 9px; border: none; border-radius: 7px;
-  background: rgba(255,93,59,.95); color: #fff; font: 700 12px/1 -apple-system, "Microsoft YaHei", sans-serif;
-  cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.4);
+  background: rgba(255, 93, 59, .95); color: #fff; font: 700 12px/1 -apple-system, "Microsoft YaHei", sans-serif;
+  cursor: pointer; box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
 }
 #pod-hover-btn:hover { background: #ff5d3b; }

@@ -19,11 +19,17 @@ async function ingestCards(cards, cfg) {
     platform: String(c.platform || "").slice(0, 32),
   })).filter((it) => it.url);
   if (!items.length) return 0;
-  const r = await fetch(cfg.api + "/api/collect-tasks/ingest", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + cfg.token },
-    body: JSON.stringify({ source: "plugin", platform: "", items }),
-  });
+  let r;
+  try {
+    r = await fetch(cfg.api + "/api/collect-tasks/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + cfg.token },
+      body: JSON.stringify({ source: "plugin", platform: "", items }),
+    });
+  } catch (e) {
+    // "Failed to fetch" 多半是地址不可达:本地后端没开,或弹窗里选错了线上/本地
+    throw new Error(`连不上后端 ${cfg.api} — 请在插件弹窗确认地址(线上/本地)且后端在线`);
+  }
   if (r.status === 401) throw new Error("登录失效,请重新登录 PODStudio");
   if (!r.ok) throw new Error("ingest " + r.status);
   const d = await r.json();
