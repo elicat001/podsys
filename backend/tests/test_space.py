@@ -94,6 +94,41 @@ def test_trash_restore_purge_flow(client, auth_headers, png):
     assert q["trash"]["count"] == 0
 
 
+def test_purge_removes_disk_file_and_drops_quota(client, auth_headers, png):
+    """回归:经 POST /api/assets 入库的资产,永久删除时必须真删盘 + quota 下降。
+
+    曾经的 bug:add_asset 把 Asset.path 存成磁盘绝对路径,而 purge 的 _delete_asset_file
+    只认 /files/ 前缀 → 直接跳过不删盘 → DB 行删了但磁盘文件残留(存储泄漏),
+    且 quota 磁盘游走仍把孤儿文件计进 used_bytes(永久删除后存储不下降)。
+    """
+    from app import storage
+
+    aid = _add_asset(client, auth_headers, png=png, shape="noise", source="upload", seed=101)
+
+    # path 必须是 /files/ URL(否则 purge 删不掉盘),并能解析回磁盘文件
+    db = SessionLocal()
+    try:
+        a = db.get(Asset, aid)
+        assert a is not None
+        assert a.path.startswith("/files/"), f"Asset.path 应为 /files/ URL,实为 {a.path!r}"
+        disk = storage.path_from_url(a.path)
+    finally:
+        db.close()
+    assert disk is not None and disk.is_file(), "上传后磁盘上应有 asset.png"
+
+    before = client.get("/api/space/quota", headers=auth_headers).json()["used_bytes"]
+    assert before > 0
+
+    # 永久删除
+    r = client.delete(f"/api/space/assets/{aid}/purge", headers=auth_headers)
+    assert r.status_code == 200 and r.json()["purged"] is True
+
+    # 文件确实从磁盘消失 + quota 下降(否则即存储泄漏)
+    assert not disk.exists(), "purge 后磁盘文件应被删除,否则存储泄漏"
+    after = client.get("/api/space/quota", headers=auth_headers).json()["used_bytes"]
+    assert after < before, "purge 后 quota used_bytes 应下降"
+
+
 def test_thumbnail_endpoint_caches_and_purge_cleans(client, png):
     """/files?w 返回缓存缩略图(更小 + immutable 头 + 盘上缓存、二次不重建);删文件时连缩略图一起删。"""
     from PIL import Image

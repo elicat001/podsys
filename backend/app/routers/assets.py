@@ -29,14 +29,16 @@ def add_asset(file: UploadFile = File(...), source: str = Form("upload"),
     # 入库前先做侵权/查重
     chk = check_image(db, img, owner_id=user.id)
     job_id = storage.new_job_id()
-    path = storage.output_path(job_id, "asset.png")
-    img.convert("RGBA").save(path, format="PNG")
-    asset = Asset(owner_id=user.id, name=file.filename or "asset", path=str(path),
+    img.convert("RGBA").save(storage.output_path(job_id, "asset.png"), format="PNG")
+    # path 存 /files/ URL(与 collect_tasks.sync_images / save_as_asset 一致):
+    # 这样「永久删除」(space._delete_asset_file)能真删盘释放空间,quota 磁盘游走也能正确计入。
+    # 历史 bug:这里曾存磁盘绝对路径,purge 只认 /files/ 前缀→跳过不删→DB 行删了文件却残留(存储泄漏)。
+    url = storage.output_url(job_id, "asset.png")
+    asset = Asset(owner_id=user.id, name=file.filename or "asset", path=url,
                   dhash=chk["dhash"], chash=chk["chash"], source=source, risk=chk["risk"],
                   size_bytes=len(raw))
     db.add(asset); db.commit(); db.refresh(asset)
-    return {"asset_id": asset.id, "risk": asset.risk, "url": storage.output_url(job_id, "asset.png"),
-            "infringement": chk}
+    return {"asset_id": asset.id, "risk": asset.risk, "url": url, "infringement": chk}
 
 
 @router.get("")
