@@ -14,7 +14,7 @@ const STATS = [
   ['credits', '余额(点)'], ['assets', '素材'], ['products', '商品'], ['jobs', '作业'],
 ]
 const ENTRIES = [
-  { name: '找图', desc: '以图搜图 / 采集', to: '/app/find', g: 'a' },
+  { name: '找图', desc: '跨境电商商品图采集', to: '/app/find', g: 'a' },
   { name: '作图', desc: '22+ 设计工具', to: '/app/design', g: 'b' },
   { name: '视频', desc: '展示视频 / 案例库', to: '/app/video', g: 'c' },
   { name: '上架', desc: '店铺 / 商品 / 模板', to: '/app/publish', g: 'd' },

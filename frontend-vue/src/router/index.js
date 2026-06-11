@@ -14,8 +14,7 @@ const routes = [
       // 首页
       { path: 'home', component: () => import('../views/Home.vue') },
       // 找图
-      { path: 'find', redirect: '/app/find/search' },
-      { path: 'find/search', component: () => import('../views/Search.vue') },
+      { path: 'find', redirect: '/app/find/collect' },
       { path: 'find/collect', component: () => import('../views/Collect.vue') },
       // 作图(画廊 + 工具运行 + 工作流 + DIY)
       { path: 'design', component: () => import('../views/DesignHome.vue') },

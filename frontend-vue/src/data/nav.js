@@ -15,7 +15,6 @@ export const MODULES = [
 export const SIDEBARS = {
   home: [{ icon: '🏠', label: '工作台', to: '/app/home' }],
   find: [
-    { icon: '🔎', label: '以图搜图', to: '/app/find/search' },
     { icon: '🌐', label: '采集', to: '/app/find/collect' },
   ],
   design: [

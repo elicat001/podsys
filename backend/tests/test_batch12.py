@@ -32,16 +32,6 @@ def test_generate_offline_lands_in_library(client, auth_headers):
     assert ov1 == ov0 + 1
 
 
-def test_library_then_search_finds_it(client, auth_headers):
-    # 先用一张图生成产物入库,再以同结构图搜图 → 能搜到(不再永远空)
-    client.post("/api/process", headers=auth_headers, data={"template": "tshirt"},
-                files={"file": ("x.png", _png(5), "image/png")})
-    r = client.post("/api/search/by-image", headers=auth_headers,
-                    files={"file": ("q.png", _png(5), "image/png")})
-    assert r.status_code == 200
-    assert r.json()["count"] >= 1, "库里有产物后,以图搜图应能命中"
-
-
 # ---------- 根因②:真·超分(放大输入,非整条流水线出套图) ----------
 def test_upscale_actually_enlarges(client, auth_headers):
     r = client.post("/api/image-tools/upscale", headers=auth_headers,
