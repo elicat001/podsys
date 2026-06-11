@@ -4,6 +4,7 @@
   "version": "0.2.0",
   "description": "在 Temu 商品页一键采集高清图,直接进 PODStudio 素材库(带登录态,绕过反爬)。",
   "permissions": ["storage"],
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "host_permissions": [
     "*://*.temu.com/*",
     "*://*.kwcdn.com/*",
@@ -12,7 +13,11 @@
     "http://localhost:10000/*",
     "http://localhost:5173/*"
   ],
-  "action": { "default_popup": "popup.html", "default_title": "PODStudio 采集助手" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PODStudio 采集助手",
+    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+  },
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
