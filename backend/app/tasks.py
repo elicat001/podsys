@@ -376,6 +376,33 @@ def _work_ipguard(job_id: str, job: Job, db: Session) -> dict:
     return report
 
 
+def _work_sync(job_id: str, job: Job, db: Session) -> dict:
+    """采集同步(一个商品=一个任务):对 params.image_ids 服务端取图入库,标侵权风险。
+    采集免费,不扣点(op=None,失败不退点);最多并发数由 worker 决定(默认 3)。"""
+    from sqlalchemy import select as _select
+
+    from .models_collect import CollectedImage
+    from .services import collect_tasks as ct
+    ids = [int(i) for i in (job.params.get("image_ids") or [])]
+    if job.owner_id is None or not ids:
+        return {"synced": 0, "failed": 0, "title": job.params.get("title", ""), "errors": ["无效任务"]}
+    res = ct.sync_images(db, job.owner_id, ids)
+    # 缩略图 = 本组首张已同步素材,任务卡片/最近任务直接显示
+    thumb = ""
+    rows = db.execute(
+        _select(CollectedImage).where(CollectedImage.id.in_(ids), CollectedImage.synced == True)  # noqa: E712
+    ).scalars().all()
+    if rows:
+        thumb = rows[0].asset_url or ""
+    out = {
+        "synced": res["synced"], "failed": res["failed"],
+        "title": job.params.get("title", ""), "image_url": thumb, "errors": res.get("errors", []),
+    }
+    if res["synced"] == 0 and res["failed"] > 0:  # 全失败 → 标记作业 error(最近任务显示失败)
+        raise RuntimeError(res["errors"][0] if res["errors"] else "同步取图失败")
+    return out
+
+
 # kind → (work, refund_op, n_param)。n_param 非空时退点笔数 = job.params[n_param](如裂变按张扣)。
 TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
     "generate": (_work_generate, "generate", None),
@@ -393,6 +420,8 @@ TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
     # 分析类(信息结果,丢任务中心)
     "title": (_work_title, None, None),       # 退点在 worker 内按 degrade 处理,不走通用退点
     "ipguard": (_work_ipguard, "process", None),
+    # 采集同步(免费,不扣点 → op=None)
+    "collect_sync": (_work_sync, None, None),
 }
 
 

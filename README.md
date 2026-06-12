@@ -6,12 +6,12 @@
 
 | 层 | 模块 | 状态 |
 |---|---|---|
-| ① 采集层 | Chrome 插件抓取 Temu/Amazon/Etsy/TikTok 高清图 | 🔲 规划(`extension/`) |
+| ① 采集层 | 浏览器插件多平台采集(Temu/Amazon/Shopee/美客多/TikTok)→ 采集箱 → 同步入库「找图」 | 🟢 已实现(`extension/`) |
 | ② AI 图像层 | 抠图 / 印花提取 / 文生图 / 换装换背景 / 无损放大 / 侵权检测 | 🟡 MVP(可插拔 Provider) |
 | ③ 设计工作流 | 套图 mockup / DIY 编辑器 / 多图裁剪 / 多联画 | 🟡 MVP(套图合成) |
 | ④ 商品/上架 | 商品库 / 店铺管理 / 一键上架 | 🔲 留接口 |
 | ⑤ 履约层 | 生产图生成 / 工厂对接 | 🟡 MVP(导出生产文件) |
-| ⑥ 平台底座 | 多租户 / 计费 / 任务队列 / 存储 / 鉴权 | 🟡 MVP(本地存储+任务模型) |
+| ⑥ 平台底座 | 多租户 / 计费 / 异步任务队列(Celery)/ 存储 / 鉴权 | 🟡 MVP(本地存储+任务模型) |
 
 ## MVP 主线(已实现/在建)
 
@@ -19,10 +19,10 @@
 
 ## 技术栈
 
-- 后端:Python 3 + FastAPI + Uvicorn
+- 后端:Python 3 + FastAPI + Uvicorn;耗时作业走 **Celery + 独立 Redis(6380)** 异步队列
 - 图像:Pillow 打底 + **本地引擎**(rembg 抠图 / Real-ESRGAN 超分 / vtracer 转矢量 / OpenCV);可切换 OpenAI 兼容网关或第三方 API
-- 前端:静态 HTML/JS(MVP);后续可换 Next.js + Fabric.js 编辑器
-- 存储:本地文件(MVP);后续 S3/MinIO/OSS
+- 前端:**Vue 3 SPA**(`frontend-vue/`:Vite + vue-router + pinia + element-plus,深色风格;需登录)
+- 存储:本地文件 + SQLite(MVP);后续 S3/MinIO/OSS + Postgres
 
 ## 快速开始
 

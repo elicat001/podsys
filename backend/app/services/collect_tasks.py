@@ -111,18 +111,26 @@ _JUNK_URL_RE = re.compile(
     r"/captcha|x-locale|prime[-_]?(?:logo|badge)|/g/01/|smile\.amazon",
     re.IGNORECASE,
 )
+# 「买家秀/评论图」:标题(来自 img alt)多为 "Customer Image, click to open customer review",
+# 这类图常是占位/裁切图,采进来显示不出来(用户反馈的黑卡)。后端按标题兜底过滤(防旧版插件漏网)。
+_JUNK_TITLE_RE = re.compile(
+    r"customer image|customer review|click to open|review image|buyer show", re.IGNORECASE
+)
 
 
-def _looks_like_junk(url: str, platform: str) -> bool:
-    """是否「非商品图」(品牌商标/导航雪碧图/UI 图标等)→ 采集时过滤。
+def _looks_like_junk(url: str, platform: str, title: str = "") -> bool:
+    """是否「非商品图」(品牌商标/导航雪碧图/UI 图标/买家秀评论图等)→ 采集时过滤。
 
     - 通用:URL 含 sprite/logo/icon/favicon/placeholder 等关键词;
-    - 亚马逊:商品主图在 `/images/I/`,而 `/images/G/`、`/images/S/` 等是站点 UI/品牌/导航资源。
+    - 亚马逊:商品主图在 `/images/I/`,而 `/images/G/`、`/images/S/` 等是站点 UI/品牌/导航资源;
+    - 标题/alt 命中「customer image / customer review」→ 评论区买家秀图,排除。
     """
     u = (url or "").lower()
     if not u:
         return True
     if _JUNK_URL_RE.search(u):
+        return True
+    if title and _JUNK_TITLE_RE.search(title):
         return True
     if platform == "amazon" and "/images/" in u and "/images/i/" not in u:
         return True
@@ -149,8 +157,8 @@ def ingest(
         if not url:
             continue
         plat = (it.get("platform") or platform_hint or detect_platform(url)) or "unknown"
-        if _looks_like_junk(url, plat):
-            continue  # 品牌商标/导航雪碧图/UI 图标 → 不采
+        if _looks_like_junk(url, plat, it.get("title") or ""):
+            continue  # 品牌商标/导航雪碧图/UI 图标/买家秀评论图 → 不采
         hires = (it.get("hires_url") or "").strip() or upgrade_to_hires(url, plat)
         db.add(
             CollectedImage(
@@ -198,6 +206,20 @@ def delete_staging(db: Session, owner_id: int, image_ids: list[int]) -> int:
         n += 1
     db.commit()
     return n
+
+
+def filter_syncable(db: Session, owner_id: int, image_ids: list[int]) -> list[int]:
+    """从一批 id 里筛出「本人 + 未同步」的(owner 隔离 + 去掉已同步/越权)。异步同步建任务前用,避免重复同步/越权。"""
+    if not image_ids:
+        return []
+    rows = db.execute(
+        select(CollectedImage.id).join(CollectionTask).where(
+            CollectionTask.owner_id == owner_id,
+            CollectedImage.id.in_(image_ids),
+            CollectedImage.synced == False,  # noqa: E712
+        )
+    ).scalars().all()
+    return list(rows)
 
 
 def sync_images(db: Session, owner_id: int, image_ids: list[int], fetcher=None) -> dict:

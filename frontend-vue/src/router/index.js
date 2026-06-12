@@ -33,6 +33,7 @@ const routes = [
       // 我的空间
       { path: 'space', component: () => import('../views/MySpace.vue') },
       { path: 'space/tasks', component: () => import('../views/TaskList.vue') },  // 某模块的「详情列表」
+      { path: 'space/collected', component: () => import('../views/CollectedList.vue') },  // 找图某平台的「详情列表」
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },

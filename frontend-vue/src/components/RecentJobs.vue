@@ -4,7 +4,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '../stores/auth.js'
 import { listJobs, JOB_STATUS, timeAgo } from '../api/jobs.js'
-import { toolForJob } from '../data/tools.js'
+import { jobLabel } from '../data/tools.js'
 
 const router = useRouter()
 const auth = useAuth()
@@ -16,11 +16,6 @@ const activeCount = computed(() => jobs.value.filter((j) => j.status === 'pendin
 async function refresh() {
   if (!auth.isLoggedIn) return
   try { jobs.value = await listJobs({ limit: 8 }) } catch (e) { /* 静默 */ }
-}
-
-function label(job) {
-  const t = toolForJob(job)
-  return t ? `${t.icon} ${t.name}` : job.kind
 }
 
 function goTaskCenter() {
@@ -51,7 +46,7 @@ onUnmounted(() => clearInterval(timer))
       <div v-if="!jobs.length" class="rj-empty muted">暂无任务</div>
       <ul v-else class="rj-list">
         <li v-for="j in jobs" :key="j.id" class="rj-item" @click="goTaskCenter">
-          <span class="rj-name">{{ label(j) }}</span>
+          <span class="rj-name">{{ jobLabel(j) }}</span>
           <el-tag :type="JOB_STATUS[j.status]?.type || 'info'" size="small" effect="light">
             {{ JOB_STATUS[j.status]?.label || j.status }}
           </el-tag>

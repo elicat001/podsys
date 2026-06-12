@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listStaging, deleteStaging, syncImages } from '../api/collect.js'
+import { listStaging, deleteStaging, submitSync, productKey } from '../api/collect.js'
 
 const router = useRouter()
 
@@ -19,20 +19,7 @@ const platforms = computed(() => [...new Set(staging.value.map((s) => s.platform
 const allShownSelected = computed(
   () => stShown.value.length > 0 && stShown.value.every((s) => stSelected.value.includes(s.id)),
 )
-// 从来源链接提取「商品唯一标识」做归一:同一商品的不同跟踪链接(/dp/ASIN/ref=...?crid=..)归为一组,
-// 避免同款被拆成多块。Amazon 取 ASIN、Temu 取 goods_id,其余用 origin+去参去 ref 的 path。
-function productKey(url) {
-  if (!url) return ''
-  try {
-    const u = new URL(url)
-    const m = u.pathname.match(/\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Za-z0-9]{10})/)
-    if (m) return 'asin:' + m[1].toUpperCase()
-    const gid = u.searchParams.get('goods_id') || u.searchParams.get('goodsId')
-    if (gid) return 'goods:' + gid
-    return u.origin + u.pathname.replace(/\/ref=.*$/, '')
-  } catch (e) { return url }
-}
-// 智能分类:按商品归一标识把暂存图分组,一块=一个商品的多张图;无来源的各自成块。
+// 智能分类:按商品归一标识(productKey,采集箱/找图共用)把暂存图分组,一块=一个商品的多张图;无来源的各自成块。
 const stGroups = computed(() => {
   const map = new Map()
   for (const it of stShown.value) {
@@ -74,14 +61,21 @@ function stToggleAll() {
 }
 async function doSync() {
   if (!stSelected.value.length) return ElMessage.warning('请先勾选要同步的采集图')
+  // 按商品归一:一个商品(stGroups 的一块)= 一个后台同步任务,最多 3 个同时跑(worker 并发)
+  const selSet = new Set(stSelected.value)
+  const groups = stGroups.value
+    .map((g) => ({ title: g.title || '采集同步', image_ids: g.items.map((it) => it.id).filter((id) => selSet.has(id)) }))
+    .filter((g) => g.image_ids.length)
+  if (!groups.length) return ElMessage.warning('请先勾选要同步的采集图')
   syncing.value = true
   try {
-    const r = await syncImages(stSelected.value)
-    if (r.synced) ElMessage.success(`同步成功 ${r.synced} 条${r.failed ? `(失败 ${r.failed} 条)` : ''} —— 前往「我的空间 / 找图」查看`)
-    else ElMessage.error(`同步失败${r.errors && r.errors.length ? ':' + r.errors[0] : '(图源取图失败)'}`)
+    const r = await submitSync(groups)
+    ElMessage.success(`已提交 ${r.count} 个同步任务,后台处理中 —— 在右上「最近任务」看进度,完成后进「我的空间 / 找图」`)
+    // 乐观移除:已提交的项先从采集箱拿掉(后台跑完即入库;失败的会在刷新后重新出现可重试)
+    const submitted = new Set(groups.flatMap((g) => g.image_ids))
+    staging.value = staging.value.filter((s) => !submitted.has(s.id))
     stSelected.value = []
-    await loadStaging()
-  } catch (e) { ElMessage.error(e.message || '同步失败') } finally { syncing.value = false }
+  } catch (e) { ElMessage.error(e.message || '提交失败') } finally { syncing.value = false }
 }
 async function doDelStaging() {
   if (!stSelected.value.length) return ElMessage.warning('请先勾选要删除的项')
@@ -197,7 +191,7 @@ onMounted(loadStaging)
         </button>
       </div>
       <div v-if="!stShown.length" class="muted center stempty">
-        采集箱为空 —— 用上面的插件去 Temu 采集后,待同步的商品会出现在这里。
+        采集箱为空 —— 用上面的插件去 Temu / Amazon / Shopee 等商品页采集后,待同步的商品会出现在这里。
       </div>
       <!-- 智能分类:一块 = 一个商品,紧凑卡片网格(像套图模板)。点缩略图选/取消整个商品,详情里可逐图选 -->
       <div v-else class="cbox-grid">
@@ -222,7 +216,7 @@ onMounted(loadStaging)
         </div>
       </div>
       <div v-if="stShown.length" class="muted sm tofind">
-        同步成功后去 <a class="lnk" @click="goSpaceFind">我的空间 / 找图</a> 查看(按平台分类)。
+        点「开始同步」后,每个商品作为一个后台任务跑(最多 3 个同时进行),进度看右上「最近任务」;完成后去 <a class="lnk" @click="goSpaceFind">我的空间 / 找图</a> 查看(按平台分类)。
       </div>
     </div>
 

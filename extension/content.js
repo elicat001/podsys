@@ -80,12 +80,24 @@
 
   // ---- 过滤「非商品图」(品牌商标/导航雪碧图/UI 图标/横幅),与后端 _looks_like_junk 等价 ----
   const JUNK_URL_RE = /sprite|nav[-_]?sprite|\/logos?[-_/.]|[-_/]logo[-_/.]|favicon|\/icons?[-_/.]|[-_/]icon[-_/.]|\/badges?[-_/.]|placeholder|loading|grey-?pixel|transparent[-_]?pixel|\/captcha|x-locale|prime[-_]?(?:logo|badge)|\/g\/01\/|smile\.amazon/i;
+  // 「买家秀/评论图」:亚马逊评论区缩略图 alt 多为 "Customer Image, click to open customer review",
+  // 这类图常是占位/裁切图,采进来显示不出来(用户反馈的黑卡),按 alt + 评论容器双重排除。
+  const JUNK_ALT_RE = /customer image|customer review|click to open|review image|see (?:the )?customer|buyer show/i;
+  const REVIEW_SEL = '#reviews,#cm_cr-review_list,#cm-cr-dp-review-list,[id*="review" i],[data-hook*="review" i],[class*="reviewsContainer" i]';
   function isJunkUrl(url) {
     const u = (url || "").toLowerCase();
     if (!u) return true;
     if (JUNK_URL_RE.test(u)) return true;
     // 亚马逊商品主图在 /images/I/;/images/G/、/images/S/ 等是站点 UI/品牌/导航资源
     if (detectPlatform(u) === "amazon" && u.includes("/images/") && !u.includes("/images/i/")) return true;
+    return false;
+  }
+  // 综合「非商品图」判定:URL 垃圾 + 评论图(alt 命中)+ 处于评论区容器内
+  function isJunkImg(el, url) {
+    if (isJunkUrl(url)) return true;
+    const alt = (el && el.getAttribute && (el.getAttribute("alt") || el.getAttribute("title") || el.getAttribute("aria-label"))) || "";
+    if (JUNK_ALT_RE.test(alt)) return true;
+    if (el && el.closest && el.closest(REVIEW_SEL)) return true;
     return false;
   }
   function inSiteChrome(el) {
@@ -98,9 +110,9 @@
     const ar = w / h;
     return ar >= 0.4 && ar <= 2.6;             // 商品图大致方形;极宽/极高多是雪碧图/横幅
   }
-  // 综合:支持平台 + 足够大 + 非垃圾 + 非站点 UI + 比例正常 = 真商品图
+  // 综合:支持平台 + 足够大 + 非垃圾(含评论图)+ 非站点 UI + 比例正常 = 真商品图
   function isCollectable(el, url) {
-    return isSupportedUrl(url) && bigEnough(el) && !isJunkUrl(url) && !inSiteChrome(el) && okAspect(el);
+    return isSupportedUrl(url) && bigEnough(el) && !isJunkImg(el, url) && !inSiteChrome(el) && okAspect(el);
   }
 
   // ---- 从被悬停元素反查整张卡片,抽取标题/价格/评分/链接(启发式,不依赖易变 CSS 类名)----
@@ -302,7 +314,7 @@
       if (!node.querySelectorAll) return null;
       for (const im of node.querySelectorAll("img,video")) {
         const u = imgUrlOf(im);
-        if (!isSupportedUrl(u) || isJunkUrl(u)) continue;
+        if (!isSupportedUrl(u) || isJunkImg(im, u)) continue;
         const r = im.getBoundingClientRect();
         if (r.width >= 60 && r.height >= 60) return { url: u, box: r };
       }
@@ -315,7 +327,7 @@
       // ① 光标正下方的元素直接是商品图(含背景图/视频海报)
       for (const el of stack) {
         const u = imgUrlOf(el);
-        if (isSupportedUrl(u) && !isJunkUrl(u)) {
+        if (isSupportedUrl(u) && !isJunkImg(el, u)) {
           const r = el.getBoundingClientRect();
           if (r.width >= 60 && r.height >= 60) return { el, url: u, box: r };
         }

@@ -1,12 +1,12 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client.js'
 import { listJobs, JOB_STATUS, jobThumb, jobDownloads, timeAgo, resultType } from '../api/jobs.js'
 import { listMockupTemplates, createMockupTemplate, deleteMockupTemplate, addTemplateImages, deleteTemplateImage } from '../api/team.js'
-import { listCollected, deleteCollected } from '../api/collect.js'
-import { toolForJob, moduleOfTool } from '../data/tools.js'
+import { listCollected, deleteCollected, groupByProduct } from '../api/collect.js'
+import { toolForJob, moduleOfTool, KIND_META } from '../data/tools.js'
 import ResultView from '../components/ResultView.vue'
 
 const route = useRoute()
@@ -44,9 +44,12 @@ async function loadJobs() {
   try { jobs.value = await listJobs() } catch (e) { ElMessage.error('任务列表加载失败:' + (e.message || e)) }
 }
 
+// 「作图」任务中心只展示作图工具的作业;采集同步等非工具作业(KIND_META)只在顶栏「最近任务」出现,不混进来
+const designJobs = computed(() => jobs.value.filter((j) => !KIND_META[j.kind]))
+
 const statusCounts = computed(() => {
-  const c = { all: jobs.value.length, active: 0, done: 0, error: 0 }
-  for (const j of jobs.value) {
+  const c = { all: designJobs.value.length, active: 0, done: 0, error: 0 }
+  for (const j of designJobs.value) {
     if (j.status === 'pending' || j.status === 'running') c.active++
     else if (j.status === 'done') c.done++
     else if (j.status === 'error') c.error++
@@ -56,9 +59,9 @@ const statusCounts = computed(() => {
 const hasActiveJob = computed(() => statusCounts.value.active > 0)
 
 const filtered = computed(() => {
-  if (statusFilter.value === 'all') return jobs.value
-  if (statusFilter.value === 'active') return jobs.value.filter((j) => j.status === 'pending' || j.status === 'running')
-  return jobs.value.filter((j) => j.status === statusFilter.value)
+  if (statusFilter.value === 'all') return designJobs.value
+  if (statusFilter.value === 'active') return designJobs.value.filter((j) => j.status === 'pending' || j.status === 'running')
+  return designJobs.value.filter((j) => j.status === statusFilter.value)
 })
 
 // 按 大模块 → 小模块(cat)分组;每个 cat 概览只取前 ROW 个,total 给「详情列表」用。
@@ -143,27 +146,57 @@ async function delJob(job) {
   loadJobs(); loadQuota()
 }
 
-// ── 找图(采集同步入库,按平台)────────────────────────────
+// ── 找图(采集同步入库,先按平台再按商品归一)──────────────────
 const collected = ref([])
 async function loadCollected() {
   try { collected.value = await listCollected() } catch (e) { /* 静默 */ }
 }
+// 每个平台内再按「商品唯一标识」归一:同款多图并成一个商品块(和采集箱一致,不再平铺)。
+const collectedGroups = computed(() =>
+  collected.value.map((grp) => ({ platform: grp.platform, products: groupByProduct(grp.items) })),
+)
+// 进行中的采集同步任务(后台跑,完成前商品还没进找图)→ 在找图顶部显示「同步中」卡片
+const syncingJobs = computed(() =>
+  jobs.value.filter((j) => j.kind === 'collect_sync' && (j.status === 'pending' || j.status === 'running')),
+)
+const hasActiveSync = computed(() => syncingJobs.value.length > 0)
+// 同步任务完成(进行中数量减少)→ 刷新找图,让新入库商品冒出来
+watch(() => syncingJobs.value.length, (n, old) => { if (n < old) loadCollected() })
 function setSub(s) {
   subTab.value = s
-  if (s === 'find') loadCollected()
+  if (s === 'find') { loadCollected(); loadJobs() }
+}
+// 跳转到某平台的找图「详情列表」页(展示该平台全部采集商品)
+function goCollectedDetail(platform) {
+  router.push({ path: '/app/space/collected', query: { platform } })
+}
+// 移除整个商品块(该商品的全部图一起移入回收站),省得进详情逐张删
+async function delProduct(prod) {
+  const n = prod.images.length
+  try {
+    await ElMessageBox.confirm(
+      `移除「${prod.title || '该商品'}」的全部 ${n} 张图?移入回收站(可恢复)。`, '确认移除', { type: 'warning' })
+  } catch (e) { return }
+  await Promise.all(prod.images.map((im) => deleteCollected(im.id)))
+  ElMessage.success(`已移除 ${n} 张`); loadCollected(); loadQuota()
 }
 async function delCollected(im) {
   try {
     await ElMessageBox.confirm('从找图移除?对应素材会移入回收站(可恢复)。', '确认移除', { type: 'warning' })
   } catch (e) { return }
   await deleteCollected(im.id)
-  ElMessage.success('已移除'); loadCollected(); loadQuota()
-  if (colDetail.value && colDetail.value.id === im.id) showColDetail.value = false
+  ElMessage.success('已移除')
+  // 弹窗内删某张图:就地从当前商品块剔除,删空则关弹窗
+  if (colDetail.value && colDetail.value.images) {
+    colDetail.value.images = colDetail.value.images.filter((x) => x.id !== im.id)
+    if (!colDetail.value.images.length) showColDetail.value = false
+  }
+  loadCollected(); loadQuota()
 }
-// 找图详情对话框
+// 找图详情对话框(展示一个商品的全部图,可逐图下载/移除)
 const showColDetail = ref(false)
 const colDetail = ref(null)
-function openColDetail(im) { colDetail.value = im; showColDetail.value = true }
+function openColDetail(prod) { colDetail.value = prod; showColDetail.value = true }
 function riskType(r) { return r === 'high' ? 'danger' : r === 'review' ? 'warning' : r === 'safe' ? 'success' : 'info' }
 function riskLabel(r) { return ({ high: '高风险', review: '待复核', safe: '安全' })[r] || '未知' }
 
@@ -318,8 +351,11 @@ onMounted(() => {
   // ① 1s 客户端计时:只在有活动任务时推进 now → 驱动"用时"每秒刷新,**不发任何请求**。
   // ② 列表轮询:**仅当有 pending/running 任务**时才每 3s 拉一次(全部完成后自动停,空闲零请求)。
   //   仍用轮询(非 SSE/WS)是刻意的:经 nginx+网关时长连接易被中断,轮询更稳;此处把"空转"消掉即可。
-  tickTimer = setInterval(() => { if (tab.value === 'jobs' && hasActiveJob.value) now.value = Date.now() }, 1000)
-  refreshTimer = setInterval(() => { if (tab.value === 'jobs' && hasActiveJob.value) loadJobs() }, 3000)
+  tickTimer = setInterval(() => { if (tab.value === 'jobs' && (hasActiveJob.value || hasActiveSync.value)) now.value = Date.now() }, 1000)
+  // 作图有活动任务、或在「找图」且有同步中任务时,都每 3s 拉一次(空闲零请求)
+  refreshTimer = setInterval(() => {
+    if (tab.value === 'jobs' && (hasActiveJob.value || (subTab.value === 'find' && hasActiveSync.value))) loadJobs()
+  }, 3000)
 })
 onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
 </script>
@@ -414,30 +450,53 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
             <el-button size="small" @click="loadCollected">🔄 刷新</el-button>
             <el-button size="small" type="primary" @click="router.push('/app/find/collect')">+ 去采集</el-button>
           </div>
-          <div v-if="!collected.length" class="empty muted">还没有找图素材 —— 去「<a class="lnk" @click="router.push('/app/find/collect')">采集</a>」用插件采集并同步</div>
-          <div v-for="grp in collected" :key="grp.platform" class="mod-group">
+          <!-- 同步中:后台正在跑的采集同步任务(完成后自动转成下方正常商品卡)-->
+          <div v-if="syncingJobs.length" class="mod-group">
             <div class="cat-head">
-              <span class="cat-title muted">{{ grp.platform }} <span class="cat-count">{{ grp.items.length }}</span></span>
+              <span class="cat-title muted">⏳ 同步中 <span class="cat-count">{{ syncingJobs.length }}</span></span>
             </div>
-            <div class="find-grid">
-              <div v-for="im in grp.items" :key="im.id" class="find-card panel">
-                <a class="find-thumb" :href="im.asset_url" target="_blank" title="查看大图">
-                  <img :src="im.asset_url + '?w=200'" loading="lazy" decoding="async" />
-                </a>
+            <div class="find-grid one-row">
+              <div v-for="j in syncingJobs.slice(0, ROW)" :key="j.id" class="find-card panel">
+                <div class="find-thumb sync-ph"><span class="spin" /></div>
                 <div class="find-body">
-                  <div class="find-title" :title="im.title">{{ im.title || '(无标题)' }}</div>
+                  <div class="find-title" :title="j.params && j.params.title">{{ (j.params && j.params.title) || '采集同步' }}</div>
                   <div class="find-info">
-                    <span v-if="im.price" class="cprice">{{ im.price }}</span>
-                    <span v-if="im.rating" class="crate">★ {{ im.rating }}</span>
-                    <el-tag v-if="im.risk === 'high' || im.risk === 'review'" size="small"
-                            :type="im.risk === 'high' ? 'danger' : 'warning'" effect="light">
-                      {{ im.risk === 'high' ? '高风险' : '待核' }}
+                    <el-tag size="small" type="warning" effect="light">
+                      {{ j.status === 'running' ? '同步中…' : '排队中…' }}
+                    </el-tag>
+                    <span v-if="j.params && j.params.count" class="muted small">{{ j.params.count }} 图</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="!collected.length && !syncingJobs.length" class="empty muted">还没有找图素材 —— 去「<a class="lnk" @click="router.push('/app/find/collect')">采集</a>」用插件采集并同步</div>
+          <div v-for="grp in collectedGroups" :key="grp.platform" class="mod-group">
+            <div class="cat-head">
+              <span class="cat-title muted">{{ grp.platform }} <span class="cat-count">{{ grp.products.length }}</span></span>
+              <button class="detail-btn" @click="goCollectedDetail(grp.platform)">详情列表 →</button>
+            </div>
+            <!-- 一块 = 一个商品(同款多图并到一起,角标「N 图」),概览每行最多 5 个,更多去详情列表 -->
+            <div class="find-grid one-row">
+              <div v-for="prod in grp.products.slice(0, ROW)" :key="prod.key" class="find-card panel">
+                <div class="find-thumb" @click="openColDetail(prod)" title="查看商品图集">
+                  <img :src="prod.images[0].asset_url + '?w=200'" loading="lazy" decoding="async" />
+                  <span v-if="prod.images.length > 1" class="nbadge">{{ prod.images.length }} 图</span>
+                </div>
+                <div class="find-body">
+                  <div class="find-title" :title="prod.title">{{ prod.title || '(无标题)' }}</div>
+                  <div class="find-info">
+                    <span v-if="prod.price" class="cprice">{{ prod.price }}</span>
+                    <span v-if="prod.rating" class="crate">★ {{ prod.rating }}</span>
+                    <el-tag v-if="prod.risk === 'high' || prod.risk === 'review'" size="small"
+                            :type="prod.risk === 'high' ? 'danger' : 'warning'" effect="light">
+                      {{ prod.risk === 'high' ? '高风险' : '待核' }}
                     </el-tag>
                   </div>
                   <div class="find-acts">
-                    <button class="fchip2 primary" @click="openColDetail(im)">📄 详情</button>
-                    <a class="fchip2" :href="im.asset_url" target="_blank" download>⬇ 下载</a>
-                    <button class="fchip2 danger" @click="delCollected(im)">🗑 移除</button>
+                    <button class="fchip2 primary" @click="openColDetail(prod)">📄 详情</button>
+                    <a class="fchip2" :href="prod.images[0].asset_url" target="_blank" download>⬇ 下载</a>
+                    <button class="fchip2 danger" @click="delProduct(prod)">🗑 移除</button>
                   </div>
                 </div>
               </div>
@@ -597,39 +656,33 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 找图详情弹窗 -->
-    <el-dialog v-model="showColDetail" title="采集详情" width="640px" align-center append-to-body>
-      <div v-if="colDetail" class="col-detail">
-        <a class="cd-img" :href="colDetail.asset_url" target="_blank" title="查看原图">
-          <img :src="colDetail.asset_url" />
-        </a>
-        <div class="cd-info">
-          <div class="cd-row">
-            <span class="cd-label">标题</span>
-            <div class="cd-val">
-              <span class="cd-title">{{ colDetail.title || '(无标题)' }}</span>
-              <button class="fchip2" @click="copyText(colDetail.title || '', '标题')">📋 复制标题</button>
-            </div>
-          </div>
-          <div class="cd-row"><span class="cd-label">平台</span><span>{{ colDetail.platform || '—' }}</span></div>
-          <div v-if="colDetail.price" class="cd-row"><span class="cd-label">价格</span><span class="cprice">{{ colDetail.price }}</span></div>
-          <div v-if="colDetail.rating" class="cd-row"><span class="cd-label">评分</span><span class="crate">★ {{ colDetail.rating }}</span></div>
-          <div class="cd-row">
-            <span class="cd-label">侵权</span>
-            <el-tag size="small" :type="riskType(colDetail.risk)" effect="light">{{ riskLabel(colDetail.risk) }}</el-tag>
-          </div>
-          <div v-if="colDetail.source_url" class="cd-row">
-            <span class="cd-label">来源</span>
-            <div class="cd-val">
-              <a :href="colDetail.source_url" target="_blank" class="lnk">打开商品页 →</a>
-              <button class="fchip2" @click="copyText(colDetail.source_url, '链接')">📋 复制链接</button>
+    <!-- 找图详情弹窗:一个商品的全部图(逐图下载/移除)-->
+    <el-dialog v-model="showColDetail" title="商品图集" width="680px" align-center append-to-body>
+      <div v-if="colDetail" class="col-detail2">
+        <div class="cd-head">
+          <span class="cd-title" :title="colDetail.title">{{ colDetail.title || '(无标题)' }}</span>
+          <button v-if="colDetail.title" class="fchip2" @click="copyText(colDetail.title, '标题')">📋 复制标题</button>
+        </div>
+        <div class="cd-meta">
+          <span class="cd-label">平台</span><span>{{ colDetail.platform || '—' }}</span>
+          <template v-if="colDetail.price"><span class="cd-label">价格</span><span class="cprice">{{ colDetail.price }}</span></template>
+          <template v-if="colDetail.rating"><span class="cd-label">评分</span><span class="crate">★ {{ colDetail.rating }}</span></template>
+          <el-tag size="small" :type="riskType(colDetail.risk)" effect="light">{{ riskLabel(colDetail.risk) }}</el-tag>
+          <a v-if="colDetail.source_url" :href="colDetail.source_url" target="_blank" class="lnk">商品页 →</a>
+        </div>
+        <div class="cd-imgs">
+          <div v-for="im in colDetail.images" :key="im.id" class="cd-cell">
+            <a class="cd-cell-img" :href="im.asset_url" target="_blank" title="查看原图">
+              <img :src="im.asset_url + '?w=240'" loading="lazy" decoding="async" />
+            </a>
+            <div class="cd-cell-acts">
+              <a class="fchip2" :href="im.asset_url" target="_blank" download>⬇ 下载</a>
+              <button class="fchip2 danger" @click="delCollected(im)">🗑 移除</button>
             </div>
           </div>
         </div>
       </div>
       <template #footer>
-        <a v-if="colDetail" class="fchip2" :href="colDetail.asset_url" target="_blank" download style="margin-right: 8px">⬇ 下载原图</a>
-        <el-button v-if="colDetail" type="danger" plain @click="delCollected(colDetail)">移除</el-button>
         <el-button type="primary" @click="showColDetail = false">关闭</el-button>
       </template>
     </el-dialog>
@@ -691,23 +744,29 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
   justify-content: space-between;
   flex-wrap: wrap;
 }
+/* L3:状态筛选 —— 弱化为次级文字 chip(无边框、透明底),和 L2 拉开层级 */
 .filters {
   display: flex;
-  gap: 8px;
+  gap: 4px;
+  align-items: center;
 }
 .fchip {
-  border: 1px solid var(--line2);
-  background: var(--panel);
+  border: none;
+  background: transparent;
   color: var(--mut);
-  border-radius: 16px;
-  padding: 4px 14px;
-  font-size: 13px;
+  border-radius: 14px;
+  padding: 3px 11px;
+  font-size: 12.5px;
   cursor: pointer;
 }
-.fchip.on {
-  border-color: var(--brand);
+.fchip:hover {
+  background: var(--panel);
   color: var(--fg);
+}
+.fchip.on {
   background: var(--panel2);
+  color: var(--fg);
+  font-weight: 600;
 }
 .fcount {
   opacity: 0.6;
@@ -716,26 +775,32 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
 .small {
   font-size: 12px;
 }
-/* 任务中心子区:作图 / 找图 */
+/* L2:作图 / 找图 —— 分段控件(填充式「模式切换」),与 L3 明显区分 */
 .subtabs {
-  display: flex;
-  gap: 8px;
-  margin: 4px 0 14px;
+  display: inline-flex;
+  margin: 2px 0 16px;
+  padding: 3px;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 11px;
 }
 .stab {
-  border: 1px solid var(--line2);
-  background: var(--panel);
+  border: none;
+  background: none;
   color: var(--mut);
-  border-radius: 18px;
-  padding: 6px 18px;
-  font-size: 13px;
-  font-weight: 600;
+  border-radius: 8px;
+  padding: 7px 22px;
+  font-size: 14px;
+  font-weight: 700;
   cursor: pointer;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+.stab:hover {
+  color: var(--fg);
 }
 .stab.on {
-  border-color: var(--brand);
-  color: var(--fg);
-  background: var(--panel2);
+  color: #1a1208;
+  background: linear-gradient(135deg, #ff7a18, #ff5d3b);
 }
 .lnk {
   color: var(--brand);
@@ -750,6 +815,22 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 12px;
 }
+/* 概览:每个平台只显示一行(最多 5 个),更多去「详情列表」。
+   卡片封顶 ~190px、左对齐,避免宽屏被拉得过大(用户反馈"显示好大")。 */
+.find-grid.one-row {
+  grid-template-columns: repeat(5, minmax(0, 190px));
+  justify-content: start;
+}
+@media (max-width: 1180px) {
+  .find-grid.one-row {
+    grid-template-columns: repeat(4, minmax(0, 190px));
+  }
+}
+@media (max-width: 920px) {
+  .find-grid.one-row {
+    grid-template-columns: repeat(3, minmax(0, 190px));
+  }
+}
 .find-card {
   padding: 0;
   overflow: hidden;
@@ -758,14 +839,32 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
 }
 .find-thumb {
   display: block;
+  position: relative;
   aspect-ratio: 1;
   background: var(--bg2);
+  cursor: pointer;
 }
 .find-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+.nbadge {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 9px;
+}
+/* 同步中占位:居中转圈,不可点 */
+.find-thumb.sync-ph {
+  display: grid;
+  place-items: center;
+  cursor: default;
 }
 .find-body {
   padding: 8px 10px 10px;
@@ -823,54 +922,62 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
   color: var(--brand);
   border-color: var(--brand);
 }
-/* 采集详情对话框 */
-.col-detail {
-  display: grid;
-  grid-template-columns: 240px 1fr;
-  gap: 18px;
-}
-.cd-img {
-  display: block;
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--bg2);
-  aspect-ratio: 1;
-}
-.cd-img img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
-}
-.cd-info {
+/* 商品图集对话框 */
+.col-detail2 {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-.cd-row {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  font-size: 13px;
-}
-.cd-label {
-  flex: 0 0 44px;
-  color: var(--mut);
-}
-.cd-val {
+.cd-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
-  min-width: 0;
 }
 .cd-title {
+  font-size: 15px;
+  font-weight: 700;
   line-height: 1.4;
+  flex: 1;
+  min-width: 0;
 }
-@media (max-width: 600px) {
-  .col-detail {
-    grid-template-columns: 1fr;
-  }
+.cd-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.cd-label {
+  color: var(--mut);
+}
+.cd-imgs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  max-height: 56vh;
+  overflow: auto;
+}
+.cd-cell {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.cd-cell-img {
+  display: block;
+  aspect-ratio: 1;
+  background: var(--bg2);
+}
+.cd-cell-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.cd-cell-acts {
+  display: flex;
+  gap: 6px;
+  padding: 7px 8px;
 }
 /* 素材库管理 */
 .cat-usage {

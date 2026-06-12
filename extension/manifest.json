@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PODStudio 采集助手",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "在 Temu/Amazon/Shopee/MercadoLibre/TikTok Shop 商品页一键采集商品(图+标题+价格+评分+链接)到 PODStudio 采集箱,勾选同步入库。",
   "permissions": ["storage"],
   "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
