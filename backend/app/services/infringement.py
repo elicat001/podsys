@@ -1,11 +1,14 @@
 """侵权/查重:把新图的感知哈希与素材库比对,给出风险评级。"""
 from __future__ import annotations
+
 from dataclasses import dataclass
+
 from PIL import Image
-from sqlalchemy.orm import Session
 from sqlalchemy import select
-from . import phash
+from sqlalchemy.orm import Session
+
 from ..models_db import Asset
+from . import phash
 
 # 结构 dHash(0..64 hamming) + 绝对颜色签名(0..255 MAD),双阈值避免"同形不同色"误报
 STRUCT_DUP = 6        # 结构 <=6 视为同构

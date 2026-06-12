@@ -1,6 +1,8 @@
 """Provider protocols — the seam that lets us swap Pillow ↔ rembg ↔ GPU ↔ API."""
 from __future__ import annotations
+
 from typing import Protocol, runtime_checkable
+
 from PIL import Image
 
 

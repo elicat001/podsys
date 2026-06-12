@@ -1,15 +1,18 @@
 """Auth: pbkdf2 password hashing (stdlib, no native build) + JWT sessions."""
 from __future__ import annotations
+
 import hashlib
 import hmac
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 import jwt
-from fastapi import Depends, HTTPException, Header
+from fastapi import Depends, Header, HTTPException
 from sqlalchemy.orm import Session
+
+from .config import settings
 from .db import get_db
 from .models_db import User
-from .config import settings
 
 _ALGO = "HS256"
 _ITER = 200_000
@@ -33,7 +36,7 @@ def verify_password(password: str, stored: str) -> bool:
 def make_token(user_id: int) -> str:
     payload = {
         "sub": str(user_id),
-        "exp": datetime.now(timezone.utc) + timedelta(days=7),
+        "exp": datetime.now(UTC) + timedelta(days=7),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=_ALGO)
 

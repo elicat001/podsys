@@ -174,7 +174,7 @@ def _vision_identify(image: Image.Image, title: str | None = None) -> dict:
         {"type": "text", "text": prompt},
         {"type": "image_url", "image_url": {"url": data_url}},
     ]}]
-    from ..ai.openai_image import _API_GATE   # 复用全局网关并发信号量限流
+    from ..ai.openai_image import _API_GATE  # 复用全局网关并发信号量限流
     with _API_GATE:
         if settings.openai_text_stream:
             content = ""

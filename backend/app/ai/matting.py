@@ -5,8 +5,11 @@ uniform-background product photos and lets the whole pipeline run + be verified.
 Swap to `rembg` (open-source U2Net/BiRefNet) or `api` for production quality.
 """
 from __future__ import annotations
+
 import logging
+
 from PIL import Image, ImageChops, ImageFilter
+
 from ..config import settings
 
 log = logging.getLogger(__name__)
@@ -55,7 +58,7 @@ class RembgMattingProvider:
     name = "rembg"
 
     def __init__(self) -> None:
-        from rembg import remove, new_session  # lazy import
+        from rembg import new_session, remove  # lazy import
         self._remove = remove
         self._session = new_session("u2net")
 
@@ -68,7 +71,8 @@ class ApiMattingProvider:
     name = "api"
 
     def cutout(self, image: Image.Image) -> Image.Image:
-        import io, urllib.request
+        import io
+        import urllib.request
         if not settings.matting_api_url:
             raise RuntimeError("POD_MATTING_API_URL not configured")
         buf = io.BytesIO()

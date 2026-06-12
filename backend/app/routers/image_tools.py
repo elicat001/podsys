@@ -4,19 +4,18 @@
 """
 from __future__ import annotations
 
-
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from .. import storage
 from ..ai.openai_image import OpenAIImageClient
+from ..ai.upscale import get_upscale_provider
 from ..config import settings
 from ..db import get_db
 from ..models_db import User
 from ..services.billing import charge_for, refund
 from ..services.library import save_as_asset
-from ..ai.upscale import get_upscale_provider
 from ..tasks import run_tool
 from ..web_utils import read_image_or_refund as _read_image
 from ..web_utils import submit_celery

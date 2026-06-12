@@ -6,17 +6,20 @@
 `create_job` / `run_job` / `get_job` 为两者共用。
 """
 from __future__ import annotations
-from datetime import datetime, timezone
-from typing import Callable
+
+from collections.abc import Callable
+from datetime import UTC, datetime
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
 from ..db import SessionLocal
 from ..models_db import Job
 from ..storage import new_job_id
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # 作业卡死阈值:超过这么久还 pending/running 视为僵尸(worker 崩了/进程被打断)。
@@ -52,7 +55,7 @@ def reap_stuck_jobs(db: Session, minutes: int = STUCK_MINUTES) -> int:
         if ca is None:
             continue
         if ca.tzinfo is None:
-            ca = ca.replace(tzinfo=timezone.utc)
+            ca = ca.replace(tzinfo=UTC)
         if (now - ca).total_seconds() < minutes * 60:
             continue
         job.status = "error"

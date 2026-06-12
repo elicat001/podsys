@@ -1,5 +1,6 @@
 """多图裁剪 / 多联画:把一张图切成 N 联(横/竖/网格)。"""
 from __future__ import annotations
+
 from PIL import Image
 
 

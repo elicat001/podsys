@@ -12,10 +12,13 @@ of print files (it regenerates pixels and will distort the design). Keep a real
 upscaler (Pillow/Real-ESRGAN) for production files. See README.
 """
 from __future__ import annotations
+
 import base64
 import io
 import threading
+
 from PIL import Image
+
 from ..config import settings
 
 # gpt-image-1 accepts these sizes (plus "auto")

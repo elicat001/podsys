@@ -1,16 +1,19 @@
 """工作流编排 API:列出预设 + 一键运行(异步,走 Job 系统)。"""
 from __future__ import annotations
+
 import io
 import json
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, BackgroundTasks
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from PIL import Image
 from sqlalchemy.orm import Session
-from ..db import get_db, SessionLocal
+
+from ..db import SessionLocal, get_db
 from ..models_db import User
 from ..services.billing import charge_for, refund
 from ..services.jobs import create_job, run_job
-from ..services.workflow import list_workflows, run_workflow, WORKFLOWS
+from ..services.workflow import WORKFLOWS, list_workflows, run_workflow
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 

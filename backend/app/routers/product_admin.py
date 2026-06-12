@@ -6,8 +6,6 @@ products.py 用 POST ""/GET ""/POST /{id}/publish;本文件用 /search、/batch�
 """
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -47,12 +45,12 @@ def _serialize(db: Session, p: Product) -> dict:
 
 @router.get("/search")
 def search_products(
-    source: Optional[str] = Query(default=None),
-    risk: Optional[str] = Query(default=None),
-    batch: Optional[str] = Query(default=None),
-    sku: Optional[str] = Query(default=None),
-    tag: Optional[str] = Query(default=None),
-    listing_status: Optional[str] = Query(default=None),
+    source: str | None = Query(default=None),
+    risk: str | None = Query(default=None),
+    batch: str | None = Query(default=None),
+    sku: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
+    listing_status: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     user: User = Depends(current_user),
@@ -92,7 +90,7 @@ _VALID_ACTIONS = {"delete", "set_risk", "add_tag"}
 class BatchIn(BaseModel):
     action: str
     product_ids: list[int] = Field(..., max_length=500)
-    value: Optional[str] = None
+    value: str | None = None
 
 
 @router.post("/batch")

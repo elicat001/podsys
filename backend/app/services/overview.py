@@ -1,10 +1,12 @@
 """我的空间总览聚合 —— 统计某用户在各表的资源计数。"""
 from __future__ import annotations
-from sqlalchemy import select, func
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from ..models_db import User, Asset, Product, Job
-from ..models_shop import Shop
+
 from ..models_collect import CollectionTask
+from ..models_db import Asset, Job, Product, User
+from ..models_shop import Shop
 
 
 def _count(db: Session, model, owner_id: int) -> int:

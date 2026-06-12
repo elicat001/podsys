@@ -1,13 +1,16 @@
 """店铺模型:Shop —— 用户在各平台开的店铺,按店铺上架。"""
 from __future__ import annotations
-from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, ForeignKey
+
+from datetime import UTC, datetime
+
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
+
 from .db import Base
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Shop(Base):

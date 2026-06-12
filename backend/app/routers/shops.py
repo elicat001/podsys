@@ -1,13 +1,15 @@
 """店铺管理 + 按店铺上架。"""
 from __future__ import annotations
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 from sqlalchemy import select
-from ..db import get_db
-from ..models_shop import Shop
-from ..models_db import Product, Listing, User
+from sqlalchemy.orm import Session
+
 from ..auth import current_user
+from ..db import get_db
+from ..models_db import Listing, Product, User
+from ..models_shop import Shop
 from ..services.publish import build_listing_payload, get_publisher
 
 router = APIRouter(prefix="/api/shops", tags=["shops"])

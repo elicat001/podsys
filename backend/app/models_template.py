@@ -1,13 +1,16 @@
 """模板模型(batch10):刊登模板 ListingTemplate + 导出模板 ExportTemplate。"""
 from __future__ import annotations
-from datetime import datetime, timezone
-from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, JSON
+
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
+
 from .db import Base
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ListingTemplate(Base):

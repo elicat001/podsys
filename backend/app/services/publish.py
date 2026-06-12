@@ -4,7 +4,9 @@ LocalPublisher 生成可验证的「上架包」(标题/描述/图片/价格/属
 平台资质即可跑通闭环。Temu/TikTok 适配器是桩——真实上架需平台开放权限与店铺授权。
 """
 from __future__ import annotations
+
 from typing import Protocol
+
 from ..models_db import Product
 
 

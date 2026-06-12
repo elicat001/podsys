@@ -1,13 +1,16 @@
 """用户自定义工作流持久化:SavedWorkflow —— 保存可复用的 step 序列。"""
 from __future__ import annotations
-from datetime import datetime, timezone
-from sqlalchemy import String, ForeignKey, DateTime, JSON
+
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
+
 from .db import Base
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class SavedWorkflow(Base):

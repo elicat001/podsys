@@ -8,10 +8,13 @@
 依赖外部 AI(gpt-image/文本)的 step 在无 key 时优雅降级并在 meta 里标注 skipped。
 """
 from __future__ import annotations
-from typing import Callable
+
+from collections.abc import Callable
+
 from PIL import Image
-from . import extract, mockup, export, split
+
 from .. import storage
+from . import export, extract, mockup, split
 
 # step: ctx(dict) -> None,就地更新 ctx。ctx 关键字段:
 #   image(当前 PIL)/ job_id / outputs(list[url])/ params(dict)/ meta(dict)/ trace(list)

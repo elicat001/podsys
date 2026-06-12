@@ -9,8 +9,10 @@ factory (e.g. 30x40cm @ 300DPI) plus a sidecar metadata json.
   确定性操作,不做抠图/AI。**
 """
 from __future__ import annotations
+
 import json
 from pathlib import Path
+
 from PIL import Image, ImageDraw, ImageFont
 
 # 排版/锚点合法值(上游路由校验,这里兜底)。

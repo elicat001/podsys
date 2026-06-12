@@ -4,7 +4,9 @@ This mirrors the core "印花提取" feature: turn a photo of a product/design i
 clean, transparent, content-tight print file ready for placement.
 """
 from __future__ import annotations
+
 from PIL import Image
+
 from ..ai.matting import get_matting_provider
 from ..ai.upscale import get_upscale_provider
 from ..config import settings

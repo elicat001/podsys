@@ -1,16 +1,19 @@
 """视频生成路由:商品展示动态视频(GIF)。前缀 /api/video。"""
 from __future__ import annotations
+
 import io
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from PIL import Image
 from sqlalchemy.orm import Session
+
+from .. import storage
+from ..auth import current_user
 from ..db import get_db
 from ..models_db import User
-from ..auth import current_user
-from ..services.billing import charge_for, refund
 from ..services import video as video_svc
+from ..services.billing import charge_for, refund
 from ..web_utils import read_image_or_refund
-from .. import storage
 
 router = APIRouter(prefix="/api/video", tags=["video"])
 

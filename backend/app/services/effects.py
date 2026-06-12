@@ -4,10 +4,12 @@
 配置了 OpenAI key 时,路由会优先走 gpt-image(语义更强);否则回退到这里。
 """
 from __future__ import annotations
+
 import colorsys
 import hashlib
 import re
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps, ImageChops
+
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 MAX_PX = 50_000_000
 

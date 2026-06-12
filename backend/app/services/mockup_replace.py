@@ -165,14 +165,14 @@ def _replace_local(product: Image.Image, new_print: Image.Image) -> Image.Image:
     mask, kind = _product_body(full)
     arr = np.asarray(full).astype(np.float32)
 
-    l, t, r, b = _placement(mask, kind, W, H)
-    bw, bh = r - l, b - t
+    left, t, r, b = _placement(mask, kind, W, H)
+    bw, bh = r - left, b - t
     if bw < 8 or bh < 8:
         return full
 
     # ① 产品自身明暗场(曲面/光影)= 亮度 / 叠印区中位亮度,乘到设计上 → 看起来"印在"产品上
     lum = arr @ np.array([0.299, 0.587, 0.114], np.float32)
-    med = float(np.median(lum[t:b, l:r])) or 1.0
+    med = float(np.median(lum[t:b, left:r])) or 1.0
     shade = np.clip(lum / med, 0.62, 1.28)
 
     # ② 设计:键掉实底背景 → 裁到内容(去透明边距,免得缩成小图)→ 等比进叠印区居中
@@ -182,7 +182,7 @@ def _replace_local(product: Image.Image, new_print: Image.Image) -> Image.Image:
         prepped = prepped.crop(ab)
     fitted, ox, oy = _fit_contain(prepped, bw, bh)
     fw, fh = fitted.size
-    y0, x0 = t + oy, l + ox
+    y0, x0 = t + oy, left + ox
     na = np.asarray(fitted).astype(np.float32)
     a_new = na[..., 3:] / 255.0
     sub = shade[y0:y0 + fh, x0:x0 + fw]

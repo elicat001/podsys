@@ -5,14 +5,17 @@
 里的原印花自动替换成用户上传的新印花(见 services/mockup_replace.py)。
 """
 from __future__ import annotations
-from datetime import datetime, timezone
-from sqlalchemy import String, Integer, ForeignKey, DateTime
+
+from datetime import UTC, datetime
+
+from sqlalchemy import DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from .db import Base
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class MockupTemplate(Base):
@@ -24,7 +27,7 @@ class MockupTemplate(Base):
     name: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
-    images: Mapped[list["MockupTemplateImage"]] = relationship(
+    images: Mapped[list[MockupTemplateImage]] = relationship(
         back_populates="template", cascade="all, delete-orphan", order_by="MockupTemplateImage.idx")
 
 
@@ -37,4 +40,4 @@ class MockupTemplateImage(Base):
     idx: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
-    template: Mapped["MockupTemplate"] = relationship(back_populates="images")
+    template: Mapped[MockupTemplate] = relationship(back_populates="images")

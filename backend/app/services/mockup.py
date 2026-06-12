@@ -113,11 +113,11 @@ def _shading_layer(t: Template, mask: Image.Image) -> Image.Image:
     for y in range(h):
         d.line([(0, y), (w, y)], fill=_clamp(128 + int(18 * (1 - 2 * y / h))))
     # 几条柔和褶皱(压暗),分布在本体中下部
-    l, top, r, b = t.print_area
+    left, top, r, b = t.print_area
     wf = max(6, h // 90)
     for frac in (0.45, 0.62, 0.78):
         y = int(top + (b - top) * frac)
-        d.line([(l - 40, y - 18), (r + 40, y + 18)], fill=104, width=wf)
+        d.line([(left - 40, y - 18), (r + 40, y + 18)], fill=104, width=wf)
     sh = sh.filter(ImageFilter.GaussianBlur(max(10, h // 70)))
     neutral = Image.new("L", (w, h), 128)
     return Image.composite(sh, neutral, mask)
@@ -132,13 +132,13 @@ def render_mockup(print_img: Image.Image, template_id: str = "tshirt",
         body = GARMENT_COLORS.get(t.default_color, t.body)
     base, mask = _build_template(t, body)
 
-    l, top, r, b = t.print_area
-    area_w, area_h = r - l, b - top
+    left, top, r, b = t.print_area
+    area_w, area_h = r - left, b - top
     pw, ph = print_img.size
     scale = min(area_w / pw, area_h / ph)
     new = (max(1, int(pw * scale)), max(1, int(ph * scale)))
     placed = print_img.convert("RGBA").resize(new, Image.LANCZOS)
-    ox = l + (area_w - new[0]) // 2
+    ox = left + (area_w - new[0]) // 2
     oy = top + (area_h - new[1]) // 2
 
     # 印花层(整版透明 + 印花放到印区位置)

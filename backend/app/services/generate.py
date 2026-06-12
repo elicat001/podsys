@@ -1,6 +1,8 @@
 """文生图 / 图生图 / 换装换背景 — 有 gpt-image key 走 AI,无 key 走本地程序化引擎。"""
 from __future__ import annotations
+
 from PIL import Image
+
 from ..ai.openai_image import OpenAIImageClient
 from ..config import settings
 from . import effects

@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import io
 import logging
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
-from typing import Callable
+from datetime import UTC, datetime
 
 from PIL import Image
 from sqlalchemy.orm import Session
@@ -35,7 +35,7 @@ Work = Callable[[str, Job, Session], dict]
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def run_job_in_worker(job_id: str, work: Work, *, refund_op: str | None = None,

@@ -1,14 +1,16 @@
 """注册 / 登录 / 当前用户。"""
 from __future__ import annotations
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..auth import current_user, hash_password, make_token, verify_password
+from ..config import settings
 from ..db import get_db
 from ..models_db import User
-from ..auth import hash_password, verify_password, make_token, current_user
 from ..ratelimit import register_limiter
-from ..config import settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 

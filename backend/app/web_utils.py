@@ -1,9 +1,12 @@
 """路由层公共工具:统一「读图失败即退点 + 400」范式(消除 4 个 router 的重复,评审 P1-3)。"""
 from __future__ import annotations
+
 import io
+
 from fastapi import HTTPException
 from PIL import Image
 from sqlalchemy.orm import Session
+
 from .models_db import Job, User
 from .services.billing import refund
 

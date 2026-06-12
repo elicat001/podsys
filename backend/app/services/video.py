@@ -6,7 +6,9 @@
 设计为确定性、可单测:输出是合法 GIF 字节流,帧数/尺寸可断言。
 """
 from __future__ import annotations
+
 import io
+
 from PIL import Image, ImageDraw, ImageFont
 
 # 预设画幅

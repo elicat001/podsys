@@ -5,6 +5,7 @@ covers the real POD risk: 盗图 / 重复铺货. Hamming distance ≈ visual sim
 (Semantic IP — logos/characters — would need a model; out of scope by design.)
 """
 from __future__ import annotations
+
 from PIL import Image
 
 
@@ -41,7 +42,7 @@ def color_distance(a: str, b: str) -> float:
     if not a or not b or len(a) != len(b):
         return 255.0
     ba, bb = bytes.fromhex(a), bytes.fromhex(b)
-    return sum(abs(x - y) for x, y in zip(ba, bb)) / len(ba)
+    return sum(abs(x - y) for x, y in zip(ba, bb, strict=False)) / len(ba)
 
 
 def _bits_to_hex(bits: list[int]) -> str:

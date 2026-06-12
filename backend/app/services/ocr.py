@@ -81,7 +81,7 @@ def extract_text(img: Image.Image | None, min_conf: int = 60, max_words: int = 8
         log.info("OCR 失败:%s", exc)
         return ""
     words: list[str] = []
-    for w, c in zip(data.get("text", []), data.get("conf", [])):
+    for w, c in zip(data.get("text", []), data.get("conf", []), strict=False):
         try:
             conf = float(c)
         except (TypeError, ValueError):

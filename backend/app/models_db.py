@@ -1,13 +1,16 @@
 """ORM models: User, Asset, Job, Product, Listing."""
 from __future__ import annotations
-from datetime import datetime, timezone
-from sqlalchemy import String, Integer, Float, Text, ForeignKey, DateTime, JSON, Index
+
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from .db import Base
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class User(Base):
@@ -19,8 +22,8 @@ class User(Base):
     org_id: Mapped[int] = mapped_column(Integer, default=1, index=True)  # 团队资源共享维度(暂统一=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
-    assets: Mapped[list["Asset"]] = relationship(back_populates="owner")
-    products: Mapped[list["Product"]] = relationship(back_populates="owner")
+    assets: Mapped[list[Asset]] = relationship(back_populates="owner")
+    products: Mapped[list[Product]] = relationship(back_populates="owner")
 
 
 class Asset(Base):
@@ -43,7 +46,7 @@ class Asset(Base):
     size_bytes: Mapped[int] = mapped_column(Integer, default=0)        # 用于存储配额统计
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
-    owner: Mapped["User"] = relationship(back_populates="assets")
+    owner: Mapped[User] = relationship(back_populates="assets")
 
 
 class Job(Base):
@@ -89,8 +92,8 @@ class Product(Base):
     tags: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
-    owner: Mapped["User"] = relationship(back_populates="products")
-    listings: Mapped[list["Listing"]] = relationship(back_populates="product")
+    owner: Mapped[User] = relationship(back_populates="products")
+    listings: Mapped[list[Listing]] = relationship(back_populates="product")
 
 
 class Listing(Base):
@@ -104,4 +107,4 @@ class Listing(Base):
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
-    product: Mapped["Product"] = relationship(back_populates="listings")
+    product: Mapped[Product] = relationship(back_populates="listings")

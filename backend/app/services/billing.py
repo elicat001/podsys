@@ -1,11 +1,13 @@
 """计费扣点服务:点数定价 / 原子扣点 / 退点 / FastAPI 依赖工厂。"""
 from __future__ import annotations
+
 from fastapi import Depends, HTTPException
 from sqlalchemy import update
 from sqlalchemy.orm import Session
+
+from ..auth import current_user
 from ..db import get_db
 from ..models_db import User
-from ..auth import current_user
 
 
 class InsufficientCredits(Exception):

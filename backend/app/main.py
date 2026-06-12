@@ -1,57 +1,59 @@
 """FastAPI app — MVP main line: upload → extract → mockup → export."""
 from __future__ import annotations
+
 import io
 from pathlib import Path
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
-from pydantic import BaseModel
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
 
-from .config import settings
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from PIL import Image
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
 from . import storage
-from .services.extract import extract_print
-from .services.mockup import render_mockup, list_templates
-from .services.export import export_production
-from .services.generate import text_to_image, image_to_image, refine_prompt
-from .services.collectors import detect_platform, upgrade_to_hires
-from .services.billing import charge_for, refund
 from .auth import current_user
+from .config import settings
+from .db import SessionLocal, get_db, init_db
 from .models_db import User
-from .db import init_db, get_db, SessionLocal
+from .routers import assets as assets_router
+from .routers import auth as auth_router
+from .routers import billing as billing_router
+from .routers import collect_tasks as collect_tasks_router
+from .routers import design_tools as design_tools_router
+from .routers import export as export_router
+from .routers import extension as extension_router
+from .routers import image_tools as image_tools_router
+from .routers import ip_guard as ip_guard_router
+from .routers import jobs as jobs_router
+from .routers import matting as matting_router
+from .routers import me as me_router
+from .routers import mockup as mockup_router
+from .routers import my_workflows as my_workflows_router
+from .routers import print_extract as print_extract_router
+from .routers import product_admin as product_admin_router
+from .routers import products as products_router
+from .routers import shops as shops_router
+from .routers import space as space_router
+from .routers import studio_tools as studio_tools_router
+from .routers import team as team_router
+from .routers import templates as templates_router
+from .routers import vectorize as vectorize_router
+from .routers import video as video_router
+from .routers import video_cases as video_cases_router
+from .routers import workflow as workflow_router
+from .routers import workflow_custom as workflow_custom_router
+from .services.billing import charge_for, refund
+from .services.collectors import detect_platform, upgrade_to_hires
+from .services.export import export_production
+from .services.extract import extract_print
+from .services.generate import image_to_image, refine_prompt, text_to_image
 from .services.jobs import create_job, run_job
 from .services.library import save_as_asset
+from .services.mockup import list_templates, render_mockup
 from .tasks import run_tool
 from .web_utils import submit_celery
-from sqlalchemy.orm import Session
-from .routers import auth as auth_router
-from .routers import assets as assets_router
-from .routers import products as products_router
-from .routers import jobs as jobs_router
-from .routers import billing as billing_router
-from .routers import workflow as workflow_router
-from .routers import design_tools as design_tools_router
-from .routers import image_tools as image_tools_router
-from .routers import studio_tools as studio_tools_router
-from .routers import ip_guard as ip_guard_router
-from .routers import vectorize as vectorize_router
-from .routers import collect_tasks as collect_tasks_router
-from .routers import shops as shops_router
-from .routers import workflow_custom as workflow_custom_router
-from .routers import my_workflows as my_workflows_router
-from .routers import me as me_router
-from .routers import video as video_router
-from .routers import product_admin as product_admin_router
-from .routers import space as space_router
-from .routers import video_cases as video_cases_router
-from .routers import templates as templates_router
-from .routers import print_extract as print_extract_router
-from .routers import export as export_router
-from .routers import mockup as mockup_router
-from .routers import team as team_router
-from .routers import matting as matting_router
-from .routers import extension as extension_router
 
 app = FastAPI(title="PODStudio API", version="0.3.0")
 settings.ensure_dirs()

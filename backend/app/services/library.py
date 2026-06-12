@@ -4,9 +4,12 @@
 本函数在产物保存后登记一条 Asset(含感知哈希,供查重/以图搜图),让那些版块真正有数据。
 """
 from __future__ import annotations
+
 import io
+
 from PIL import Image
 from sqlalchemy.orm import Session
+
 from ..models_db import Asset
 from . import phash
 

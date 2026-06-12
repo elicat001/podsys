@@ -1,12 +1,15 @@
 """作业状态查询 API(需鉴权,按 owner 隔离 —— P0-3)。"""
 from __future__ import annotations
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..auth import current_user
 from ..db import get_db
 from ..models_db import Asset, Job, User
-from ..auth import current_user
 from ..services.jobs import get_job, reap_stuck_jobs
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -33,7 +36,7 @@ def _iso_utc(dt: datetime | None) -> str | None:
     if dt is None:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt.isoformat()
 
 
