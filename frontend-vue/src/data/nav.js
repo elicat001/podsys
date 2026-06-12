@@ -1,6 +1,11 @@
 // 顶部大模块 + 每个模块的左侧栏。对标灵图 ipoddy 的信息架构。
 import { TOOL_CATS } from './tools.js'
 
+// 作图分类的图标(与工具图标呼应,替代原来的「•」小圆点)
+const CAT_ICON = {
+  印花提取: '✂️', 印花设计: '🎨', 图案处理: '🖼️', 侵权检测: '🛡️', 套图标题: '👕', 履约: '🏭',
+}
+
 // 顶部 6 大模块。active 判定:路径以 base 开头(design 额外含 workflow/editor)。
 export const MODULES = [
   { id: 'home', name: '首页', base: '/app/home' },
@@ -20,7 +25,7 @@ export const SIDEBARS = {
   design: [
     { icon: '🔗', label: '工作流', to: '/app/workflow', hl: true },
     { icon: '🧰', label: '全部工具', to: '/app/design' },
-    ...TOOL_CATS.map((c) => ({ icon: '•', label: c, to: { path: '/app/design', query: { cat: c } } })),
+    ...TOOL_CATS.map((c) => ({ icon: CAT_ICON[c] || '•', label: c, to: { path: '/app/design', query: { cat: c } } })),
     { icon: '🖌️', label: 'DIY 编辑器', to: '/app/editor' },
   ],
   video: [

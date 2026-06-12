@@ -162,23 +162,25 @@ function logout() {
   min-height: 0;
 }
 .sidebar {
-  width: 200px;
-  flex: 0 0 200px;
+  width: 208px;
+  flex: 0 0 208px;
   border-right: 1px solid var(--line);
   overflow-y: auto;
-  padding: 14px 10px;
+  padding: 12px 10px;
   background: var(--bg2);
 }
 .navitem {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  margin-bottom: 3px;
-  font-size: 14px;
+  gap: 11px;
+  padding: 9px 12px;
+  margin-bottom: 2px;
+  font-size: 13.5px;
   color: var(--mut);
   cursor: pointer;
   border-radius: 9px;
+  transition: background 0.13s ease, color 0.13s ease;
 }
 .navitem:hover {
   color: var(--fg);
@@ -189,16 +191,31 @@ function logout() {
   background: var(--panel2);
   font-weight: 600;
 }
+/* 选中态左侧品牌色竖条,层次更清晰 */
+.navitem.active::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 15px;
+  border-radius: 3px;
+  background: var(--brand);
+}
 .navitem.hl {
   background: linear-gradient(135deg, rgba(255, 122, 61, 0.16), rgba(124, 108, 255, 0.16));
   color: var(--fg);
+  font-weight: 600;
 }
 .navitem.hl.active {
   background: linear-gradient(135deg, rgba(255, 122, 61, 0.28), rgba(124, 108, 255, 0.28));
 }
 .ic {
-  width: 18px;
+  width: 20px;
   text-align: center;
+  font-size: 15px;
+  flex: none;
 }
 .content {
   flex: 1;
