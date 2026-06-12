@@ -80,47 +80,6 @@ def _fetch_image(url: str, referer: str = "") -> Image.Image:
     return img
 
 
-def create_task(
-    db: Session,
-    owner_id: int,
-    urls: list[str],
-    source: str = "plugin",
-) -> CollectionTask:
-    """建一个采集任务,并为每个 url 建一条采集图(含平台/高清地址)。"""
-    task = CollectionTask(
-        id=storage.new_job_id(),
-        owner_id=owner_id,
-        source=source,
-        status="collected",
-        count=len(urls),
-    )
-    db.add(task)
-    for url in urls:
-        platform = detect_platform(url)
-        hires = upgrade_to_hires(url, platform)
-        db.add(
-            CollectedImage(
-                task_id=task.id,
-                url=url,
-                hires_url=hires,
-                platform=platform,
-            )
-        )
-    db.commit()
-    db.refresh(task)
-    return task
-
-
-def task_to_dict(task: CollectionTask) -> dict:
-    return {
-        "id": task.id,
-        "source": task.source,
-        "status": task.status,
-        "count": task.count,
-        "created_at": task.created_at.isoformat() if task.created_at else None,
-    }
-
-
 def image_to_dict(img: CollectedImage) -> dict:
     created = None
     try:
