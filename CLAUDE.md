@@ -169,6 +169,22 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 - Ruff 配置已忽略本项目惯用的 `db.add(); db.commit()` 分号风格(E701/E702),只报真问题。提交前建议跑一次 `ruff check app`。
 - **改完代码的完整自检**:`ruff check app` → `pytest -q` 全绿;动了核心管线/前端再补 `pytest e2e`。
 
+## Alembic(数据库 schema 迁移)
+
+> 配置在 `backend/alembic/`(`env.py` 从 `app.settings` 读 `POD_DATABASE_URL`,不硬编码密码;`target_metadata=Base.metadata`)。基线版本 `5d2d1973fc1a` = 当前全量表结构。本地/生产库都已 `stamp` 到基线。`deploy.sh [2b/6]` 会自动 `alembic upgrade head`(首次无版本记录的库先 `stamp head`)。
+
+**改表标准流程**(加/改/删列、加索引等对**已存在表**的改动——`create_all` 做不到):
+1. 改模型(`models_*.py`)。
+2. 本地生成迁移:`cd backend && ./.venv/Scripts/alembic.exe revision --autogenerate -m "说明"`。
+3. **打开 `alembic/versions/` 新文件核对**(autogenerate 偶有 MySQL 反射误差,如类型/默认值;删掉多余的 op)。
+4. 本地应用 + 验证:`alembic upgrade head` → `alembic check`(应「No new upgrade operations」)→ `pytest -q`。
+5. 提交(含新迁移文件)→ push → `deploy.sh` 自动 `upgrade head` 把线上表对齐。
+
+**注意**:
+- **新建表**:`create_all` 启动时会自动建(本地+线上都自愈),所以新表不强制走迁移也能跑;但**改存量表必须走 Alembic**。
+- **测试不走 Alembic**:`conftest` 用 `Base.metadata.create_all` 直接按当前模型建 `*_test` 库(快、对齐模型),不跑迁移。
+- 别手动 `ALTER TABLE` 改线上库 —— 走迁移才能本地/线上一致、可追溯、可回滚(`alembic downgrade -1`)。
+
 ## 配置开关(`backend/.env`,前缀 POD_)
 
 | 变量 | 默认 | 说明 |
@@ -188,7 +204,7 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 - 生产前三件套:换 `POD_JWT_SECRET`、关 `POD_DEV_BILLING`、收紧 `POD_REGISTER_RATE_LIMIT`。
 - `services/phash.py` 用了 Pillow 已弃用的 `getdata()`(Pillow 14 移除),是测试 warning 主因,可顺手清理。
 - **已全面转 MySQL 8(不再支持 SQLite)**:`db.py` 只建 MySQL 引擎(`POD_DATABASE_URL` 必填、非 mysql 直接抛错;连接池硬化 pool_pre_ping/recycle)。已加索引:`jobs(owner_id,created_at)`+`jobs(status)`、`assets(owner_id,deleted)`、`collected_images(task_id,synced)`。**测试也走 MySQL** 的 `*_test` 隔离库(conftest 自动 `<库>_test` + `_test` 栅栏 + drop/create)。本地 MySQL 8.4 在 `D:\mysql-local\data`(localhost-only,Windows 服务 `MySQLPodsys` 自启),库 `podsys`+`podsys_test`;生产是系统 MySQL 8.0 上的独立库 `podsys`+独立用户(权限只授 `podsys.*`,与同机 Django 的 `kejing`/`kejing_staging` 物理隔离)。存储仍本地文件,上量再换 S3/MinIO。
-- (历史)早期是 SQLite + 手写 `_ADDED_COLUMNS` 在线补列(已随转 MySQL 删除);**无 Alembic**。表结构再演进强烈建议引入 Alembic(`create_all` 不会给已存在的表加列/加索引)。一次性迁移脚本 `migrate_sqlite_to_mysql.py` 已完成使命删除,需要可从 git 历史(commit da577a4)取回。
+- **已接入 Alembic 管 schema 版本**(`backend/alembic/`,基线 `5d2d1973fc1a`)。`create_all` 仍留作安全网(新表自愈),但**改/加列、加索引等对已存在表的改动必须走 Alembic**(`create_all` 改不了存量表)。改表标准流程见下「Alembic」一节。一次性迁移脚本 `migrate_sqlite_to_mysql.py` 已完成使命删除(git 历史 da577a4 可取回)。
 - `ai/upscale.py` 的 `realesrgan` 已接 Real-ESRGAN(SRVGG general-x4v3,onnx,~几秒真提质);模型 `models/realesr_x4v3.onnx` 不入库,缺失自动降级 Lanczos。
 
 ## ⚠️ 额外注意事项 / 易踩的坑(代码里真实存在,docs 未必写)

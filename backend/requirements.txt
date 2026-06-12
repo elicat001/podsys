@@ -9,6 +9,8 @@ sqlalchemy>=2.0
 # PyMySQL(纯 Python 驱动,Windows 无需编译器)+ cryptography(MySQL 8 默认 caching_sha2_password 认证要)。
 pymysql>=1.1
 cryptography>=42.0
+# 数据库 schema 版本管理(改表/加列/加索引走迁移,本地+线上自动对齐)。deploy.sh 会 alembic upgrade head。
+alembic>=1.13
 pyjwt>=2.8
 openai>=1.55
 pytest>=8.0

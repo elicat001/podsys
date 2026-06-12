@@ -38,6 +38,18 @@ echo "==> [2/6] 安装后端依赖(pip,只补缺的;celery/redis 等)"
 # 已满足的会跳过,首次会装上 celery/redis。HOME 指向可写 scratch 让 pip 能写缓存。
 sudo -u "$RUNAS" env HOME="$BUILD_HOME" "$VENV/bin/pip" install -q -r "$BE/requirements.txt"
 
+echo "==> [2b/6] 数据库迁移(alembic)"
+cd "$BE"
+# 首次:库里还没 alembic 版本记录(老库已有表)→ 标记为基线(不重建表);之后:应用新迁移。
+# 连接串由 alembic/env.py 从 .env 读;配合 app 启动的 create_all 安全网,即使空库也能起。
+if sudo -u "$RUNAS" env HOME="$BUILD_HOME" "$VENV/bin/alembic" current 2>/dev/null | grep -qE '[0-9a-f]{12}'; then
+  sudo -u "$RUNAS" env HOME="$BUILD_HOME" "$VENV/bin/alembic" upgrade head
+  echo "    alembic upgrade head 完成"
+else
+  sudo -u "$RUNAS" env HOME="$BUILD_HOME" "$VENV/bin/alembic" stamp head
+  echo "    首次:已把现有库 stamp 为基线(后续改表会自动 upgrade)"
+fi
+
 echo "==> [3/6] 安装前端依赖(npm ci,按 package-lock 可复现)"
 cd "$FE"
 sudo -u "$RUNAS" env HOME="$BUILD_HOME" npm ci --no-audit --no-fund --prefer-offline
