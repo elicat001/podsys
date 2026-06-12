@@ -1,25 +1,16 @@
-"""计费扣点服务单测:使用临时 SQLite,独立可跑。"""
+"""计费扣点服务单测:走 conftest 准备的 MySQL 测试库(*_test),直接用 SessionLocal。"""
 from __future__ import annotations
-import os
-import tempfile
-from pathlib import Path
 
 import pytest
 
-# 在导入 app.db 之前把数据目录指向临时目录,避免污染 data/podstudio.db
-_TMP = Path(tempfile.mkdtemp(prefix="podstudio-billing-test-"))
-os.environ["POD_DATA_DIR"] = str(_TMP)
-
-from app.db import SessionLocal, init_db  # noqa: E402
-from app.models_db import User  # noqa: E402
-from app.services.billing import (  # noqa: E402
-    InsufficientCredits,
+from app.db import SessionLocal
+from app.models_db import User
+from app.services.billing import (
     COST,
-    cost_of,
+    InsufficientCredits,
     charge,
+    cost_of,
 )
-
-init_db()
 
 
 @pytest.fixture()

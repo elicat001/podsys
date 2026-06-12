@@ -23,7 +23,7 @@
   仍**同步**的:一键抠图 `/api/process`(核心管线)、标题/侵权(分析类,返回文字/风险而非可下载图)。
   详见「异步作业(Celery)」一节。(历史上是 BackgroundTasks,已迁移。)
 - 图像:Pillow(默认离线 CPU),可切换 rembg / OpenAI gpt-image / 第三方 API
-- 存储:本地文件 + **数据库可切换**(SQLAlchemy 2.0,`db.py` 按 `POD_DATABASE_URL` 分两路:留空=SQLite;dev/prod 已切 **MySQL 8**,utf8mb4)。测试永远走 SQLite。S3/MinIO 接口已预留
+- 存储:本地文件 + **MySQL 8**(SQLAlchemy 2.0,utf8mb4;已全面转 MySQL,不再支持 SQLite)。`POD_DATABASE_URL` 必填;测试走 `*_test` 隔离库(conftest)。S3/MinIO 接口已预留
 - 前端:**Vue 3 SPA**(`frontend-vue/`:Vite + vue-router(history 模式)+ pinia + element-plus,深色风格)。后端 `main.py` 服务其构建产物 `dist`(SPA 回退,见「部署」一节);旧的静态 `frontend/*.html` 已废弃删除。**需登录才能用**(无游客自动注册)。
 - 鉴权:JWT(PyJWT)+ pbkdf2 密码哈希;计费:点数(credits)模式
 
@@ -144,7 +144,8 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 
 - 运行:`cd backend && ./.venv/Scripts/python.exe -m pytest -q`
 - 测试用 `TestClient`,**不需要启 uvicorn**。
-- `conftest.py` 已做三层隔离,**不会污染开发库/MySQL、也不碰真实外部 API**:① `POD_DATA_DIR` 指向临时库;② **强制离线**——清空 `POD_OPENAI_API_KEY` + 锁定 `pillow` 引擎;③ **强制 SQLite**——清空 `POD_DATABASE_URL`(本机 `.env` 已切 MySQL,这行盖掉它,测试永远跑临时 SQLite)。所以即使 `backend/.env` 配了真 key + MySQL,`pytest` 仍跑离线 SQLite 占位路径(确定性、~110s)。**改 conftest 要保留这三层隔离**(早期踩过坑:配了真 key 没隔离,AI 类测试真去调网关,11 个超时失败、跑了 29 分钟)。
+- `conftest.py` 已做三层隔离,**不会污染开发库、也不碰真实外部 API**:① `POD_DATA_DIR` 指向临时目录(文件存储);② **强制离线**——清空 `POD_OPENAI_API_KEY` + 锁定 `pillow` 引擎;③ **DB 用隔离的 `*_test` 库**——读 `.env` 的 `POD_DATABASE_URL`、把库名换成 `<库>_test`(如 `podsys_test`),**带安全栅栏:库名不以 `_test` 结尾就拒绝 drop_all**,每次跑测试 drop+create 从空库开始,绝不碰真实库。所以即使 `.env` 配了真 key + 真库,`pytest` 仍离线、且只动 `*_test`(~110s)。**改 conftest 要保留这三层隔离 + `_test` 栅栏**(早期踩过坑:配了真 key 没隔离,AI 类测试真去调网关,11 个超时失败、跑了 29 分钟)。
+  - ⚠️ 跑测试前需先建好 `*_test` 库 + 授权(本机:`CREATE DATABASE podsys_test CHARACTER SET utf8mb4; GRANT ALL ON podsys_test.* TO 'podsys'@'127.0.0.1','podsys'@'localhost';`)。conftest 连不上会打印这条提示。
 - 可用 fixtures:`client`(TestClient)、`auth_headers`(已注册用户的 Bearer 头)、`png`(内存造图工厂)。
 - 新表的测试在文件顶部确保建表:`from app.db import engine, Base; Base.metadata.create_all(engine)`。
 - 覆盖要点:正常路径 + 未登录 401 + 越权 404 + 参数非法 400/422 + 余额不足 402 +(AI 类)无 key 502 且退点。
@@ -172,7 +173,7 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `POD_DATABASE_URL` | 空 | 空=SQLite(`data/podstudio.db`);填 `mysql+pymysql://用户:密码@127.0.0.1:3306/podsys?charset=utf8mb4` 切 MySQL。**dev/prod 已切 MySQL**;conftest 强制空(测试永远 SQLite)。`db.py` 按它分两路引擎 |
+| `POD_DATABASE_URL` | 空 | **必填**(已全面转 MySQL,不再支持 SQLite);`mysql+pymysql://用户:密码@127.0.0.1:3306/podsys?charset=utf8mb4`。留空/非 mysql → `db.py` 直接抛错。测试由 conftest 自动改用 `<库>_test` 隔离库 |
 | `POD_MATTING_PROVIDER` | `pillow` | 抠图引擎:pillow / rembg / api / gptimage |
 | `POD_UPSCALE_PROVIDER` | `pillow` | 放大引擎(gpt-image 不做超分,会重绘像素,生产禁用) |
 | `POD_OPENAI_API_KEY` | 空 | 配了才能用 gptimage / 文生图 / 图生图 |
@@ -186,8 +187,8 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 
 - 生产前三件套:换 `POD_JWT_SECRET`、关 `POD_DEV_BILLING`、收紧 `POD_REGISTER_RATE_LIMIT`。
 - `services/phash.py` 用了 Pillow 已弃用的 `getdata()`(Pillow 14 移除),是测试 warning 主因,可顺手清理。
-- **DB 已从 SQLite 迁到 MySQL 8(dev/prod)**:`db.py` 按 `POD_DATABASE_URL` 分两路(留空=SQLite,填=MySQL,连接池硬化 pool_pre_ping/recycle)。迁移脚本 `backend/scripts/migrate_sqlite_to_mysql.py`(sqlite→mysql,保留 ID,FK 顺序,utf8mb4)。已加索引:`jobs(owner_id,created_at)`+`jobs(status)`、`assets(owner_id,deleted)`、`collected_images(task_id,synced)`。**测试仍走 SQLite**(conftest 强制 `POD_DATABASE_URL=""`)。本地 MySQL 在 `D:\mysql-local\data`(8.4,localhost-only);生产是系统 MySQL 8.0 上的独立库 `podsys`+独立用户(与同机别的项目库物理隔离)。存储仍本地文件,上量再换 S3/MinIO。
-- (历史)早期是纯 SQLite + 手写 `_ADDED_COLUMNS` 在线补列;无 Alembic。表结构再演进建议引入 Alembic,别再堆 `_ADDED_COLUMNS`。
+- **已全面转 MySQL 8(不再支持 SQLite)**:`db.py` 只建 MySQL 引擎(`POD_DATABASE_URL` 必填、非 mysql 直接抛错;连接池硬化 pool_pre_ping/recycle)。已加索引:`jobs(owner_id,created_at)`+`jobs(status)`、`assets(owner_id,deleted)`、`collected_images(task_id,synced)`。**测试也走 MySQL** 的 `*_test` 隔离库(conftest 自动 `<库>_test` + `_test` 栅栏 + drop/create)。本地 MySQL 8.4 在 `D:\mysql-local\data`(localhost-only,Windows 服务 `MySQLPodsys` 自启),库 `podsys`+`podsys_test`;生产是系统 MySQL 8.0 上的独立库 `podsys`+独立用户(权限只授 `podsys.*`,与同机 Django 的 `kejing`/`kejing_staging` 物理隔离)。存储仍本地文件,上量再换 S3/MinIO。
+- (历史)早期是 SQLite + 手写 `_ADDED_COLUMNS` 在线补列(已随转 MySQL 删除);**无 Alembic**。表结构再演进强烈建议引入 Alembic(`create_all` 不会给已存在的表加列/加索引)。一次性迁移脚本 `migrate_sqlite_to_mysql.py` 已完成使命删除,需要可从 git 历史(commit da577a4)取回。
 - `ai/upscale.py` 的 `realesrgan` 已接 Real-ESRGAN(SRVGG general-x4v3,onnx,~几秒真提质);模型 `models/realesr_x4v3.onnx` 不入库,缺失自动降级 Lanczos。
 
 ## ⚠️ 额外注意事项 / 易踩的坑(代码里真实存在,docs 未必写)

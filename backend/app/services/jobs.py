@@ -40,7 +40,7 @@ def reap_stuck_jobs(db: Session, minutes: int = STUCK_MINUTES) -> int:
     """把超时还 pending/running 的僵尸作业标 error + 退点(从未交付结果=应退)。返回清理条数。
 
     在 `/api/jobs` 列表端点惰性调用——列表自愈,不依赖重启。pending/running 行很少,全量取回
-    Python 侧按 created_at 算龄(避开 SQLite naive datetime 与 aware 比较的坑)。
+    Python 侧按 created_at 算龄(避开 DB naive datetime 与 aware 比较的坑)。
     """
     rows = db.execute(
         select(Job).where(Job.status.in_(("pending", "running")))

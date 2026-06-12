@@ -17,10 +17,9 @@ class Settings(BaseSettings):
     # storage
     data_dir: Path = _BACKEND_DIR / "data"
 
-    # 数据库:留空 = SQLite(data_dir/podstudio.db,默认/测试用);
-    # 填 POD_DATABASE_URL 切 MySQL,如:
+    # 数据库:**必须**是 MySQL 连接串(项目已全面转 MySQL,不再支持 SQLite),如:
     #   mysql+pymysql://podsys:<pwd>@127.0.0.1:3306/podsys?charset=utf8mb4
-    # (conftest 不设此项 → pytest 永远跑 SQLite,保持离线确定性。)
+    # dev/prod 在 .env 配;测试由 conftest 指向同库名加 _test 的隔离库(见 tests/conftest.py)。
     database_url: str = ""
 
     # auth

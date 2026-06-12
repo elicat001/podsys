@@ -118,7 +118,7 @@ def list_assets(
     if q:
         conds.append(Asset.name.ilike(f"%{q}%"))
     if tagged is not None:
-        # 有标签 = tags 非空列表。SQLite JSON 比较退化,改用 python 侧过滤(见下)。
+        # 有标签 = tags 非空列表。JSON 列含标签判断用 python 侧过滤(简单可移植,见下)。
         pass
 
     base = select(Asset).where(*conds)

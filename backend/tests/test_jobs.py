@@ -37,6 +37,9 @@ def test_create_job_pending(session):
 def test_run_job_done(session):
     job = jobs.create_job(session, "process")
     jobs.run_job(job.id, lambda: {"ok": 1})
+    # 结束本会话在 create_job 时开启的读事务快照,否则 MySQL REPEATABLE READ 下看不到
+    # run_job(独立会话)的提交(app 里每个请求都是新会话,无此问题)。
+    session.commit()
     refreshed = jobs.get_job(session, job.id)
     session.refresh(refreshed)
     assert refreshed.status == "done"
@@ -51,6 +54,7 @@ def test_run_job_error(session):
         raise ValueError("boom!")
 
     jobs.run_job(job.id, boom)
+    session.commit()  # 同上:结束读事务快照,才能看到 run_job 的提交(MySQL REPEATABLE READ)
     refreshed = jobs.get_job(session, job.id)
     session.refresh(refreshed)
     assert refreshed.status == "error"
@@ -84,6 +88,7 @@ def test_submit_helper(session):
 
     # 真正执行注册的后台任务,验证闭环
     fn(*args)
+    session.commit()  # 同上:结束读事务快照,才能看到后台任务(独立会话)的提交(MySQL REPEATABLE READ)
     session.refresh(job)
     assert job.status == "done"
     assert job.result == {"ok": 1}

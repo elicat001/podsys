@@ -19,9 +19,39 @@ from pathlib import Path
 _TMP_DATA_DIR = Path(tempfile.gettempdir()) / f"podstudio_test_{uuid.uuid4().hex[:8]}"
 _TMP_DATA_DIR.mkdir(parents=True, exist_ok=True)
 os.environ["POD_DATA_DIR"] = str(_TMP_DATA_DIR)
-# 强制 SQLite:即使 backend/.env 配了 POD_DATABASE_URL=mysql(本机已切 MySQL),测试也必须用
-# 临时 SQLite 库(离线、确定性、不连任何外部 DB、不污染 MySQL)。env 优先于 .env,这行盖掉它。
-os.environ["POD_DATABASE_URL"] = ""
+
+
+# ── 测试数据库:用 MySQL 同库名加 _test 的隔离库(项目已全面转 MySQL,无 SQLite 兜底)──
+# 取真实 POD_DATABASE_URL(env 或 backend/.env),把库名换成 <db>_test,**绝不在真实库上跑**。
+def _read_env_file_var(name: str) -> str:
+    envf = Path(__file__).resolve().parent.parent / ".env"
+    if envf.exists():
+        for line in envf.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if s.startswith(name + "="):
+                return s[len(name) + 1:].strip()
+    return ""
+
+
+def _derive_test_db_url() -> str:
+    from sqlalchemy.engine import make_url
+    base = os.environ.get("POD_DATABASE_URL") or _read_env_file_var("POD_DATABASE_URL")
+    if not base:
+        raise RuntimeError(
+            "测试需要 MySQL:请在 backend/.env 配 POD_DATABASE_URL(mysql+pymysql://...);"
+            "测试会自动改用同库名加 _test 的隔离库(如 podsys_test),不碰真实数据。"
+        )
+    url = make_url(base)
+    db = url.database or ""
+    if not db.endswith("_test"):
+        db = db + "_test"
+    url = url.set(database=db)
+    # 安全栅栏:测试库名必须以 _test 结尾,杜绝在真实库上 drop_all
+    assert (url.database or "").endswith("_test"), "测试库名必须以 _test 结尾(防误删真实库)"
+    return url.render_as_string(hide_password=False)
+
+
+os.environ["POD_DATABASE_URL"] = _derive_test_db_url()
 # 关键:确保即使存在 .env 也不会覆盖临时目录(env 变量优先级高于 .env 默认值)
 # 测试必须『离线、确定性、不碰真实外部 API』:即使 backend/.env 配了真 key,
 # 也在这里强制清空 key + 锁定 pillow 引擎,否则 AI 类测试会真去调网关→超时/不稳定。
@@ -45,9 +75,23 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
 
-# 现在再 import app —— 此时 settings.data_dir 已指向临时目录
+# 现在再 import app —— 此时 settings.data_dir/database_url 已指向临时目录 + *_test 库
 from app.config import settings  # noqa: E402
+from app.db import Base, engine, init_db  # noqa: E402
 from app.main import app  # noqa: E402
+
+# 干净起点:确认连的是 *_test 库后,重建全部表(drop+create),每次跑测试从空库开始,不污染真实库
+assert (engine.url.database or "").endswith("_test"), "拒绝在非 _test 库上重建表"
+try:
+    init_db()  # 导入全部模型 + create_all
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+except Exception as _e:  # noqa: BLE001
+    raise RuntimeError(
+        f"准备测试库 {engine.url.database} 失败:{_e}\n"
+        f"先建库+授权:CREATE DATABASE {engine.url.database} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; "
+        f"GRANT ALL ON {engine.url.database}.* TO '<用户>'@'localhost','<用户>'@'127.0.0.1';"
+    ) from _e
 
 
 def make_png(

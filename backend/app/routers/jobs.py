@@ -28,8 +28,8 @@ def _result_urls(result: dict | None) -> list[str]:
 
 
 def _iso_utc(dt: datetime | None) -> str | None:
-    """序列化为带 UTC 偏移的 ISO 串。作业时间戳都按 UTC 存(_now=now(utc)),但 SQLite 取回是
-    naive,直接 isoformat() 不带偏移 → 浏览器会当本地时区解析(差 8 小时)。这里强制补 +00:00。"""
+    """序列化为带 UTC 偏移的 ISO 串。作业时间戳都按 UTC 存(_now=now(utc)),但 DB(MySQL DATETIME)
+    取回是 naive,直接 isoformat() 不带偏移 → 浏览器会当本地时区解析(差 8 小时)。这里强制补 +00:00。"""
     if dt is None:
         return None
     if dt.tzinfo is None:

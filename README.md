@@ -22,7 +22,7 @@
 - 后端:Python 3 + FastAPI + Uvicorn;耗时作业走 **Celery + 独立 Redis(6380)** 异步队列
 - 图像:Pillow 打底 + **本地引擎**(rembg 抠图 / Real-ESRGAN 超分 / vtracer 转矢量 / OpenCV);可切换 OpenAI 兼容网关或第三方 API
 - 前端:**Vue 3 SPA**(`frontend-vue/`:Vite + vue-router + pinia + element-plus,深色风格;需登录)
-- 存储:本地文件 + SQLite(MVP);后续 S3/MinIO/OSS + Postgres
+- 存储:本地文件 + **MySQL 8**(utf8mb4,`POD_DATABASE_URL` 必填);后续上量再换 S3/MinIO/OSS
 
 ## 快速开始
 
@@ -41,13 +41,17 @@ uvicorn app.main:app --reload --port 10000
 # 打开 http://127.0.0.1:10000
 ```
 
+> 🗄️ **必须先有 MySQL 8**(项目已全面转 MySQL,不再支持 SQLite):建 `podsys` 库 + 用户后,
+> 在 `.env` 填 `POD_DATABASE_URL=mysql+pymysql://podsys:密码@127.0.0.1:3306/podsys?charset=utf8mb4`
+> (没填后端会直接报错)。建库/授权/测试库的命令见 [`backend/.env.example`](backend/.env.example)。
+
 > ⚙️ **强烈建议立刻在 `.env` 填好 `POD_OPENAI_API_KEY`**(用兼容网关再填 `POD_OPENAI_BASE_URL`):
 > 文生图 / 图生图改图 / 换装换背景 / 印花提取(默认 AI 重绘)/ 作图工具等**很多功能都要 key**,
 > 没 key 会 502 或降级兜底。
 > 抠图默认用本地 **`rembg`**(离线免费,**首次抠图自动下载 ~170MB 模型**,需一次联网);放大默认 Lanczos。
 > 套图 / 导出生产文件 / 转矢量等本地能力始终离线可用。引擎切换详见下方「AI 引擎切换」。
 
-跑测试(用 TestClient,不需要起服务):`.\.venv\Scripts\python.exe -m pytest -q`
+跑测试(用 TestClient,不需起 uvicorn;但需 MySQL + 一个 `podsys_test` 隔离库,见 `.env.example`):`.\.venv\Scripts\python.exe -m pytest -q`
 
 > 📌 **可选的本地超分模型**:真"提质放大"需把 Real-ESRGAN 模型 `realesr_x4v3.onnx`(~4.7MB)放到 `backend/models/`。
 > 这个文件**不在仓库里**,缺失时自动降级 Lanczos(仍可用)。

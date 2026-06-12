@@ -72,7 +72,7 @@ def search_products(
 
     rows = db.execute(stmt).scalars().all()
 
-    # tag:JSON list 包含(Python 侧过滤,兼容 SQLite)
+    # tag:JSON list 包含(Python 侧过滤,简单可移植;量大可改 MySQL JSON_CONTAINS)
     if tag is not None:
         rows = [p for p in rows if tag in (p.tags or [])]
 
