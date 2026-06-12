@@ -159,14 +159,14 @@ onMounted(() => { loadTasks(); loadStaging() })
 <template>
   <div>
     <h2>采集</h2>
-    <p class="muted">装一次浏览器插件,去 Temu 商品页一键采集商品(图+标题+价格+评分+链接)→ 进下方采集箱 → 勾选「开始同步」入库。</p>
+    <p class="muted">装一次浏览器插件,去 Temu / Amazon / Shopee / 美客多 / TikTok 商品页一键采集商品(图+标题+价格+评分+链接)→ 进下方采集箱 → 勾选「开始同步」入库。</p>
 
     <!-- 插件采集(推荐):像竞品一样,装插件 → 页面内一键采集 -->
     <div class="panel plugin">
       <div class="phead">
         <div>
           <div class="ptitle">🦏 插件采集 <span class="badge">推荐</span></div>
-          <div class="muted sm">在 Temu 页面右下角浮出采集面板,整页/单图一键采,带你的登录态、绕过反爬。</div>
+          <div class="muted sm">支持 Temu / Amazon / Shopee / 美客多 / TikTok;商品页浮出可拖动采集球(默认右上角),点开整页/单图一键采,带你的登录态、绕过反爬。</div>
         </div>
         <button class="btn-primary dl" :disabled="downloading" @click="downloadExt">
           {{ downloading ? '下载中…' : '⬇ 下载采集插件' }}
@@ -194,8 +194,8 @@ onMounted(() => { loadTasks(); loadStaging() })
         <div class="step">
           <span class="num">3</span>
           <div>
-            <b>登录后去 Temu 采集</b>
-            <div class="muted sm">本站登录一次(插件读取登录态)→ 打开 Temu 商品页 → 点「全部采集本页」或悬停图点「采集此图」。</div>
+            <b>登录后去商品页采集</b>
+            <div class="muted sm">本站登录一次(插件读取登录态)→ 打开 Temu/Amazon 等商品页 → 点右上采集球「全部采集本页」,或悬停某商品图点「采集此商品」。</div>
           </div>
         </div>
       </div>

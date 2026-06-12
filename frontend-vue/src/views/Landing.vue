@@ -28,7 +28,7 @@ const features = [
   <div class="landing">
     <!-- 顶栏:极简,少按钮 -->
     <header class="nav">
-      <div class="brand"><span class="logo brand-grad" /><span class="brand-text">灵犀POD</span></div>
+      <div class="brand"><img src="/favicon.svg" class="logo" alt="" /><span class="brand-text">灵犀POD</span></div>
       <router-link to="/login" class="btn-primary sm">登录 / 免费体验</router-link>
     </header>
 

@@ -35,7 +35,7 @@ async function submit() {
   <div class="login-page">
     <div class="card panel">
       <div class="brand">
-        <span class="logo brand-grad" />
+        <img src="/favicon.svg" class="logo" alt="" />
         <span class="brand-text">灵犀POD</span>
       </div>
       <h2>{{ mode === 'login' ? '登录' : '注册账号' }}</h2>

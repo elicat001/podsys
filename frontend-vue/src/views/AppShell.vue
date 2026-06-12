@@ -43,7 +43,7 @@ function logout() {
     <!-- 顶栏:logo + 大模块导航 + 右侧 -->
     <header class="topbar">
       <router-link to="/app/home" class="brand">
-        <span class="logo brand-grad" /><span class="brand-text">灵犀POD</span>
+        <img src="/favicon.svg" class="logo" alt="" /><span class="brand-text">灵犀POD</span>
       </router-link>
       <nav class="modnav">
         <router-link
