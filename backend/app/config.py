@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     # storage
     data_dir: Path = _BACKEND_DIR / "data"
 
+    # 数据库:留空 = SQLite(data_dir/podstudio.db,默认/测试用);
+    # 填 POD_DATABASE_URL 切 MySQL,如:
+    #   mysql+pymysql://podsys:<pwd>@127.0.0.1:3306/podsys?charset=utf8mb4
+    # (conftest 不设此项 → pytest 永远跑 SQLite,保持离线确定性。)
+    database_url: str = ""
+
     # auth
     jwt_secret: str = "dev-secret-change-me-please-set-POD_JWT_SECRET-in-prod"
 

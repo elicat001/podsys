@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -36,6 +36,8 @@ class CollectedImage(Base):
     """采集记录:暂存(synced=False)= 选择工作台;入库(synced=True)= 找图库的富记录
     (图 + 标题/价格/评分/来源链接 + 同步后的 asset 直链)。"""
     __tablename__ = "collected_images"
+    # 采集箱/找图都是 join 后 `WHERE task_id 属本人 AND synced=?` → 复合索引
+    __table_args__ = (Index("ix_collected_task_synced", "task_id", "synced"),)
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     task_id: Mapped[str] = mapped_column(
         ForeignKey("collection_tasks.id"), index=True

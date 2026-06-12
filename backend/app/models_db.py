@@ -1,7 +1,7 @@
 """ORM models: User, Asset, Job, Product, Listing."""
 from __future__ import annotations
 from datetime import datetime, timezone
-from sqlalchemy import String, Integer, Float, Text, ForeignKey, DateTime, JSON
+from sqlalchemy import String, Integer, Float, Text, ForeignKey, DateTime, JSON, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
@@ -26,6 +26,8 @@ class User(Base):
 class Asset(Base):
     """素材库条目(原图/印花),带感知哈希用于侵权/查重。"""
     __tablename__ = "assets"
+    # 素材库列表/配额几乎都是 `WHERE owner_id AND deleted=?` → 复合索引覆盖
+    __table_args__ = (Index("ix_assets_owner_deleted", "owner_id", "deleted"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(255))
@@ -47,6 +49,12 @@ class Asset(Base):
 class Job(Base):
     """异步/可追溯作业记录。"""
     __tablename__ = "jobs"
+    # 最热的表:任务中心列表/最近任务高频轮询 = `WHERE owner_id ORDER BY created_at DESC`;
+    # reap 自愈 = `WHERE status IN (pending,running)`。两条索引把这俩查询从全表扫降到走索引。
+    __table_args__ = (
+        Index("ix_jobs_owner_created", "owner_id", "created_at"),
+        Index("ix_jobs_status", "status"),
+    )
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     kind: Mapped[str] = mapped_column(String(32))     # process|generate|edit|split|publish

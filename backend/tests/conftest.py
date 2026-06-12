@@ -19,6 +19,9 @@ from pathlib import Path
 _TMP_DATA_DIR = Path(tempfile.gettempdir()) / f"podstudio_test_{uuid.uuid4().hex[:8]}"
 _TMP_DATA_DIR.mkdir(parents=True, exist_ok=True)
 os.environ["POD_DATA_DIR"] = str(_TMP_DATA_DIR)
+# 强制 SQLite:即使 backend/.env 配了 POD_DATABASE_URL=mysql(本机已切 MySQL),测试也必须用
+# 临时 SQLite 库(离线、确定性、不连任何外部 DB、不污染 MySQL)。env 优先于 .env,这行盖掉它。
+os.environ["POD_DATABASE_URL"] = ""
 # 关键:确保即使存在 .env 也不会覆盖临时目录(env 变量优先级高于 .env 默认值)
 # 测试必须『离线、确定性、不碰真实外部 API』:即使 backend/.env 配了真 key,
 # 也在这里强制清空 key + 锁定 pillow 引擎,否则 AI 类测试会真去调网关→超时/不稳定。

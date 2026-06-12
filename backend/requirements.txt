@@ -5,6 +5,11 @@ python-multipart>=0.0.9
 pydantic>=2.7
 pydantic-settings>=2.3
 sqlalchemy>=2.0
+# 数据库:默认 SQLite(零依赖,内置);设 POD_DATABASE_URL=mysql+pymysql://... 切 MySQL 时需:
+# PyMySQL(纯 Python 驱动,Windows 无需编译器)+ cryptography(MySQL 8 默认 caching_sha2_password 认证要)。
+# 不切 MySQL(只跑 SQLite/测试)时这两个装不装都行。
+pymysql>=1.1
+cryptography>=42.0
 pyjwt>=2.8
 openai>=1.55
 pytest>=8.0
