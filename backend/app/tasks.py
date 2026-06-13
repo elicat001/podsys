@@ -104,8 +104,8 @@ def run_print_extract(job_id: str) -> None:
 
 
 # ── 通用工具作业(Phase B)──────────────────────────────────────────────────
-# 其余异步端点(文生图/改图/裂变/融合/转绘/梗图/提质/扩图/去水印/试衣/换装/合照/转矢量)
-# 共用一个 Celery 任务 `run_tool`,按 job.kind 在 TOOL_WORKS 里分派 work。
+# 其余异步端点(文生图/改图/裂变/转绘/梗图/提质/去水印/转矢量/图生视频 等)
+# 共用一个 Celery 任务 `run_tool`,按 job.kind 在 TOOL_WORKS 里分派 work(全集见 TOOL_WORKS)。
 # 约定:输入图(若有)由 router 落到 storage.upload_path(job_id);参数在 job.params。
 # 重依赖(openai/各 service)在 work 内惰性 import,保持离线启动轻量(对齐项目习惯)。
 def _load_input(job_id: str) -> Image.Image:
