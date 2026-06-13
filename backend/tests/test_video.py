@@ -136,25 +136,39 @@ def test_video_options_ai_ready_false_offline(client, auth_headers):
     # 扩充后的画幅都在(竖/方/横)
     for a in ("portrait", "portrait34", "square", "landscape43", "landscape"):
         assert a in body["aspects"]
+    # 分辨率 + 语言 + 视频类型也返回
+    assert "1080p" in body["resolutions"] and "4k" in body["resolutions"]
+    assert "葡萄牙语" in body["languages"]
+    assert set(body["modes"]) == {"unbox", "influencer", "scene"}
 
 
-def test_compose_prompt_weaves_title_and_quality():
-    # 提示词工程:商品标题(语义锚)+ 运动描述 + 全局一致性/质感指令
+def test_aspect_size_by_resolution():
+    # 画幅 × 分辨率 → 尺寸(短边=分辨率档,长边按比例)
+    from app.ai.video import aspect_size
+    assert aspect_size("portrait", "1080p") == "1080x1920"
+    assert aspect_size("landscape", "1080p") == "1920x1080"
+    assert aspect_size("square", "720p") == "720x720"
+    assert aspect_size("portrait", "4k") == "2160x3840"
+
+
+def test_compose_prompt_mode_title_lang_quality():
+    # 提示词:视频类型基底 + 商品标题 + 补充 + 语言 + 一致性/防拉伸指令
     from app.ai.video import compose_prompt
-    out = compose_prompt("镜头缓缓推近", "复古印花连衣裙")
-    assert "复古印花连衣裙" in out and "镜头缓缓推近" in out
-    assert "不变形" in out          # 一致性指令被统一追加
-    # 空标题:不加「商品是」前缀,也不报错
-    out2 = compose_prompt("只有运动描述", "")
-    assert "只有运动描述" in out2 and "商品是" not in out2
-    # 全空也安全(只剩质感指令)
-    assert compose_prompt("", "").strip()
+    out = compose_prompt("unbox", extra="强调面料质感", title="复古印花连衣裙", language="葡萄牙语")
+    assert "开箱" in out                       # 模式基底
+    assert "复古印花连衣裙" in out and "强调面料质感" in out
+    assert "葡萄牙语" in out                    # 语言指令
+    assert "拉伸" in out                        # 防拉伸指令被统一追加
+    # 「无对白」→ 不加配音语言句
+    out2 = compose_prompt("scene", language="无对白")
+    assert "配音使用" not in out2
 
 
-def test_ai_generate_with_title_and_new_aspect(client, auth_headers):
-    # 带商品标题 + 新增画幅(3:4)走通(本地兜底 GIF)
+def test_ai_generate_full_params(client, auth_headers):
+    # 视频类型 + 标题 + 语言 + 新画幅(3:4)+ 分辨率(720p)全走通(本地兜底 GIF)
     r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "镜头缓缓推近", "title": "复古印花连衣裙", "aspect": "portrait34"},
+                    data={"mode": "influencer", "title": "复古印花连衣裙", "language": "英语",
+                          "prompt": "强调面料", "aspect": "portrait34", "resolution": "720p"},
                     files={"file": ("x.png", _png(), "image/png")})
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()

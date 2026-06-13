@@ -406,15 +406,19 @@ def _work_sync(job_id: str, job: Job, db: Session) -> dict:
 def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     """AI 图生视频(智谱 CogVideoX-3 或本地兜底 GIF)。读 1~2 张输入图(2 张=首尾帧)→ provider → 存产物。
     输入图:第 1 张在 upload_path(job_id);可选第 2 张(尾帧)在 upload_path(job_id_mask)。"""
-    from .ai.video import compose_prompt, get_video_provider
+    from .ai.video import aspect_size, compose_prompt, fit_to_aspect, get_video_provider
     p = job.params
-    imgs = [_load_input(job_id)]
+    size = aspect_size(p.get("aspect", "portrait"), p.get("resolution", "1080p"))
+    tw, th = (int(x) for x in size.split("x"))
+    raw = [_load_input(job_id)]
     mpath = storage.upload_path(f"{job_id}_mask")   # 复用 mask 槽放第 2 张(尾帧)
     if mpath.exists():
-        im2 = Image.open(mpath); im2.load(); imgs.append(im2)
-    # 提示词工程:运动描述 + 商品标题(语义锚)+ 全局一致性/质感指令
-    prompt = compose_prompt(p.get("prompt", ""), p.get("title", ""))
-    out = get_video_provider().image_to_video(imgs, prompt, aspect=p.get("aspect", "portrait"))
+        im2 = Image.open(mpath); im2.load(); raw.append(im2)
+    imgs = [fit_to_aspect(im, tw, th) for im in raw]   # 按画幅等比贴合,防模型生硬拉伸
+    # 提示词工程:视频类型基底 + 商品标题(语义锚)+ 补充描述 + 语言 + 一致性/防拉伸指令
+    prompt = compose_prompt(p.get("mode", "unbox"), extra=p.get("prompt", ""),
+                            title=p.get("title", ""), language=p.get("language", "葡萄牙语"))
+    out = get_video_provider().image_to_video(imgs, prompt, size=size)
     ext = out.get("ext", "mp4")
     name = f"video.{ext}"
     storage.output_path(job_id, name).write_bytes(out["bytes"])

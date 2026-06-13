@@ -8,7 +8,7 @@ from PIL import Image
 from sqlalchemy.orm import Session
 
 from .. import storage
-from ..ai.video import ASPECT_SIZE
+from ..ai.video import ASPECT_RATIOS, LANGUAGES, MODE_PROMPTS, RESOLUTION_SHORT
 from ..auth import current_user
 from ..config import settings
 from ..db import get_db
@@ -25,7 +25,10 @@ router = APIRouter(prefix="/api/video", tags=["video"])
 def options(user: User = Depends(current_user)):
     # ai_ready=true 表示已配好真 AI 视频(否则后端会兜底成本地 GIF)。前端据此提示用户。
     return {
-        "aspects": list(ASPECT_SIZE),
+        "aspects": list(ASPECT_RATIOS),
+        "resolutions": list(RESOLUTION_SHORT),
+        "languages": LANGUAGES,
+        "modes": list(MODE_PROMPTS),
         "seconds": settings.video_seconds,
         "ai_ready": settings.video_provider != "local" and bool(settings.video_api_key),
     }
@@ -35,15 +38,18 @@ def options(user: User = Depends(current_user)):
 def ai_generate(
     file: UploadFile = File(...),
     file2: UploadFile | None = File(None),
-    prompt: str = Form(""),
-    title: str = Form(""),          # 商品标题(可选):给模型语义锚点,商品显示更稳
+    mode: str = Form("unbox"),       # 视频类型:unbox 开箱 / influencer 达人带货 / scene 场景介绍
+    prompt: str = Form(""),          # 补充描述(选填)
+    title: str = Form(""),           # 商品标题(选填):给模型语义锚点,商品显示更稳
+    language: str = Form("葡萄牙语"),  # 配音/对白语言(主打巴西)
     aspect: str = Form("portrait"),
+    resolution: str = Form("1080p"),
     user: User = Depends(charge_for("video")),
     db: Session = Depends(get_db),
 ):
-    """图生视频(AI):1 张图=让它动起来 / 2 张图=首尾帧过渡;配文字描述运动。异步,扣 video=3,失败退点。
-    不暴露分辨率(按画幅用高分辨率)。Provider 由 POD_VIDEO_PROVIDER 决定:
-    默认 local→兜底 GIF;设 cogvideox + 填 key→智谱 CogVideoX-3 真视频。"""
+    """图生视频(AI):1 张图=让它动起来 / 2 张图=首尾帧过渡。视频类型 + 商品标题 + 语言 + 画幅 + 分辨率。
+    异步,扣 video=3,失败退点。Provider 由 POD_VIDEO_PROVIDER 决定:默认 local→兜底 GIF;
+    设 cogvideox + 填 key→智谱 CogVideoX-3 真视频。画幅按比例等比贴合上传图(防生硬拉伸)。"""
     img1 = file.file.read()
     read_image_or_refund(img1, db, user, "video")   # 第 1 张必填;坏图自动退点 + 400
     img2 = None
@@ -54,12 +60,17 @@ def ai_generate(
             img2 = b
         except Exception:  # noqa: BLE001 — 第 2 张坏图忽略(降级为单图,不阻断)
             img2 = None
-    if aspect not in ASPECT_SIZE:
+    if aspect not in ASPECT_RATIOS:
         aspect = "portrait"
+    if resolution not in RESOLUTION_SHORT:
+        resolution = "1080p"
+    if mode not in MODE_PROMPTS:
+        mode = "unbox"
     return submit_celery(
         run_tool, db, user, kind="aivideo", tool_id="videogen", op="video",
         raw=img1, mask_raw=img2,
-        params={"prompt": prompt[:2000], "title": title[:200], "aspect": aspect, "frames2": bool(img2)},
+        params={"mode": mode, "prompt": prompt[:2000], "title": title[:200],
+                "language": language[:20], "aspect": aspect, "resolution": resolution, "frames2": bool(img2)},
     )
 
 

@@ -1,6 +1,6 @@
 <script setup>
-// 图生视频:上传 1~2 张图(2 张=首尾帧)+ 文字描述 → AI 生成视频(智谱 CogVideoX-3;未配置时后端兜底 GIF)。
-// 不暴露分辨率(扣费与分辨率无关,后端按画幅用高分辨率)。异步「提交即走」:提交后丢后台,任务中心可查。
+// 图生视频:上传 1~2 张图(2 张=首尾帧)+ 选视频类型(开箱/达人/场景)+ 商品标题/语言/画幅/分辨率
+// → 智谱 CogVideoX-3。提交即走(丢后台,任务中心看)。提示词工程 + 防拉伸在后端(ai/video.py)。
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client.js'
@@ -9,33 +9,40 @@ import { useAuth } from '../stores/auth.js'
 const auth = useAuth()
 const img1 = ref(null); const img1Url = ref('')
 const img2 = ref(null); const img2Url = ref('')
-const prompt = ref('')
-const title = ref('')           // 商品标题(选填,给模型语义锚点)
+const mode = ref('unbox')
+const title = ref('')
+const extra = ref('')
 const aspect = ref('portrait')
-const submitting = ref(false)   // 提交中(很快)
-const submitted = ref(false)    // 提交过(显示「去任务中心查看」提示)
+const resolution = ref('1080p')
+const language = ref('葡萄牙语')
+const submitting = ref(false)
+const submitted = ref(false)
 const aiReady = ref(true)
 
-// CogVideoX-3 支持多分辨率,这里列电商视频常用画幅(竖→方→横),id 与后端 ASPECT_SIZE 对应。
-const ASPECTS = [
-  { id: 'portrait', label: '竖屏 9:16', hint: 'TikTok/带货' },
-  { id: 'portrait34', label: '竖屏 3:4', hint: '商品' },
-  { id: 'square', label: '方形 1:1', hint: '信息流' },
-  { id: 'landscape43', label: '横屏 4:3', hint: '' },
-  { id: 'landscape', label: '横屏 16:9', hint: '宽屏' },
+// 视频类型(后端有对应的成熟基底 prompt;这里只展示)
+const MODES = [
+  { id: 'unbox', icon: '📦', name: '开箱分享', desc: '素人手持开箱,真实有惊喜感' },
+  { id: 'influencer', icon: '🎤', name: '达人带货', desc: '达人出镜讲卖点,强种草' },
+  { id: 'scene', icon: '🛋️', name: '场景介绍', desc: '真实生活场景中的使用过程' },
 ]
-
-// 不同「效果」= 不同运动/场景描述(点一下填进描述框,可再改)。
-// 商品一致性 + 质感指令由后端统一追加(见 ai/video.py compose_prompt),这里只写创意场景。
-const PRESETS = [
-  { name: '🎥 精致运镜', text: '镜头极缓慢地推近并轻微环绕商品,聚焦质感与细节,柔和影棚布光,背景虚化,高级商业广告感' },
-  { name: '🔄 360°展示', text: '商品在干净简洁的背景上缓慢平稳地旋转一周,均匀打光,清晰展示各个角度,电商主图视频风格' },
-  { name: '✨ 质感特写', text: '镜头缓缓滑过商品表面,特写展现材质、纹理与印花细节,微距质感,光影流动,精致高级' },
-  { name: '🧍 模特展示', text: '模特自然穿戴或手持这件商品,从容走动并轻轻转身展示,真实街拍风格,镜头平稳跟随' },
-  { name: '🤳 手持种草', text: '一个人对着镜头自然地手持展示这件商品,亲切真实,竖屏开箱种草风格,适合 TikTok 带货' },
-  { name: '🏡 生活场景', text: '商品自然融入温馨的生活场景中被使用,暖色调,真实生活方式,镜头轻缓平移,治愈氛围' },
-  { name: '🌅 氛围摆拍', text: '商品摆放在质感台面上,柔和的自然光缓缓变化,镜头极轻微地漂移,静物广告大片质感' },
-  { name: '🎁 节日礼赠', text: '商品作为礼物出现在节日布置的温馨场景里,暖光,欢乐氛围,镜头缓缓拉开展现氛围,节日营销感' },
+const ASPECTS = [
+  { id: 'portrait', label: '9:16', hint: '竖屏·带货' },
+  { id: 'portrait34', label: '3:4', hint: '竖屏' },
+  { id: 'square', label: '1:1', hint: '方形' },
+  { id: 'landscape43', label: '4:3', hint: '横屏' },
+  { id: 'landscape', label: '16:9', hint: '宽屏' },
+]
+const RESOLUTIONS = [
+  { id: '720p', label: '720P', hint: '快' },
+  { id: '1080p', label: '1080P', hint: '高清' },
+  { id: '4k', label: '4K', hint: '超清·慢' },
+]
+const LANGS = [
+  { id: '葡萄牙语', label: '葡萄牙语' },
+  { id: '英语', label: '英语' },
+  { id: '西班牙语', label: '西班牙语' },
+  { id: '中文', label: '中文' },
+  { id: '无对白', label: '无人声' },
 ]
 
 const isFrames2 = computed(() => !!img2.value)
@@ -53,22 +60,23 @@ function clearSlot(slot) {
   if (slot === 1) { img1.value = null; img1Url.value = '' }
   else { img2.value = null; img2Url.value = '' }
 }
-function usePreset(p) { prompt.value = p.text }
 
 async function run() {
-  if (!img1.value) return ElMessage.warning('请先上传第 1 张图片')
+  if (!img1.value) return ElMessage.warning('请先上传商品图片')
   submitting.value = true
   try {
     const fd = new FormData()
     fd.append('file', img1.value)
     if (img2.value) fd.append('file2', img2.value)
-    fd.append('prompt', prompt.value)
+    fd.append('mode', mode.value)
     fd.append('title', title.value)
+    fd.append('prompt', extra.value)
+    fd.append('language', language.value)
     fd.append('aspect', aspect.value)
+    fd.append('resolution', resolution.value)
     await api.post('/video/ai-generate', fd)
     if (auth.refreshBalance) auth.refreshBalance()
     submitted.value = true
-    // 提交即走:丢后台,不在本页等;结果去「任务中心 → 视频」看(本页不做结果预览)。
     ElMessage.success('✅ 视频任务已提交,后台生成中(约 1~3 分钟),去「我的空间 → 任务中心 → 视频」查看')
   } catch (e) {
     ElMessage.error((e.response && e.response.data && e.response.data.detail) || e.message || '提交失败')
@@ -83,86 +91,123 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
+  <div class="vg">
     <div class="head">
       <h2>🎬 图生视频</h2>
       <router-link to="/app/video/cases" class="muted lnk">案例库 →</router-link>
     </div>
-    <p class="muted sub">上传 1 张图让它动起来,或上传 2 张做「首尾帧」过渡;再用文字描述画面与运动,AI 生成短视频。</p>
+    <p class="muted sub">上传商品图 + 选视频类型,一键生成 TikTok 风格电商短视频(默认葡语,适配巴西市场)。</p>
     <div v-if="!aiReady" class="warn">⚠ 当前未配置 AI 视频服务(智谱 key),生成结果会是<strong>本地降级 GIF</strong>。配好 key 后即为真视频。</div>
 
-    <div class="vg panel">
-      <!-- 左:商品图片 + 画幅 -->
-      <div class="col">
-        <div class="glabel">商品图片 <span class="opt">1 张=让它动起来 · 2 张=首尾帧过渡</span></div>
-        <div class="imgs">
-          <label class="slot" :class="{ filled: img1Url }">
-            <input type="file" accept="image/*" @change="pick($event, 1)" hidden />
-            <img v-if="img1Url" :src="img1Url" />
-            <div v-else class="ph"><span class="up">⬆</span><span>{{ isFrames2 ? '首帧' : '图片' }} <i>必填</i></span></div>
-            <span v-if="img1Url" class="x" @click.prevent="clearSlot(1)">×</span>
-          </label>
-          <label class="slot" :class="{ filled: img2Url }">
-            <input type="file" accept="image/*" @change="pick($event, 2)" hidden />
-            <img v-if="img2Url" :src="img2Url" />
-            <div v-else class="ph"><span class="up">⬆</span><span>尾帧 <i>可选</i></span></div>
-            <span v-if="img2Url" class="x" @click.prevent="clearSlot(2)">×</span>
-          </label>
+    <div class="grid">
+      <!-- 1 上传 -->
+      <section class="sec">
+        <div class="snum">1</div>
+        <div class="sbody">
+          <div class="slabel">上传商品图 <span class="opt">1 张=让它动起来 · 2 张=首尾帧过渡</span></div>
+          <div class="imgs">
+            <label class="slot" :class="{ filled: img1Url }">
+              <input type="file" accept="image/*" @change="pick($event, 1)" hidden />
+              <img v-if="img1Url" :src="img1Url" />
+              <div v-else class="ph"><span class="up">⬆</span><span>{{ isFrames2 ? '首帧' : '商品图' }} <i>必填</i></span></div>
+              <span v-if="img1Url" class="x" @click.prevent="clearSlot(1)">×</span>
+            </label>
+            <label class="slot" :class="{ filled: img2Url }">
+              <input type="file" accept="image/*" @change="pick($event, 2)" hidden />
+              <img v-if="img2Url" :src="img2Url" />
+              <div v-else class="ph"><span class="up">⬆</span><span>尾帧 <i>可选</i></span></div>
+              <span v-if="img2Url" class="x" @click.prevent="clearSlot(2)">×</span>
+            </label>
+          </div>
+          <div v-if="isFrames2" class="frames-tip">🔗 首尾帧:视频从第 1 张过渡到第 2 张</div>
         </div>
-        <div v-if="isFrames2" class="frames-tip">🔗 首尾帧:视频从第 1 张过渡到第 2 张</div>
+      </section>
 
-        <div class="glabel mt">画幅</div>
-        <div class="aspects">
-          <button v-for="a in ASPECTS" :key="a.id" class="achip" :class="{ on: aspect === a.id }" @click="aspect = a.id">
-            {{ a.label }}<i v-if="a.hint"> · {{ a.hint }}</i>
-          </button>
-        </div>
-      </div>
-
-      <!-- 右:标题 + 描述 + 预设 + 生成 -->
-      <div class="col">
-        <div class="field">
-          <div class="flabel">商品标题 <span class="opt">选填 · 让 AI 认出商品,画面更稳更贴合</span></div>
-          <input v-model="title" maxlength="200" class="tinput"
-            placeholder="例:Vintage Floral Summer Dress / 复古印花连衣裙" />
-        </div>
-
-        <div class="field">
-          <div class="flabel">画面与运动描述</div>
-          <textarea v-model="prompt" maxlength="2000"
-            placeholder="描述视频画面内容和动态过程,例:模特穿着这件卫衣在城市街头自信走动,镜头缓缓推近,氛围高级"></textarea>
-          <div class="presets">
-            <button v-for="p in PRESETS" :key="p.name" class="pchip" @click="usePreset(p)">{{ p.name }}</button>
+      <!-- 2 视频类型 -->
+      <section class="sec">
+        <div class="snum">2</div>
+        <div class="sbody">
+          <div class="slabel">视频类型</div>
+          <div class="modes">
+            <button v-for="m in MODES" :key="m.id" class="mode" :class="{ on: mode === m.id }" @click="mode = m.id">
+              <span class="mi">{{ m.icon }}</span>
+              <span class="mn">{{ m.name }}</span>
+              <span class="md">{{ m.desc }}</span>
+            </button>
           </div>
         </div>
+      </section>
 
-        <button class="btn-primary run" :disabled="submitting || !img1" @click="run">
-          {{ submitting ? '提交中…' : '生成视频 · 扣 3 点' }}
-        </button>
-        <div v-if="submitted" class="submitted">
-          ✅ 已提交,后台生成中(约 1~3 分钟)。去 <router-link to="/app/space?sub=video" class="lnk">任务中心 → 视频</router-link> 查看进度与结果
+      <!-- 3 商品信息 + 配置 -->
+      <section class="sec">
+        <div class="snum">3</div>
+        <div class="sbody">
+          <div class="slabel">商品信息 &amp; 配置</div>
+          <div class="field">
+            <span class="flabel">商品标题 <span class="opt">选填 · 让 AI 认出商品,画面更稳更贴合</span></span>
+            <input v-model="title" maxlength="200" class="inp" placeholder="例:Vintage Floral Summer Dress / 复古印花连衣裙" />
+          </div>
+          <div class="field">
+            <span class="flabel">补充描述 <span class="opt">选填 · 额外想强调的卖点 / 画面</span></span>
+            <textarea v-model="extra" rows="2" maxlength="2000" class="inp" placeholder="例:强调面料垂感与印花细节,模特年轻有活力"></textarea>
+          </div>
+          <div class="row3">
+            <div class="field">
+              <span class="flabel">画幅 <span class="opt">按比例贴合·不拉伸</span></span>
+              <div class="chips">
+                <button v-for="a in ASPECTS" :key="a.id" class="chip" :class="{ on: aspect === a.id }" @click="aspect = a.id">
+                  {{ a.label }}<i v-if="a.hint"> {{ a.hint }}</i>
+                </button>
+              </div>
+            </div>
+            <div class="field">
+              <span class="flabel">分辨率</span>
+              <div class="chips">
+                <button v-for="r in RESOLUTIONS" :key="r.id" class="chip" :class="{ on: resolution === r.id }" @click="resolution = r.id">
+                  {{ r.label }}<i v-if="r.hint"> {{ r.hint }}</i>
+                </button>
+              </div>
+            </div>
+            <div class="field">
+              <span class="flabel">语言 <span class="opt">配音/对白</span></span>
+              <div class="chips">
+                <button v-for="l in LANGS" :key="l.id" class="chip" :class="{ on: language === l.id }" @click="language = l.id">
+                  {{ l.label }}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
+    </div>
+
+    <button class="btn-primary run" :disabled="submitting || !img1" @click="run">
+      {{ submitting ? '提交中…' : '生成视频 · 扣 3 点' }}
+    </button>
+    <div v-if="submitted" class="submitted">
+      ✅ 已提交,后台生成中(约 1~3 分钟)。去 <router-link to="/app/space?sub=video" class="lnk">任务中心 → 视频</router-link> 查看进度与结果
     </div>
   </div>
 </template>
 
 <style scoped>
+.vg { max-width: 820px; margin: 0 auto; }
 .head { display: flex; align-items: center; justify-content: space-between; }
 .head h2 { margin: 0; }
 .lnk { font-size: 13px; text-decoration: none; }
 .lnk:hover { color: var(--brand); }
-.sub { margin: 6px 0 12px; }
-.warn { background: rgba(230,162,60,.12); border: 1px solid rgba(230,162,60,.4); color: #e6a23c; border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 12px; }
+.sub { margin: 6px 0 14px; }
+.warn { background: rgba(230,162,60,.12); border: 1px solid rgba(230,162,60,.4); color: #e6a23c; border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 14px; }
 
-/* 两列:左=图片+画幅,右=标题+描述+预设+生成。居中 + 上限,填满宽度不留大白 */
-.vg { max-width: 940px; margin: 0 auto; padding: 22px; display: grid; grid-template-columns: 320px 1fr; gap: 24px; align-items: start; }
-.col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.glabel { font-size: 13px; color: var(--mut); }
-.glabel.mt { margin-top: 6px; }
+/* 分段式「步骤卡」布局,跳出单一大 panel */
+.grid { display: flex; flex-direction: column; gap: 14px; }
+.sec { display: flex; gap: 14px; background: var(--panel); border: 1px solid var(--line2); border-radius: 14px; padding: 16px 18px; }
+.snum { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--panel2); color: var(--mut); display: grid; place-items: center; font-size: 13px; font-weight: 600; }
+.sbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.slabel { font-size: 14px; font-weight: 600; }
 .opt { font-size: 12px; opacity: .6; font-weight: normal; }
 
-.imgs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.imgs { display: grid; grid-template-columns: 152px 152px; gap: 12px; }
 .slot { position: relative; aspect-ratio: 1; border: 2px dashed var(--line2); border-radius: 12px; overflow: hidden; cursor: pointer; background: var(--bg2); display: block; }
 .slot.filled { border-style: solid; border-color: var(--brand); }
 .slot img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -172,23 +217,29 @@ onMounted(async () => {
 .slot .x { position: absolute; top: 5px; right: 6px; width: 22px; height: 22px; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; display: grid; place-items: center; font-size: 16px; }
 .frames-tip { font-size: 12px; color: var(--brand); }
 
-.field { display: flex; flex-direction: column; gap: 8px; }
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.mode { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 12px 14px; border: 1px solid var(--line2); border-radius: 12px; background: var(--bg2); cursor: pointer; }
+.mode.on { border-color: var(--brand); background: var(--panel2); }
+.mode .mi { font-size: 20px; }
+.mode .mn { font-size: 14px; color: var(--fg); font-weight: 600; }
+.mode .md { font-size: 12px; color: var(--mut); }
+
+.field { display: flex; flex-direction: column; gap: 6px; }
 .flabel { font-size: 13px; color: var(--mut); }
-textarea, .tinput { width: 100%; background: var(--bg2); border: 1px solid var(--line2); border-radius: 10px; padding: 10px; color: var(--fg); font: inherit; box-sizing: border-box; }
-textarea { resize: vertical; min-height: 168px; }
-textarea:focus, .tinput:focus { border-color: var(--brand); outline: none; }
+.inp { width: 100%; background: var(--bg2); border: 1px solid var(--line2); border-radius: 10px; padding: 9px 10px; color: var(--fg); font: inherit; box-sizing: border-box; resize: vertical; }
+.inp:focus { border-color: var(--brand); outline: none; }
+.row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--line2); background: var(--bg2); color: var(--mut); border-radius: 12px; padding: 5px 10px; font-size: 13px; cursor: pointer; }
+.chip.on { border-color: var(--brand); color: var(--fg); background: var(--panel2); }
+.chip i { font-style: normal; opacity: .6; font-size: 11px; }
 
-.presets { display: flex; flex-wrap: wrap; gap: 6px; }
-.pchip { border: 1px solid var(--line2); background: var(--panel); color: var(--mut); border-radius: 14px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
-.pchip:hover { border-color: var(--brand); color: var(--fg); }
-.aspects { display: flex; gap: 8px; flex-wrap: wrap; }
-.achip { border: 1px solid var(--line2); background: var(--panel); color: var(--mut); border-radius: 14px; padding: 5px 12px; font-size: 13px; cursor: pointer; }
-.achip.on { border-color: var(--brand); color: var(--fg); background: var(--panel2); }
-.achip i { font-style: normal; opacity: .7; font-size: 11px; }
-
-.run { margin-top: 4px; padding: 12px; font-size: 15px; }
+.run { width: 100%; margin-top: 16px; padding: 13px; font-size: 15px; }
 .run:disabled { opacity: .5; cursor: not-allowed; }
-.submitted { font-size: 13px; color: var(--fg); background: rgba(103,194,58,.10); border: 1px solid rgba(103,194,58,.35); border-radius: 8px; padding: 8px 12px; }
+.submitted { margin-top: 10px; font-size: 13px; color: var(--fg); background: rgba(103,194,58,.10); border: 1px solid rgba(103,194,58,.35); border-radius: 8px; padding: 9px 12px; }
 
-@media (max-width: 860px) { .vg { grid-template-columns: 1fr; max-width: 560px; } }
+@media (max-width: 760px) {
+  .sec { flex-direction: column; }
+  .modes, .row3 { grid-template-columns: 1fr; }
+}
 </style>

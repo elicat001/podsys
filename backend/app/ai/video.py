@@ -1,12 +1,13 @@
-"""图生视频 Provider(可插拔,对齐 matting/upscale 范式)。
+"""图生视频 Provider(可插拔,对齐 matting/upscale 范式)+ 提示词工程 + 防拉伸。
 
-- LocalGifProvider:不调 AI,用现有 Ken-Burns/轮播出 GIF —— 离线兜底,无 key 也能出东西(降级,非真视频)。
+- LocalGifProvider:不调 AI,用现有 Ken-Burns/轮播出 GIF —— 离线兜底,无 key 也能出东西(降级)。
 - ZhipuCogVideoProvider:调智谱 CogVideoX-3(建任务→轮询→下载 mp4)。
-  图生视频:`image_url` 传单图 = 首帧;传 `[首, 尾]` 数组 = 首尾帧(对应前端 1~2 张图)。
-  不让用户选分辨率:`size` 按画幅取高分辨率(扣费与分辨率无关)。
-
+  1 图=首帧;[首, 尾] 数组=首尾帧(对应前端 1~2 张图)。
 换厂商 = 新增一个 Provider 类 + 改 `POD_VIDEO_PROVIDER`,业务/前端不动。
 重依赖(httpx)在方法内惰性 import,保持离线启动轻量。
+
+尺寸:画幅(比例)× 分辨率(短边像素)→ size。CogVideoX-3 支持多分辨率、最高 4K。
+防拉伸:按所选画幅把上传图等比 contain 到目标尺寸(模糊背景填充),模型就不会按 size 生硬拉伸商品。
 """
 from __future__ import annotations
 
@@ -19,51 +20,108 @@ from PIL import Image
 
 from ..config import settings
 
-# 各画幅 → 高分辨率(不让用户选分辨率,直接用高的)。CogVideoX-3 支持多分辨率、最高 4K;
-# 这里给电商视频常用的几种比例,统一到 1080p 级(4K 生成慢、文件大;要 4K 把 .env 的 POD_VIDEO_SIZE 设 3840x2160)。
-# key 与前端画幅按钮一一对应;顺序=竖→方→横。
-ASPECT_SIZE: dict[str, str] = {
-    "portrait":     "1080x1920",  # 9:16 竖屏(TikTok/带货短视频首选)
-    "portrait34":   "1080x1440",  # 3:4  竖屏商品
-    "square":       "1440x1440",  # 1:1  方形(信息流/Instagram)
-    "landscape43":  "1440x1080",  # 4:3  横屏经典
-    "landscape":    "1920x1080",  # 16:9 横屏宽屏(YouTube/Listing 主图视频)
+# ── 画幅(宽:高 比例)。key 与前端画幅按钮一一对应;顺序=竖→方→横 ──────────
+ASPECT_RATIOS: dict[str, tuple[int, int]] = {
+    "portrait":    (9, 16),   # 9:16 竖屏(TikTok/带货短视频首选)
+    "portrait34":  (3, 4),    # 3:4  竖屏商品
+    "square":      (1, 1),    # 1:1  方形(信息流)
+    "landscape43": (4, 3),    # 4:3  横屏经典
+    "landscape":   (16, 9),   # 16:9 横屏宽屏
+}
+# 分辨率档 → 短边像素(长边按比例算)。flat price,4K 也不额外收费,只是更慢、文件更大。
+RESOLUTION_SHORT: dict[str, int] = {"720p": 720, "1080p": 1080, "4k": 2160}
+
+# 视频配音/对白语言(主打巴西=葡萄牙语)。「无对白」=不加语言指令。
+LANGUAGES: list[str] = ["葡萄牙语", "英语", "西班牙语", "中文", "无对白"]
+
+# ── 视频类型(替代旧的一堆运镜预设)。每个=一段成熟的 TikTok 电商视频基底 prompt ──
+DEFAULT_MODE = "unbox"
+MODE_PROMPTS: dict[str, str] = {
+    "unbox": (
+        "基于给定图片生成视频,TikTok 短视频风格,素人开箱视角。手持手机拍摄,轻微抖动,真实自然。"
+        "镜头从包装盒开始,快速拆封,展示产品细节与第一反应,表情真实、有惊喜感。"
+        "室内自然光,背景简单生活化,节奏偏快,像普通用户随手拍的开箱分享视频。"
+    ),
+    "influencer": (
+        "基于给定图片生成视频,TikTok 达人带货风格。正对镜头拍摄,构图稳定,达人出镜讲解产品卖点,"
+        "语气自信有感染力。镜头切换展示产品外观、细节和重点功能,节奏明快,强种草氛围。室内干净背景,适合电商短视频。"
+    ),
+    "scene": (
+        "基于给定图片生成视频,TikTok 商品展示与使用场景风格。镜头聚焦产品在真实生活场景中的使用过程,"
+        "如桌面、客厅或户外。画面干净清晰,慢到中等节奏,突出功能与使用效果。"
+    ),
 }
 
-# 商品视频提示词工程:把「商品标题(语义锚点)+ 用户运动描述 + 全局一致性/质感指令」拼成最终 prompt。
-# 痛点:图生视频里商品容易被模型改样/扭曲、运动僵硬。下面这段一致性+质感指令对所有 prompt 统一追加,
-# 既稳住商品外形又提升自然度与广告感。商品标题给模型语义锚点(知道这是什么商品 → 商品显示更稳)。
+# 全局一致性 + 防拉伸 + 质感指令,统一追加到所有 prompt。
+# 图生视频最大痛点:商品被模型改样/扭曲、按画幅生硬拉伸 → 这段死死按住。
 _QUALITY_SUFFIX = (
-    "保持商品的外形、颜色、图案与细节自始至终真实一致、不变形不扭曲、不凭空增减元素;"
-    "镜头运动平滑稳定、幅度克制,构图专业,光线自然柔和,画面干净,商业广告级高画质,真实可信、有质感。"
+    "全程严格保持商品的原始比例与外观,绝不拉伸、压扁或扭曲商品;"
+    "保持商品颜色、图案与细节真实一致、不凭空增减元素;镜头运动平滑克制,光线自然,商业级高画质、真实可信。"
 )
 
+# 厂商官方文档(选型/排错时看)。换厂商照 ZhipuCogVideoProvider 再写一个即可。
+_VENDOR_DOCS = {"cogvideox": "https://docs.bigmodel.cn/cn/guide/models/video-generation/cogvideox-3"}
 
-def compose_prompt(motion: str, title: str = "") -> str:
-    """把运动描述 + 商品标题 + 全局质感/一致性指令拼成送给视频模型的最终 prompt。"""
-    parts: list[str] = []
-    title = (title or "").strip()
-    motion = (motion or "").strip()
+
+def _r8(n: float) -> int:
+    """取最接近的 8 的倍数(多数视频模型对 8/16 倍数友好)。"""
+    return max(16, int(round(n / 8)) * 8)
+
+
+def aspect_size(aspect: str = "portrait", resolution: str = "1080p") -> str:
+    """画幅 + 分辨率 → "WxH"。短边=分辨率档像素,长边按比例算。"""
+    w, h = ASPECT_RATIOS.get(aspect, ASPECT_RATIOS["portrait"])
+    short = RESOLUTION_SHORT.get(resolution, 1080)
+    if w <= h:                       # 竖/方:宽是短边
+        ww, hh = short, short * h / w
+    else:                            # 横:高是短边
+        hh, ww = short, short * w / h
+    return f"{_r8(ww)}x{_r8(hh)}"
+
+
+def compose_prompt(mode: str = DEFAULT_MODE, extra: str = "", title: str = "", language: str = "葡萄牙语") -> str:
+    """视频类型基底 + 商品标题(语义锚)+ 补充描述 + 语言 + 全局一致性/防拉伸指令 → 最终 prompt。"""
+    parts: list[str] = [MODE_PROMPTS.get(mode, MODE_PROMPTS[DEFAULT_MODE])]
+    title, extra = (title or "").strip(), (extra or "").strip()
     if title:
-        parts.append(f"这是一段电商商品展示视频,商品是「{title}」。")
-    if motion:
-        parts.append(motion)
+        parts.append(f"商品是「{title}」。")
+    if extra:
+        parts.append(extra)
+    if language and language != "无对白":
+        parts.append(f"视频中的人物对白与配音使用{language}。")
     parts.append(_QUALITY_SUFFIX)
     return " ".join(parts)
 
-# 厂商官方文档(选型/排错时看)。换厂商照 ZhipuCogVideoProvider 再写一个即可。
-_VENDOR_DOCS = {
-    "cogvideox": "https://docs.bigmodel.cn/cn/guide/models/video-generation/cogvideox-3",
-}
+
+def fit_to_aspect(im: Image.Image, target_w: int, target_h: int) -> Image.Image:
+    """把图片放进 target_w×target_h:等比 contain(不拉伸不变形),其余用同图放大+模糊做背景填充
+    (自然、不黑边)。这样首帧就已经是目标画幅 → 模型不会按 size 生硬拉伸商品。"""
+    from PIL import ImageFilter, ImageOps
+    im = im.convert("RGB")
+    if abs(im.width / im.height - target_w / target_h) < 0.02:   # 已接近目标比例 → 只等比缩放
+        return im.resize((target_w, target_h), Image.LANCZOS)
+    bg = ImageOps.fit(im, (target_w, target_h), method=Image.LANCZOS).filter(ImageFilter.GaussianBlur(36))
+    fg = im.copy()
+    fg.thumbnail((target_w, target_h), Image.LANCZOS)
+    bg.paste(fg, ((target_w - fg.width) // 2, (target_h - fg.height) // 2))
+    return bg
 
 
 @runtime_checkable
 class VideoProvider(Protocol):
     name: str
 
-    def image_to_video(self, images: list[Image.Image], prompt: str, *, aspect: str = "portrait") -> dict:
-        """images: 1~2 张(2 张=首尾帧)。返回 {bytes, url, ext('mp4'|'gif'), meta}。"""
+    def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920") -> dict:
+        """images: 1~2 张(2 张=首尾帧),已按 size 画幅处理好。返回 {bytes, url, ext('mp4'|'gif'), meta}。"""
         ...
+
+
+def _parse_size(s: str) -> tuple[int, int]:
+    try:
+        w, h = s.lower().split("x")
+        return int(w), int(h)
+    except Exception:  # noqa: BLE001
+        return 1080, 1920
 
 
 def _encode_data_uri(im: Image.Image) -> str:
@@ -76,8 +134,10 @@ class LocalGifProvider:
     """离线兜底:不调 AI,用现有运镜/轮播出 GIF(降级,非真 AI 视频)。无 key/未配置时用它。"""
     name = "local"
 
-    def image_to_video(self, images: list[Image.Image], prompt: str, *, aspect: str = "portrait") -> dict:
+    def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920") -> dict:
         from ..services.video import make_showcase
+        w, h = _parse_size(size)
+        aspect = "portrait" if w < h else ("landscape" if w > h else "square")
         style = "slideshow" if len(images) > 1 else "kenburns"
         out = make_showcase(images[:2], style=style, aspect=aspect, fps=12, seconds=settings.video_seconds)
         return {
@@ -97,13 +157,13 @@ class ZhipuCogVideoProvider:
         self.base = (settings.video_base_url or "https://open.bigmodel.cn/api/paas/v4").rstrip("/")
         self.model = settings.video_model or "cogvideox-3"
 
-    def image_to_video(self, images: list[Image.Image], prompt: str, *, aspect: str = "portrait") -> dict:
+    def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920") -> dict:
         import httpx  # 惰性
         if not images:
             raise RuntimeError("图生视频至少需要 1 张图")
         encoded = [_encode_data_uri(im) for im in images[:2]]
         image_url = encoded if len(encoded) > 1 else encoded[0]   # 数组=首尾帧
-        size = settings.video_size or ASPECT_SIZE.get(aspect, ASPECT_SIZE["portrait"])
+        size = settings.video_size or size                        # .env 强制 size 优先
         body: dict = {
             "model": self.model,
             "prompt": prompt or "",
