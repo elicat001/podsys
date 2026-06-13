@@ -10,24 +10,32 @@ const auth = useAuth()
 const img1 = ref(null); const img1Url = ref('')
 const img2 = ref(null); const img2Url = ref('')
 const prompt = ref('')
+const title = ref('')           // 商品标题(选填,给模型语义锚点)
 const aspect = ref('portrait')
 const submitting = ref(false)   // 提交中(很快)
 const submitted = ref(false)    // 提交过(显示「去任务中心查看」提示)
 const aiReady = ref(true)
 
+// CogVideoX-3 支持多分辨率,这里列电商视频常用画幅(竖→方→横),id 与后端 ASPECT_SIZE 对应。
 const ASPECTS = [
-  { id: 'portrait', label: '竖版 9:16', hint: 'TK/带货' },
-  { id: 'square', label: '方形 1:1', hint: '' },
-  { id: 'landscape', label: '横版 16:9', hint: '' },
+  { id: 'portrait', label: '竖屏 9:16', hint: 'TikTok/带货' },
+  { id: 'portrait34', label: '竖屏 3:4', hint: '商品' },
+  { id: 'square', label: '方形 1:1', hint: '信息流' },
+  { id: 'landscape43', label: '横屏 4:3', hint: '' },
+  { id: 'landscape', label: '横屏 16:9', hint: '宽屏' },
 ]
 
-// 不同「效果」= 不同 prompt(点一下填进描述框,可再改)。这是 prompt 工程的入口。
+// 不同「效果」= 不同运动/场景描述(点一下填进描述框,可再改)。
+// 商品一致性 + 质感指令由后端统一追加(见 ai/video.py compose_prompt),这里只写创意场景。
 const PRESETS = [
-  { name: '🎥 运镜展示', text: '镜头缓缓推近并轻微环绕,突出产品质感与细节,光影柔和,氛围高级,商业广告质感' },
-  { name: '🧍 模特试穿', text: '模特穿着这件服饰自然走动并转身展示,街拍风格,自信从容,镜头平稳跟随,真实自然' },
-  { name: '🏡 生活场景', text: '把产品自然融入温馨的生活场景中,人物轻松互动,暖色调,生活方式广告感' },
-  { name: '📱 TikTok 手持', text: '一个人对着镜头手持展示这件商品,开箱种草风格,竖屏,表情自然亲切,适合带货短视频' },
-  { name: '🎁 节日氛围', text: '节日布置的温馨场景,产品作为礼物呈现,欢乐氛围,暖光,节日营销感' },
+  { name: '🎥 精致运镜', text: '镜头极缓慢地推近并轻微环绕商品,聚焦质感与细节,柔和影棚布光,背景虚化,高级商业广告感' },
+  { name: '🔄 360°展示', text: '商品在干净简洁的背景上缓慢平稳地旋转一周,均匀打光,清晰展示各个角度,电商主图视频风格' },
+  { name: '✨ 质感特写', text: '镜头缓缓滑过商品表面,特写展现材质、纹理与印花细节,微距质感,光影流动,精致高级' },
+  { name: '🧍 模特展示', text: '模特自然穿戴或手持这件商品,从容走动并轻轻转身展示,真实街拍风格,镜头平稳跟随' },
+  { name: '🤳 手持种草', text: '一个人对着镜头自然地手持展示这件商品,亲切真实,竖屏开箱种草风格,适合 TikTok 带货' },
+  { name: '🏡 生活场景', text: '商品自然融入温馨的生活场景中被使用,暖色调,真实生活方式,镜头轻缓平移,治愈氛围' },
+  { name: '🌅 氛围摆拍', text: '商品摆放在质感台面上,柔和的自然光缓缓变化,镜头极轻微地漂移,静物广告大片质感' },
+  { name: '🎁 节日礼赠', text: '商品作为礼物出现在节日布置的温馨场景里,暖光,欢乐氛围,镜头缓缓拉开展现氛围,节日营销感' },
 ]
 
 const isFrames2 = computed(() => !!img2.value)
@@ -55,6 +63,7 @@ async function run() {
     fd.append('file', img1.value)
     if (img2.value) fd.append('file2', img2.value)
     fd.append('prompt', prompt.value)
+    fd.append('title', title.value)
     fd.append('aspect', aspect.value)
     await api.post('/video/ai-generate', fd)
     if (auth.refreshBalance) auth.refreshBalance()
@@ -101,6 +110,12 @@ onMounted(async () => {
         <div v-if="isFrames2" class="frames-tip">🔗 首尾帧模式:视频从第 1 张过渡到第 2 张</div>
 
         <div class="field">
+          <div class="flabel">商品标题 <span class="opt">选填 · 让 AI 认出商品,画面更稳更贴合</span></div>
+          <input v-model="title" maxlength="200" class="tinput"
+            placeholder="例:Vintage Floral Summer Dress / 复古印花连衣裙" />
+        </div>
+
+        <div class="field">
           <div class="flabel">画面与运动描述</div>
           <textarea v-model="prompt" rows="4" maxlength="2000"
             placeholder="描述视频画面内容和动态过程,例:模特穿着这件卫衣在城市街头自信走动,镜头缓缓推近,氛围高级"></textarea>
@@ -137,8 +152,8 @@ onMounted(async () => {
 .lnk:hover { color: var(--brand); }
 .sub { margin: 6px 0 12px; }
 .warn { background: rgba(230,162,60,.12); border: 1px solid rgba(230,162,60,.4); color: #e6a23c; border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 12px; }
-.wrap { max-width: 560px; }
-.ctrl { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.wrap { max-width: 620px; margin: 0 auto; }
+.ctrl { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
 .imgs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .slot { position: relative; aspect-ratio: 1; border: 2px dashed var(--line2); border-radius: 12px; overflow: hidden; cursor: pointer; background: var(--bg2); display: block; }
 .slot.filled { border-style: solid; border-color: var(--brand); }
@@ -149,8 +164,10 @@ onMounted(async () => {
 .frames-tip { font-size: 12px; color: var(--brand); margin-top: -4px; }
 .field { display: flex; flex-direction: column; gap: 8px; }
 .flabel { font-size: 13px; color: var(--mut); }
-textarea { width: 100%; background: var(--bg2); border: 1px solid var(--line2); border-radius: 10px; padding: 10px; color: var(--fg); font: inherit; resize: vertical; box-sizing: border-box; }
-textarea:focus { border-color: var(--brand); outline: none; }
+.opt { font-size: 12px; opacity: .6; font-weight: normal; }
+textarea, .tinput { width: 100%; background: var(--bg2); border: 1px solid var(--line2); border-radius: 10px; padding: 10px; color: var(--fg); font: inherit; box-sizing: border-box; }
+textarea { resize: vertical; }
+textarea:focus, .tinput:focus { border-color: var(--brand); outline: none; }
 .presets { display: flex; flex-wrap: wrap; gap: 6px; }
 .pchip { border: 1px solid var(--line2); background: var(--panel); color: var(--mut); border-radius: 14px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
 .pchip:hover { border-color: var(--brand); color: var(--fg); }

@@ -36,6 +36,7 @@ def ai_generate(
     file: UploadFile = File(...),
     file2: UploadFile | None = File(None),
     prompt: str = Form(""),
+    title: str = Form(""),          # 商品标题(可选):给模型语义锚点,商品显示更稳
     aspect: str = Form("portrait"),
     user: User = Depends(charge_for("video")),
     db: Session = Depends(get_db),
@@ -58,7 +59,7 @@ def ai_generate(
     return submit_celery(
         run_tool, db, user, kind="aivideo", tool_id="videogen", op="video",
         raw=img1, mask_raw=img2,
-        params={"prompt": prompt[:2000], "aspect": aspect, "frames2": bool(img2)},
+        params={"prompt": prompt[:2000], "title": title[:200], "aspect": aspect, "frames2": bool(img2)},
     )
 
 

@@ -19,13 +19,37 @@ from PIL import Image
 
 from ..config import settings
 
-# 各画幅对应的高分辨率(不让用户选分辨率,直接用高的)。CogVideoX-3 最高 4K;默认给 1080p 级
-# (4K 生成慢、文件大)。要 4K:把 .env 的 POD_VIDEO_SIZE 设成 3840x2160。
+# 各画幅 → 高分辨率(不让用户选分辨率,直接用高的)。CogVideoX-3 支持多分辨率、最高 4K;
+# 这里给电商视频常用的几种比例,统一到 1080p 级(4K 生成慢、文件大;要 4K 把 .env 的 POD_VIDEO_SIZE 设 3840x2160)。
+# key 与前端画幅按钮一一对应;顺序=竖→方→横。
 ASPECT_SIZE: dict[str, str] = {
-    "portrait": "1080x1920",   # 9:16 竖版(TK/带货首选)
-    "landscape": "1920x1080",  # 16:9
-    "square": "1440x1440",     # 1:1
+    "portrait":     "1080x1920",  # 9:16 竖屏(TikTok/带货短视频首选)
+    "portrait34":   "1080x1440",  # 3:4  竖屏商品
+    "square":       "1440x1440",  # 1:1  方形(信息流/Instagram)
+    "landscape43":  "1440x1080",  # 4:3  横屏经典
+    "landscape":    "1920x1080",  # 16:9 横屏宽屏(YouTube/Listing 主图视频)
 }
+
+# 商品视频提示词工程:把「商品标题(语义锚点)+ 用户运动描述 + 全局一致性/质感指令」拼成最终 prompt。
+# 痛点:图生视频里商品容易被模型改样/扭曲、运动僵硬。下面这段一致性+质感指令对所有 prompt 统一追加,
+# 既稳住商品外形又提升自然度与广告感。商品标题给模型语义锚点(知道这是什么商品 → 商品显示更稳)。
+_QUALITY_SUFFIX = (
+    "保持商品的外形、颜色、图案与细节自始至终真实一致、不变形不扭曲、不凭空增减元素;"
+    "镜头运动平滑稳定、幅度克制,构图专业,光线自然柔和,画面干净,商业广告级高画质,真实可信、有质感。"
+)
+
+
+def compose_prompt(motion: str, title: str = "") -> str:
+    """把运动描述 + 商品标题 + 全局质感/一致性指令拼成送给视频模型的最终 prompt。"""
+    parts: list[str] = []
+    title = (title or "").strip()
+    motion = (motion or "").strip()
+    if title:
+        parts.append(f"这是一段电商商品展示视频,商品是「{title}」。")
+    if motion:
+        parts.append(motion)
+    parts.append(_QUALITY_SUFFIX)
+    return " ".join(parts)
 
 # 厂商官方文档(选型/排错时看)。换厂商照 ZhipuCogVideoProvider 再写一个即可。
 _VENDOR_DOCS = {

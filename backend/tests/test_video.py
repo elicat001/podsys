@@ -133,6 +133,33 @@ def test_video_options_ai_ready_false_offline(client, auth_headers):
     assert r.status_code == 200
     body = r.json()
     assert body["ai_ready"] is False and "portrait" in body["aspects"]
+    # 扩充后的画幅都在(竖/方/横)
+    for a in ("portrait", "portrait34", "square", "landscape43", "landscape"):
+        assert a in body["aspects"]
+
+
+def test_compose_prompt_weaves_title_and_quality():
+    # 提示词工程:商品标题(语义锚)+ 运动描述 + 全局一致性/质感指令
+    from app.ai.video import compose_prompt
+    out = compose_prompt("镜头缓缓推近", "复古印花连衣裙")
+    assert "复古印花连衣裙" in out and "镜头缓缓推近" in out
+    assert "不变形" in out          # 一致性指令被统一追加
+    # 空标题:不加「商品是」前缀,也不报错
+    out2 = compose_prompt("只有运动描述", "")
+    assert "只有运动描述" in out2 and "商品是" not in out2
+    # 全空也安全(只剩质感指令)
+    assert compose_prompt("", "").strip()
+
+
+def test_ai_generate_with_title_and_new_aspect(client, auth_headers):
+    # 带商品标题 + 新增画幅(3:4)走通(本地兜底 GIF)
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "镜头缓缓推近", "title": "复古印花连衣裙", "aspect": "portrait34"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert job["result"]["video_url"].endswith(".gif")
 
 
 # ---------- workflow step ----------
