@@ -34,25 +34,10 @@ RESOLUTION_SHORT: dict[str, int] = {"720p": 720, "1080p": 1080, "4k": 2160}
 # 视频配音/对白语言(主打巴西=葡萄牙语)。「无对白」=不加语言指令。
 LANGUAGES: list[str] = ["葡萄牙语", "英语", "西班牙语", "中文", "无对白"]
 
-# ── 视频类型(替代旧的一堆运镜预设)。每个=一段成熟的 TikTok 电商视频基底 prompt ──
-DEFAULT_MODE = "unbox"
-MODE_PROMPTS: dict[str, str] = {
-    "unbox": (
-        "基于给定图片生成视频,TikTok 短视频风格,素人开箱视角。手持手机拍摄,轻微抖动,真实自然。"
-        "镜头从包装盒开始,快速拆封,展示产品细节与第一反应,表情真实、有惊喜感。"
-        "室内自然光,背景简单生活化,节奏偏快,像普通用户随手拍的开箱分享视频。"
-    ),
-    "influencer": (
-        "基于给定图片生成视频,TikTok 达人带货风格。正对镜头拍摄,构图稳定,达人出镜讲解产品卖点,"
-        "语气自信有感染力。镜头切换展示产品外观、细节和重点功能,节奏明快,强种草氛围。室内干净背景,适合电商短视频。"
-    ),
-    "scene": (
-        "基于给定图片生成视频,TikTok 商品展示与使用场景风格。镜头聚焦产品在真实生活场景中的使用过程,"
-        "如桌面、客厅或户外。画面干净清晰,慢到中等节奏,突出功能与使用效果。"
-    ),
-}
+# 视频描述(motion/scene)由前端「视频类型」按钮填入、可自定义编辑(开箱/达人/场景/广告大片/互动/自定义),
+# 后端不再持有固定模板 —— 这样每种类型都能改;语言、画幅是独立选项,不被描述文本冲掉。
 
-# 全局一致性 + 防拉伸 + 质感指令,统一追加到所有 prompt。
+# 全局一致性 + 防拉伸 + 质感指令,统一追加到所有 prompt(无论用户怎么写描述都生效)。
 # 图生视频最大痛点:商品被模型改样/扭曲、按画幅生硬拉伸 → 这段死死按住。
 _QUALITY_SUFFIX = (
     "全程严格保持商品的原始比例与外观,绝不拉伸、压扁或扭曲商品;"
@@ -79,14 +64,15 @@ def aspect_size(aspect: str = "portrait", resolution: str = "1080p") -> str:
     return f"{_r8(ww)}x{_r8(hh)}"
 
 
-def compose_prompt(mode: str = DEFAULT_MODE, extra: str = "", title: str = "", language: str = "葡萄牙语") -> str:
-    """视频类型基底 + 商品标题(语义锚)+ 补充描述 + 语言 + 全局一致性/防拉伸指令 → 最终 prompt。"""
-    parts: list[str] = [MODE_PROMPTS.get(mode, MODE_PROMPTS[DEFAULT_MODE])]
-    title, extra = (title or "").strip(), (extra or "").strip()
+def compose_prompt(motion: str = "", title: str = "", language: str = "葡萄牙语") -> str:
+    """视频描述(用户填/改)+ 商品标题(语义锚)+ 语言 + 全局一致性/防拉伸指令 → 最终 prompt。
+    语言、画幅是独立选项,这里只把语言织进文本,画幅由 aspect_size/fit_to_aspect 处理,互不冲突。"""
+    parts: list[str] = []
+    motion, title = (motion or "").strip(), (title or "").strip()
+    if motion:
+        parts.append(motion)
     if title:
         parts.append(f"商品是「{title}」。")
-    if extra:
-        parts.append(extra)
     if language and language != "无对白":
         parts.append(f"视频中的人物对白与配音使用{language}。")
     parts.append(_QUALITY_SUFFIX)
