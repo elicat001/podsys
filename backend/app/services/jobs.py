@@ -35,6 +35,7 @@ _KIND_REFUND_OP = {
     "edit": "edit", "variants": "edit", "restyle": "edit", "meme": "edit", "dewatermark": "edit",
     "mockup": "asset", "mockup-replace": "asset", "production": "asset",
     "title": "title",
+    "aivideo": "video",   # AI 图生视频,僵尸作业退 video 点
     "collect_sync": None,  # 采集同步免费,僵尸作业不退点(否则白送积分)
 }
 

@@ -72,6 +72,21 @@ class Settings(BaseSettings):
     # 缺二进制/包时静默降级(不影响出标题)。测试环境关闭以保离线确定性(conftest 强制 false)。
     title_ocr: bool = True
 
+    # ── AI 图生视频。可插拔 Provider(对齐 matting/upscale 范式):默认 local=本地 GIF 兜底(无需 key);
+    # 拟用智谱 CogVideoX-3 —— 把 video_provider 设 cogvideox + 填 video_api_key 即用,业务/前端不动。
+    # 不暴露分辨率选择(扣费与分辨率无关,按画幅直接用高分辨率;见 ai/video.py 的 ASPECT_SIZE)。
+    video_provider: str = "local"          # local | cogvideox
+    video_api_key: str = ""                # 智谱开放平台 key(POD_VIDEO_API_KEY)
+    video_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
+    video_model: str = "cogvideox-3"
+    video_quality: str = "quality"         # quality(质量优先) | speed
+    video_fps: int = 30                    # 30 | 60
+    video_seconds: int = 10                # 5 | 10(老大要 8~10s,取 10)
+    video_with_audio: bool = False         # 无声(商品展示一般不需要 AI 音频)
+    video_size: str = ""                   # 留空=按画幅取高分辨率(ASPECT_SIZE);填则强制(如 3840x2160 上 4K)
+    video_timeout: float = 600.0           # 轮询总超时(秒;真视频 1~5min)
+    video_poll_interval: float = 5.0
+
     @property
     def upscale_realesrgan_path(self) -> Path:
         return _BACKEND_DIR / "models" / self.upscale_realesrgan_model

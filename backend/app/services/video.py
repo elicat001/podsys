@@ -97,15 +97,17 @@ def frames_to_gif(frames: list[Image.Image], duration_ms: int = 80, loop: int = 
 
 
 def make_showcase(images: list[Image.Image], style: str = "kenburns",
-                  aspect: str = "square", fps: int = 12, text: str = "") -> dict:
-    """生成展示视频(GIF)。返回 {bytes, frames, width, height, duration_ms}。"""
+                  aspect: str = "square", fps: int = 12, text: str = "", seconds: float = 0) -> dict:
+    """生成展示视频(GIF)。返回 {bytes, frames, width, height, duration_ms}。
+    seconds>0 时按时长定帧数(运镜:frames≈seconds*fps,封顶 MAX_FRAMES),让兜底 GIF 大致贴近请求时长。"""
     size = ASPECTS.get(aspect, ASPECTS["square"])
     if not images:  # 空输入兜底,使两种 style 契约一致(P1-1)
         images = [Image.new("RGB", size, (240, 240, 240))]
     if style == "slideshow":
         frames = slideshow(images, size)
     else:
-        frames = ken_burns(images[0], size)
+        kb_frames = int(seconds * fps) if seconds else 24
+        frames = ken_burns(images[0], size, frames=kb_frames)
     _overlay_text(frames, text)
     duration_ms = max(20, int(1000 / max(1, fps)))
     data = frames_to_gif(frames, duration_ms=duration_ms)

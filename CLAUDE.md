@@ -17,7 +17,7 @@
 
 - 后端:Python 3 + FastAPI + Uvicorn
 - **异步作业:Celery + 独立 Redis 实例(默认 127.0.0.1:6380)**。几乎所有产出类端点(印花提取/文生图/
-  改图/裂变/融合/转绘/梗图/提质/扩图/去水印/试衣/换装/合照/转矢量 + 套图/批量套图/四方连续/压缩/生产图
+  改图/裂变/融合/转绘/梗图/提质/扩图/去水印/试衣/换装/合照/转矢量/图生视频 + 套图/批量套图/四方连续/压缩/生产图
   + 采集同步 `collect_sync`:一个商品=一个任务、免费不扣点、只进顶栏「最近任务」不混进作图任务中心)
   = 立即返回 `job_id` → worker 后台跑 → 前端轮询 `/api/jobs/{id}`,前端「提交即走」丢任务中心。
   仍**同步**的:一键抠图 `/api/process`(核心管线)、标题/侵权(分析类,返回文字/风险而非可下载图)。
@@ -28,7 +28,7 @@
 - 鉴权:JWT(PyJWT)+ pbkdf2 密码哈希;计费:点数(credits)模式
 
 **⚠️ 别低估范围**:核心是上面那条 5 步主线,但项目其实已铺开 **~26 个 router** 的完整能力矩阵(对标灵图 ipoddy 的"采集→作图→上架→制图"):
-采集(collectors/collect_tasks/Chrome 插件规划)、抠图、印花提取、放大、套图、生产图导出、文生图/图生图/改图、作图工具(裂变/融合/风格转绘/梗图)、图案处理(扩图/去水印/裁剪压缩)、套图标题(标题/试衣/宠物换装/合照)、侵权检测、以图搜图、转矢量、店铺/商品/上架、可视化工作流编辑器、我的空间(配额/回收站)、视频生成、视频案例库、模板。
+采集(collectors/collect_tasks/Chrome 插件规划)、抠图、印花提取、放大、套图、生产图导出、文生图/图生图/改图、作图工具(裂变/融合/风格转绘/梗图)、图案处理(扩图/去水印/裁剪压缩)、套图标题(标题/试衣/宠物换装/合照)、侵权检测、以图搜图、转矢量、店铺/商品/上架、可视化工作流编辑器、我的空间(配额/回收站)、图生视频(智谱 CogVideoX-3,可插拔,无 key 兜底 GIF)、视频案例库、模板。
 **广度够、深度浅**:多数功能停在"架构完整 + MVP 实现 / 留接口";AI 类功能无 key 时是占位。改动前先 `git log --oneline` + 翻 `routers/` 了解已有什么,别重复造。
 
 **🟦 AI 厂商未定(重要)**:本文档示例多用 OpenAI/gpt-image,但公司大概率选**国产**视觉/文生图厂商(通义万相 / 豆包即梦 / 百度 / 智谱等)。**要换厂商,只在 `app/ai/` 那层加一个 Provider 实现**(照 `matting.py` 的策略模式),**严禁在 `services/`、`routers/` 里写死某家 API**。
@@ -193,6 +193,8 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 | `POD_MATTING_PROVIDER` | `pillow` | 抠图引擎:pillow / rembg / api / gptimage |
 | `POD_UPSCALE_PROVIDER` | `pillow` | 放大引擎(gpt-image 不做超分,会重绘像素,生产禁用) |
 | `POD_OPENAI_API_KEY` | 空 | 配了才能用 gptimage / 文生图 / 图生图 |
+| `POD_VIDEO_PROVIDER` | `local` | 图生视频引擎:local(本地兜底 GIF,无 key 也出东西=降级) / cogvideox(智谱 CogVideoX-3 真视频)。换厂商只加 `ai/video.py` 的 Provider,业务/前端不动 |
+| `POD_VIDEO_API_KEY` | 空 | 智谱开放平台 key;`POD_VIDEO_PROVIDER=cogvideox` 时必填。其余 `POD_VIDEO_*`(model/quality/fps/seconds/with_audio/size/timeout)见 `.env.example`,均有默认、**不暴露给前端**(扣费与分辨率无关) |
 | `POD_JWT_SECRET` | dev 默认值 | **生产必须改** |
 | `POD_DEV_BILLING` | `true` | 自助充值;**生产必须置 false** |
 | `POD_REGISTER_RATE_LIMIT` | `1000` | 注册限流;**生产应调到 ~5** 防刷点 |

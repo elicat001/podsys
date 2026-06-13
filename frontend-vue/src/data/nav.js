@@ -29,7 +29,7 @@ export const SIDEBARS = {
     { icon: '🖌️', label: 'DIY 编辑器', to: '/app/editor' },
   ],
   video: [
-    { icon: '🎬', label: '生成展示视频', to: '/app/video/generate' },
+    { icon: '🎬', label: '图生视频', to: '/app/video/generate' },
     { icon: '🎞️', label: '案例库', to: '/app/video/cases' },
   ],
   publish: [

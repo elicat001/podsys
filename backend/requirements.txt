@@ -37,3 +37,6 @@ pytesseract>=0.3.10
 # 采集同步时服务端取 CDN 图的 SSL 根证书包(本机/Windows 系统 CA 链常缺失会报
 # CERTIFICATE_VERIFY_FAILED;certifi 自带完整 CA 解决)。本就是 openai/httpx 的传递依赖,这里显式登记。
 certifi>=2024.2
+# 图生视频 Provider(ai/video.py)直接用 httpx 调智谱 CogVideoX-3(建任务/轮询/下载 mp4)。
+# 本就是 openai SDK + FastAPI TestClient 的传递依赖,这里因代码直接 import 而显式登记。
+httpx>=0.27

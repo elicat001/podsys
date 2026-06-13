@@ -72,6 +72,69 @@ def test_video_options(client, auth_headers):
     assert "portrait" in r.json()["aspects"]
 
 
+# ---------- AI 图生视频(异步;eager 下 POST 返回后作业已 done)----------
+# 测试默认 provider=local(conftest 未设 POD_VIDEO_PROVIDER)→ 兜底 GIF,离线确定性。
+def test_ai_generate_local_fallback_gif(client, auth_headers):
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "镜头推近展示", "aspect": "portrait"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    assert r.status_code == 200, r.text
+    jid = r.json()["job_id"]
+    job = client.get(f"/api/jobs/{jid}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    res = job["result"]
+    assert res["ext"] == "gif" and res["video_url"].endswith(".gif")
+    assert res["engine"] == "local-gif" and res["degraded"] is True
+    got = client.get(res["video_url"])
+    assert got.status_code == 200 and got.content[:6] in (b"GIF87a", b"GIF89a")
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 3
+
+
+def test_ai_generate_two_frames_slideshow(client, auth_headers):
+    # 上传两张=首尾帧;本地兜底用 slideshow 出 GIF,仍应成功。
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "", "aspect": "square"},
+                    files={"file": ("a.png", _png((200, 40, 40)), "image/png"),
+                           "file2": ("b.png", _png((40, 200, 40)), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert job["result"]["video_url"].endswith(".gif")
+
+
+def test_ai_generate_requires_auth(client):
+    r = client.post("/api/video/ai-generate", files={"file": ("x.png", _png(), "image/png")})
+    assert r.status_code == 401
+
+
+def test_ai_generate_bad_image_refunds(client, auth_headers):
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    files={"file": ("x.png", io.BytesIO(b"nope"), "image/png")})
+    assert r.status_code == 400
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0
+
+
+def test_ai_generate_bad_second_image_ignored(client, auth_headers):
+    # 第 2 张坏图不阻断:降级为单图,作业仍 done。
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"aspect": "portrait"},
+                    files={"file": ("a.png", _png(), "image/png"),
+                           "file2": ("b.png", io.BytesIO(b"bad"), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+
+
+def test_video_options_ai_ready_false_offline(client, auth_headers):
+    # provider=local + 无 key → ai_ready=False(前端据此提示「会降级为本地 GIF」)。
+    r = client.get("/api/video/options", headers=auth_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ai_ready"] is False and "portrait" in body["aspects"]
+
+
 # ---------- workflow step ----------
 def test_video_workflow_step(client, auth_headers):
     r = client.post("/api/workflows/run-custom", headers=auth_headers,

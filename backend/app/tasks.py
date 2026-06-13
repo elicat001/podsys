@@ -403,6 +403,25 @@ def _work_sync(job_id: str, job: Job, db: Session) -> dict:
     return out
 
 
+def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
+    """AI 图生视频(智谱 CogVideoX-3 或本地兜底 GIF)。读 1~2 张输入图(2 张=首尾帧)→ provider → 存产物。
+    输入图:第 1 张在 upload_path(job_id);可选第 2 张(尾帧)在 upload_path(job_id_mask)。"""
+    from .ai.video import get_video_provider
+    p = job.params
+    imgs = [_load_input(job_id)]
+    mpath = storage.upload_path(f"{job_id}_mask")   # 复用 mask 槽放第 2 张(尾帧)
+    if mpath.exists():
+        im2 = Image.open(mpath); im2.load(); imgs.append(im2)
+    out = get_video_provider().image_to_video(imgs, p.get("prompt", ""), aspect=p.get("aspect", "portrait"))
+    ext = out.get("ext", "mp4")
+    name = f"video.{ext}"
+    storage.output_path(job_id, name).write_bytes(out["bytes"])
+    meta = out.get("meta", {})
+    return {"video_url": storage.output_url(job_id, name), "ext": ext,
+            "cover": meta.get("cover", ""), "engine": meta.get("engine", ""),
+            "degraded": bool(meta.get("degraded"))}
+
+
 # kind → (work, refund_op, n_param)。n_param 非空时退点笔数 = job.params[n_param](如裂变按张扣)。
 TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
     "generate": (_work_generate, "generate", None),
@@ -422,6 +441,8 @@ TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
     "ipguard": (_work_ipguard, "process", None),
     # 采集同步(免费,不扣点 → op=None)
     "collect_sync": (_work_sync, None, None),
+    # AI 图生视频(智谱 CogVideoX-3 / 本地兜底)
+    "aivideo": (_work_aivideo, "video", None),
 }
 
 

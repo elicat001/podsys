@@ -23,7 +23,7 @@ const routes = [
       { path: 'editor', component: () => import('../views/Editor.vue') },
       // 视频
       { path: 'video', redirect: '/app/video/generate' },
-      { path: 'video/generate', component: () => import('../views/ToolRunner.vue'), meta: { toolId: 'videogen' } },
+      { path: 'video/generate', component: () => import('../views/VideoGenerate.vue') },
       { path: 'video/cases', component: () => import('../views/Video.vue') },
       // 上架
       { path: 'publish', redirect: '/app/publish/shops' },
