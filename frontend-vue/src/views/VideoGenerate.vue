@@ -4,7 +4,6 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client.js'
-import { pollJob } from '../api/jobs.js'
 import { useAuth } from '../stores/auth.js'
 
 const auth = useAuth()
@@ -13,8 +12,7 @@ const img2 = ref(null); const img2Url = ref('')
 const prompt = ref('')
 const aspect = ref('portrait')
 const submitting = ref(false)   // 提交中(很快)
-const polling = ref(false)      // 已提交、后台生成中(留在本页时轮询,可离开)
-const result = ref(null)        // {video_url, ext, cover, engine, degraded}
+const submitted = ref(false)    // 提交过(显示「去任务中心查看」提示)
 const aiReady = ref(true)
 
 const ASPECTS = [
@@ -51,22 +49,18 @@ function usePreset(p) { prompt.value = p.text }
 
 async function run() {
   if (!img1.value) return ElMessage.warning('请先上传第 1 张图片')
-  submitting.value = true; result.value = null
+  submitting.value = true
   try {
     const fd = new FormData()
     fd.append('file', img1.value)
     if (img2.value) fd.append('file2', img2.value)
     fd.append('prompt', prompt.value)
     fd.append('aspect', aspect.value)
-    const resp = (await api.post('/video/ai-generate', fd)).data
+    await api.post('/video/ai-generate', fd)
     if (auth.refreshBalance) auth.refreshBalance()
-    ElMessage.success('✅ 视频任务已提交,后台生成中(约 1~3 分钟),可去「我的空间 → 任务中心 → 视频」查看')
-    // 提交即走:不阻塞页面。留在本页则后台轮询填充结果;离开也不影响——任务在后台跑,任务中心可见。
-    polling.value = true
-    pollJob(resp.job_id, { interval: 5000, maxWait: 600000 })
-      .then((r) => { result.value = r })
-      .catch((e) => ElMessage.warning('生成失败,详情见任务中心:' + (e.message || '')))
-      .finally(() => { polling.value = false })
+    submitted.value = true
+    // 提交即走:丢后台,不在本页等;结果去「任务中心 → 视频」看(本页不做结果预览)。
+    ElMessage.success('✅ 视频任务已提交,后台生成中(约 1~3 分钟),去「我的空间 → 任务中心 → 视频」查看')
   } catch (e) {
     ElMessage.error((e.response && e.response.data && e.response.data.detail) || e.message || '提交失败')
   } finally {
@@ -88,8 +82,7 @@ onMounted(async () => {
     <p class="muted sub">上传 1 张图让它动起来,或上传 2 张做「首尾帧」过渡;再用文字描述画面与运动,AI 生成短视频。</p>
     <div v-if="!aiReady" class="warn">⚠ 当前未配置 AI 视频服务(智谱 key),生成结果会是<strong>本地降级 GIF</strong>。配好 key 后即为真视频。</div>
 
-    <div class="cols">
-      <!-- 左:控制 -->
+    <div class="wrap">
       <div class="ctrl panel">
         <div class="imgs">
           <label class="slot" :class="{ filled: img1Url }">
@@ -128,22 +121,10 @@ onMounted(async () => {
         <button class="btn-primary run" :disabled="submitting || !img1" @click="run">
           {{ submitting ? '提交中…' : '生成视频 · 扣 3 点' }}
         </button>
-      </div>
 
-      <!-- 右:结果(提交即走:后台生成,留在本页会自动出片,离开也能去任务中心看)-->
-      <div class="result panel">
-        <div v-if="polling" class="state">
-          <span class="spin" />
-          <div class="muted">后台生成中…(约 1~3 分钟)</div>
-          <div class="muted sm">可离开本页,任务在后台跑;也能去 <router-link to="/app/space?sub=video" class="lnk">任务中心 → 视频</router-link> 查看</div>
+        <div v-if="submitted" class="submitted">
+          ✅ 已提交,后台生成中(约 1~3 分钟)。去 <router-link to="/app/space?sub=video" class="lnk">任务中心 → 视频</router-link> 查看进度与结果
         </div>
-        <div v-else-if="result" class="done">
-          <video v-if="result.ext === 'mp4'" :src="result.video_url" controls autoplay loop muted playsinline class="vid" />
-          <img v-else :src="result.video_url" class="vid" />
-          <div v-if="result.degraded" class="muted sm degraded">本地降级 GIF(未配置 AI 视频)。配好智谱 key 后为真视频。</div>
-          <a class="btn-ghost sm" :href="result.video_url" target="_blank" download>⬇ 下载</a>
-        </div>
-        <div v-else class="state muted">提交后在后台生成,结果会显示在这里(也可在「任务中心 → 视频」查看)</div>
       </div>
     </div>
   </div>
@@ -156,7 +137,7 @@ onMounted(async () => {
 .lnk:hover { color: var(--brand); }
 .sub { margin: 6px 0 12px; }
 .warn { background: rgba(230,162,60,.12); border: 1px solid rgba(230,162,60,.4); color: #e6a23c; border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 12px; }
-.cols { display: grid; grid-template-columns: 380px 1fr; gap: 16px; align-items: start; }
+.wrap { max-width: 560px; }
 .ctrl { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
 .imgs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .slot { position: relative; aspect-ratio: 1; border: 2px dashed var(--line2); border-radius: 12px; overflow: hidden; cursor: pointer; background: var(--bg2); display: block; }
@@ -179,13 +160,5 @@ textarea:focus { border-color: var(--brand); outline: none; }
 .achip i { font-style: normal; opacity: .7; font-size: 11px; }
 .run { margin-top: 4px; padding: 11px; font-size: 15px; }
 .run:disabled { opacity: .5; cursor: not-allowed; }
-.result { min-height: 440px; display: grid; place-items: center; padding: 16px; }
-.state { display: flex; flex-direction: column; align-items: center; gap: 12px; }
-.done { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
-.vid { max-width: 100%; max-height: 60vh; border-radius: 10px; background: #000; }
-.degraded { text-align: center; }
-.sm { font-size: 12px; }
-.spin { width: 28px; height: 28px; border: 3px solid var(--line2); border-top-color: var(--brand); border-radius: 50%; animation: spin .9s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@media (max-width: 920px) { .cols { grid-template-columns: 1fr; } }
+.submitted { margin-top: 4px; font-size: 13px; color: var(--fg); background: rgba(103,194,58,.10); border: 1px solid rgba(103,194,58,.35); border-radius: 8px; padding: 8px 12px; }
 </style>
