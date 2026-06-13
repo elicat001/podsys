@@ -1,18 +1,20 @@
 <script setup>
 // 图生视频:上传 1~2 张图(2 张=首尾帧)+ 文字描述 → AI 生成视频(智谱 CogVideoX-3;未配置时后端兜底 GIF)。
-// 不暴露分辨率(扣费与分辨率无关,后端按画幅用高分辨率)。异步:提交→轮询→出视频。
+// 不暴露分辨率(扣费与分辨率无关,后端按画幅用高分辨率)。异步「提交即走」:提交后丢后台,任务中心可查。
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client.js'
 import { pollJob } from '../api/jobs.js'
+import { useAuth } from '../stores/auth.js'
 
+const auth = useAuth()
 const img1 = ref(null); const img1Url = ref('')
 const img2 = ref(null); const img2Url = ref('')
 const prompt = ref('')
 const aspect = ref('portrait')
-const running = ref(false)
-const progress = ref('')
-const result = ref(null)   // {video_url, ext, cover, engine, degraded}
+const submitting = ref(false)   // 提交中(很快)
+const polling = ref(false)      // 已提交、后台生成中(留在本页时轮询,可离开)
+const result = ref(null)        // {video_url, ext, cover, engine, degraded}
 const aiReady = ref(true)
 
 const ASPECTS = [
@@ -49,7 +51,7 @@ function usePreset(p) { prompt.value = p.text }
 
 async function run() {
   if (!img1.value) return ElMessage.warning('请先上传第 1 张图片')
-  running.value = true; progress.value = '提交中…'; result.value = null
+  submitting.value = true; result.value = null
   try {
     const fd = new FormData()
     fd.append('file', img1.value)
@@ -57,11 +59,19 @@ async function run() {
     fd.append('prompt', prompt.value)
     fd.append('aspect', aspect.value)
     const resp = (await api.post('/video/ai-generate', fd)).data
-    progress.value = '生成中…(真视频约 1~3 分钟,请稍候)'
-    result.value = await pollJob(resp.job_id, { interval: 5000, maxWait: 600000 })
+    if (auth.refreshBalance) auth.refreshBalance()
+    ElMessage.success('✅ 视频任务已提交,后台生成中(约 1~3 分钟),可去「我的空间 → 任务中心 → 视频」查看')
+    // 提交即走:不阻塞页面。留在本页则后台轮询填充结果;离开也不影响——任务在后台跑,任务中心可见。
+    polling.value = true
+    pollJob(resp.job_id, { interval: 5000, maxWait: 600000 })
+      .then((r) => { result.value = r })
+      .catch((e) => ElMessage.warning('生成失败,详情见任务中心:' + (e.message || '')))
+      .finally(() => { polling.value = false })
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.detail) || e.message || '生成失败')
-  } finally { running.value = false; progress.value = '' }
+    ElMessage.error((e.response && e.response.data && e.response.data.detail) || e.message || '提交失败')
+  } finally {
+    submitting.value = false
+  }
 }
 
 onMounted(async () => {
@@ -115,15 +125,17 @@ onMounted(async () => {
           </div>
         </div>
 
-        <button class="btn-primary run" :disabled="running || !img1" @click="run">
-          {{ running ? '生成中…' : '生成视频 · 扣 3 点' }}
+        <button class="btn-primary run" :disabled="submitting || !img1" @click="run">
+          {{ submitting ? '提交中…' : '生成视频 · 扣 3 点' }}
         </button>
       </div>
 
-      <!-- 右:结果 -->
+      <!-- 右:结果(提交即走:后台生成,留在本页会自动出片,离开也能去任务中心看)-->
       <div class="result panel">
-        <div v-if="running" class="state">
-          <span class="spin" /><div class="muted">{{ progress }}</div>
+        <div v-if="polling" class="state">
+          <span class="spin" />
+          <div class="muted">后台生成中…(约 1~3 分钟)</div>
+          <div class="muted sm">可离开本页,任务在后台跑;也能去 <router-link to="/app/space?sub=video" class="lnk">任务中心 → 视频</router-link> 查看</div>
         </div>
         <div v-else-if="result" class="done">
           <video v-if="result.ext === 'mp4'" :src="result.video_url" controls autoplay loop muted playsinline class="vid" />
@@ -131,7 +143,7 @@ onMounted(async () => {
           <div v-if="result.degraded" class="muted sm degraded">本地降级 GIF(未配置 AI 视频)。配好智谱 key 后为真视频。</div>
           <a class="btn-ghost sm" :href="result.video_url" target="_blank" download>⬇ 下载</a>
         </div>
-        <div v-else class="state muted">结果预览区 —— 生成后在此显示</div>
+        <div v-else class="state muted">提交后在后台生成,结果会显示在这里(也可在「任务中心 → 视频」查看)</div>
       </div>
     </div>
   </div>

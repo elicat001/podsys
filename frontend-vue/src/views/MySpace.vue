@@ -14,7 +14,7 @@ const router = useRouter()
 const _initTab = ['trash', 'team'].includes(route.query.tab) ? route.query.tab : 'jobs'
 const tab = ref(_initTab)
 // 任务中心子区:作图(job 任务)/ 找图(采集同步入库的素材,按平台)
-const subTab = ref(route.query.sub === 'find' ? 'find' : 'design')
+const subTab = ref(['find', 'video'].includes(route.query.sub) ? route.query.sub : 'design')
 
 // ── 存储容量 ──────────────────────────────────────────────
 const quota = ref(null)
@@ -44,8 +44,14 @@ async function loadJobs() {
   try { jobs.value = await listJobs() } catch (e) { ElMessage.error('任务列表加载失败:' + (e.message || e)) }
 }
 
-// 「作图」任务中心只展示作图工具的作业;采集同步等非工具作业(KIND_META)只在顶栏「最近任务」出现,不混进来
-const designJobs = computed(() => jobs.value.filter((j) => !KIND_META[j.kind]))
+// 「作图工具」作业(含作图 + 视频两个大模块;采集同步等 KIND_META 只在顶栏「最近任务」,不混进来)
+const toolJobs = computed(() => jobs.value.filter((j) => !KIND_META[j.kind]))
+// 当前子区对应的大模块:视频 tab→「视频」,否则→「作图」。作图 / 视频两个 tab 各看各模块的作业。
+const curModule = computed(() => (subTab.value === 'video' ? '视频' : '作图'))
+const designJobs = computed(() => toolJobs.value.filter((j) => moduleOfTool(toolForJob(j)) === curModule.value))
+// 顶栏徽标 + 列表轮询用:任意作图工具作业在跑(跨作图+视频,切 tab 不丢计数)
+const activeCount = computed(() => toolJobs.value.filter((j) => j.status === 'pending' || j.status === 'running').length)
+const anyActive = computed(() => activeCount.value > 0)
 
 const statusCounts = computed(() => {
   const c = { all: designJobs.value.length, active: 0, done: 0, error: 0 }
@@ -56,7 +62,6 @@ const statusCounts = computed(() => {
   }
   return c
 })
-const hasActiveJob = computed(() => statusCounts.value.active > 0)
 
 const filtered = computed(() => {
   if (statusFilter.value === 'all') return designJobs.value
@@ -165,6 +170,7 @@ watch(() => syncingJobs.value.length, (n, old) => { if (n < old) loadCollected()
 function setSub(s) {
   subTab.value = s
   if (s === 'find') { loadCollected(); loadJobs() }
+  else loadJobs()   // 作图 / 视频:刷新作业列表(各看各模块)
 }
 // 跳转到某平台的找图「详情列表」页(展示该平台全部采集商品)
 function goCollectedDetail(platform) {
@@ -351,10 +357,10 @@ onMounted(() => {
   // ① 1s 客户端计时:只在有活动任务时推进 now → 驱动"用时"每秒刷新,**不发任何请求**。
   // ② 列表轮询:**仅当有 pending/running 任务**时才每 3s 拉一次(全部完成后自动停,空闲零请求)。
   //   仍用轮询(非 SSE/WS)是刻意的:经 nginx+网关时长连接易被中断,轮询更稳;此处把"空转"消掉即可。
-  tickTimer = setInterval(() => { if (tab.value === 'jobs' && (hasActiveJob.value || hasActiveSync.value)) now.value = Date.now() }, 1000)
+  tickTimer = setInterval(() => { if (tab.value === 'jobs' && (anyActive.value || hasActiveSync.value)) now.value = Date.now() }, 1000)
   // 作图有活动任务、或在「找图」且有同步中任务时,都每 3s 拉一次(空闲零请求)
   refreshTimer = setInterval(() => {
-    if (tab.value === 'jobs' && (hasActiveJob.value || (subTab.value === 'find' && hasActiveSync.value))) loadJobs()
+    if (tab.value === 'jobs' && (anyActive.value || (subTab.value === 'find' && hasActiveSync.value))) loadJobs()
   }, 3000)
 })
 onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
@@ -378,17 +384,18 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
     <el-tabs v-model="tab" @tab-change="onTab" style="margin-top: 8px">
       <el-tab-pane name="jobs">
         <template #label>
-          <span>任务中心 <el-badge v-if="hasActiveJob" :value="statusCounts.active" type="warning" /></span>
+          <span>任务中心 <el-badge v-if="anyActive" :value="activeCount" type="warning" /></span>
         </template>
 
-        <!-- 子区:作图 / 找图 -->
+        <!-- 子区:作图 / 视频 / 找图(三者平级) -->
         <div class="subtabs">
           <button class="stab" :class="{ on: subTab === 'design' }" @click="setSub('design')">🎨 作图</button>
+          <button class="stab" :class="{ on: subTab === 'video' }" @click="setSub('video')">🎬 视频</button>
           <button class="stab" :class="{ on: subTab === 'find' }" @click="setSub('find')">🔍 找图</button>
         </div>
 
-        <!-- ===== 作图:任务 + 状态筛选 ===== -->
-        <div v-show="subTab === 'design'">
+        <!-- ===== 作图 / 视频:任务 + 状态筛选(数据按大模块切分,各看各的)===== -->
+        <div v-show="subTab === 'design' || subTab === 'video'">
           <div class="toolbar">
             <div class="filters">
               <button v-for="f in [['all','全部'],['active','处理中'],['done','已完成'],['error','失败']]"
@@ -399,7 +406,7 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
             <el-button size="small" @click="loadJobs">🔄 刷新</el-button>
           </div>
 
-          <div v-if="!filtered.length" class="empty muted">暂无任务 —— 去「作图」选个工具运行试试</div>
+          <div v-if="!filtered.length" class="empty muted">{{ subTab === 'video' ? '暂无视频任务 —— 去「视频 → 图生视频」生成一个' : '暂无任务 —— 去「作图」选个工具运行试试' }}</div>
 
           <div v-for="g in jobGroups" :key="g.module" class="mod-group">
             <div class="mod-title">{{ g.module }}</div>

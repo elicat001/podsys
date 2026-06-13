@@ -144,7 +144,7 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 
 - 运行:`cd backend && ./.venv/Scripts/python.exe -m pytest -q`
 - 测试用 `TestClient`,**不需要启 uvicorn**。
-- `conftest.py` 已做三层隔离,**不会污染开发库、也不碰真实外部 API**:① `POD_DATA_DIR` 指向临时目录(文件存储);② **强制离线**——清空 `POD_OPENAI_API_KEY` + 锁定 `pillow` 引擎;③ **DB 用隔离的 `*_test` 库**——读 `.env` 的 `POD_DATABASE_URL`、把库名换成 `<库>_test`(如 `podsys_test`),**带安全栅栏:库名不以 `_test` 结尾就拒绝 drop_all**,每次跑测试 drop+create 从空库开始,绝不碰真实库。所以即使 `.env` 配了真 key + 真库,`pytest` 仍离线、且只动 `*_test`(~110s)。**改 conftest 要保留这三层隔离 + `_test` 栅栏**(早期踩过坑:配了真 key 没隔离,AI 类测试真去调网关,11 个超时失败、跑了 29 分钟)。
+- `conftest.py` 已做三层隔离,**不会污染开发库、也不碰真实外部 API**:① `POD_DATA_DIR` 指向临时目录(文件存储);② **强制离线**——清空 `POD_OPENAI_API_KEY` + 锁定 `pillow` 引擎 + 锁定 `POD_VIDEO_PROVIDER=local`(出兜底 GIF、不调智谱);③ **DB 用隔离的 `*_test` 库**——读 `.env` 的 `POD_DATABASE_URL`、把库名换成 `<库>_test`(如 `podsys_test`),**带安全栅栏:库名不以 `_test` 结尾就拒绝 drop_all**,每次跑测试 drop+create 从空库开始,绝不碰真实库。所以即使 `.env` 配了真 key + 真库,`pytest` 仍离线、且只动 `*_test`(~110s)。**改 conftest 要保留这三层隔离 + `_test` 栅栏**(早期踩过坑:配了真 key 没隔离,AI 类测试真去调网关,11 个超时失败、跑了 29 分钟)。
   - ⚠️ 跑测试前需先建好 `*_test` 库 + 授权(本机:`CREATE DATABASE podsys_test CHARACTER SET utf8mb4; GRANT ALL ON podsys_test.* TO 'podsys'@'127.0.0.1','podsys'@'localhost';`)。conftest 连不上会打印这条提示。
 - 可用 fixtures:`client`(TestClient)、`auth_headers`(已注册用户的 Bearer 头)、`png`(内存造图工厂)。
 - 新表的测试在文件顶部确保建表:`from app.db import engine, Base; Base.metadata.create_all(engine)`。
