@@ -91,24 +91,36 @@ onMounted(async () => {
     <p class="muted sub">上传 1 张图让它动起来,或上传 2 张做「首尾帧」过渡;再用文字描述画面与运动,AI 生成短视频。</p>
     <div v-if="!aiReady" class="warn">⚠ 当前未配置 AI 视频服务(智谱 key),生成结果会是<strong>本地降级 GIF</strong>。配好 key 后即为真视频。</div>
 
-    <div class="wrap">
-      <div class="ctrl panel">
+    <div class="vg panel">
+      <!-- 左:商品图片 + 画幅 -->
+      <div class="col">
+        <div class="glabel">商品图片 <span class="opt">1 张=让它动起来 · 2 张=首尾帧过渡</span></div>
         <div class="imgs">
           <label class="slot" :class="{ filled: img1Url }">
             <input type="file" accept="image/*" @change="pick($event, 1)" hidden />
             <img v-if="img1Url" :src="img1Url" />
-            <div v-else class="ph"><span class="up">⬆</span><span>{{ isFrames2 ? '首帧' : '图片' }}(必填)</span></div>
+            <div v-else class="ph"><span class="up">⬆</span><span>{{ isFrames2 ? '首帧' : '图片' }} <i>必填</i></span></div>
             <span v-if="img1Url" class="x" @click.prevent="clearSlot(1)">×</span>
           </label>
           <label class="slot" :class="{ filled: img2Url }">
             <input type="file" accept="image/*" @change="pick($event, 2)" hidden />
             <img v-if="img2Url" :src="img2Url" />
-            <div v-else class="ph"><span class="up">⬆</span><span>尾帧(可选)</span></div>
+            <div v-else class="ph"><span class="up">⬆</span><span>尾帧 <i>可选</i></span></div>
             <span v-if="img2Url" class="x" @click.prevent="clearSlot(2)">×</span>
           </label>
         </div>
-        <div v-if="isFrames2" class="frames-tip">🔗 首尾帧模式:视频从第 1 张过渡到第 2 张</div>
+        <div v-if="isFrames2" class="frames-tip">🔗 首尾帧:视频从第 1 张过渡到第 2 张</div>
 
+        <div class="glabel mt">画幅</div>
+        <div class="aspects">
+          <button v-for="a in ASPECTS" :key="a.id" class="achip" :class="{ on: aspect === a.id }" @click="aspect = a.id">
+            {{ a.label }}<i v-if="a.hint"> · {{ a.hint }}</i>
+          </button>
+        </div>
+      </div>
+
+      <!-- 右:标题 + 描述 + 预设 + 生成 -->
+      <div class="col">
         <div class="field">
           <div class="flabel">商品标题 <span class="opt">选填 · 让 AI 认出商品,画面更稳更贴合</span></div>
           <input v-model="title" maxlength="200" class="tinput"
@@ -117,26 +129,16 @@ onMounted(async () => {
 
         <div class="field">
           <div class="flabel">画面与运动描述</div>
-          <textarea v-model="prompt" rows="4" maxlength="2000"
+          <textarea v-model="prompt" maxlength="2000"
             placeholder="描述视频画面内容和动态过程,例:模特穿着这件卫衣在城市街头自信走动,镜头缓缓推近,氛围高级"></textarea>
           <div class="presets">
             <button v-for="p in PRESETS" :key="p.name" class="pchip" @click="usePreset(p)">{{ p.name }}</button>
           </div>
         </div>
 
-        <div class="field">
-          <div class="flabel">画幅</div>
-          <div class="aspects">
-            <button v-for="a in ASPECTS" :key="a.id" class="achip" :class="{ on: aspect === a.id }" @click="aspect = a.id">
-              {{ a.label }}<i v-if="a.hint"> · {{ a.hint }}</i>
-            </button>
-          </div>
-        </div>
-
         <button class="btn-primary run" :disabled="submitting || !img1" @click="run">
           {{ submitting ? '提交中…' : '生成视频 · 扣 3 点' }}
         </button>
-
         <div v-if="submitted" class="submitted">
           ✅ 已提交,后台生成中(约 1~3 分钟)。去 <router-link to="/app/space?sub=video" class="lnk">任务中心 → 视频</router-link> 查看进度与结果
         </div>
@@ -152,22 +154,30 @@ onMounted(async () => {
 .lnk:hover { color: var(--brand); }
 .sub { margin: 6px 0 12px; }
 .warn { background: rgba(230,162,60,.12); border: 1px solid rgba(230,162,60,.4); color: #e6a23c; border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 12px; }
-.wrap { max-width: 620px; margin: 0 auto; }
-.ctrl { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+
+/* 两列:左=图片+画幅,右=标题+描述+预设+生成。居中 + 上限,填满宽度不留大白 */
+.vg { max-width: 940px; margin: 0 auto; padding: 22px; display: grid; grid-template-columns: 320px 1fr; gap: 24px; align-items: start; }
+.col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.glabel { font-size: 13px; color: var(--mut); }
+.glabel.mt { margin-top: 6px; }
+.opt { font-size: 12px; opacity: .6; font-weight: normal; }
+
 .imgs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .slot { position: relative; aspect-ratio: 1; border: 2px dashed var(--line2); border-radius: 12px; overflow: hidden; cursor: pointer; background: var(--bg2); display: block; }
 .slot.filled { border-style: solid; border-color: var(--brand); }
 .slot img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.slot .ph { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--mut); font-size: 13px; }
+.slot .ph { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--mut); font-size: 13px; }
+.slot .ph i { font-style: normal; font-size: 11px; opacity: .6; }
 .slot .up { font-size: 22px; }
 .slot .x { position: absolute; top: 5px; right: 6px; width: 22px; height: 22px; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; display: grid; place-items: center; font-size: 16px; }
-.frames-tip { font-size: 12px; color: var(--brand); margin-top: -4px; }
+.frames-tip { font-size: 12px; color: var(--brand); }
+
 .field { display: flex; flex-direction: column; gap: 8px; }
 .flabel { font-size: 13px; color: var(--mut); }
-.opt { font-size: 12px; opacity: .6; font-weight: normal; }
 textarea, .tinput { width: 100%; background: var(--bg2); border: 1px solid var(--line2); border-radius: 10px; padding: 10px; color: var(--fg); font: inherit; box-sizing: border-box; }
-textarea { resize: vertical; }
+textarea { resize: vertical; min-height: 168px; }
 textarea:focus, .tinput:focus { border-color: var(--brand); outline: none; }
+
 .presets { display: flex; flex-wrap: wrap; gap: 6px; }
 .pchip { border: 1px solid var(--line2); background: var(--panel); color: var(--mut); border-radius: 14px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
 .pchip:hover { border-color: var(--brand); color: var(--fg); }
@@ -175,7 +185,10 @@ textarea:focus, .tinput:focus { border-color: var(--brand); outline: none; }
 .achip { border: 1px solid var(--line2); background: var(--panel); color: var(--mut); border-radius: 14px; padding: 5px 12px; font-size: 13px; cursor: pointer; }
 .achip.on { border-color: var(--brand); color: var(--fg); background: var(--panel2); }
 .achip i { font-style: normal; opacity: .7; font-size: 11px; }
-.run { margin-top: 4px; padding: 11px; font-size: 15px; }
+
+.run { margin-top: 4px; padding: 12px; font-size: 15px; }
 .run:disabled { opacity: .5; cursor: not-allowed; }
-.submitted { margin-top: 4px; font-size: 13px; color: var(--fg); background: rgba(103,194,58,.10); border: 1px solid rgba(103,194,58,.35); border-radius: 8px; padding: 8px 12px; }
+.submitted { font-size: 13px; color: var(--fg); background: rgba(103,194,58,.10); border: 1px solid rgba(103,194,58,.35); border-radius: 8px; padding: 8px 12px; }
+
+@media (max-width: 860px) { .vg { grid-template-columns: 1fr; max-width: 560px; } }
 </style>
