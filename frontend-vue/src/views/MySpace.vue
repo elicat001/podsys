@@ -387,11 +387,11 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
           <span>任务中心 <el-badge v-if="anyActive" :value="activeCount" type="warning" /></span>
         </template>
 
-        <!-- 子区:作图 / 视频 / 找图(三者平级) -->
+        <!-- 子区:找图 / 作图 / 视频(三者平级,顺序对齐顶栏导航;上架后续再加) -->
         <div class="subtabs">
+          <button class="stab" :class="{ on: subTab === 'find' }" @click="setSub('find')">🔍 找图</button>
           <button class="stab" :class="{ on: subTab === 'design' }" @click="setSub('design')">🎨 作图</button>
           <button class="stab" :class="{ on: subTab === 'video' }" @click="setSub('video')">🎬 视频</button>
-          <button class="stab" :class="{ on: subTab === 'find' }" @click="setSub('find')">🔍 找图</button>
         </div>
 
         <!-- ===== 作图 / 视频:任务 + 状态筛选(数据按大模块切分,各看各的)===== -->
