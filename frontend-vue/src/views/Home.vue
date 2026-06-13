@@ -16,7 +16,7 @@ const STATS = [
 const ENTRIES = [
   { name: '找图', desc: '跨境电商商品图采集', to: '/app/find', g: 'a' },
   { name: '作图', desc: '22+ 设计工具', to: '/app/design', g: 'b' },
-  { name: '视频', desc: '展示视频 / 案例库', to: '/app/video', g: 'c' },
+  { name: '视频', desc: '图生视频 / 案例库', to: '/app/video', g: 'c' },
   { name: '上架', desc: '店铺 / 商品 / 模板', to: '/app/publish', g: 'd' },
 ]
 const recommend = ['variants', 'extract', 'mockup', 'production'].map((id) => TOOLS.find((t) => t.id === id)).filter(Boolean)

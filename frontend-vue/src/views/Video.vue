@@ -1,5 +1,5 @@
 <script setup>
-// 视频案例库(浏览) + 引导去「展示视频」工具生成。
+// 视频案例库(浏览) + 引导去「图生视频」工具生成。
 import { ref, onMounted } from 'vue'
 import { api } from '../api/client.js'
 
@@ -22,9 +22,9 @@ onMounted(() => { loadCats(); loadCases() })
   <div>
     <div class="head">
       <h2>视频案例库</h2>
-      <router-link to="/app/video/generate" class="btn-primary sm">去生成展示视频 →</router-link>
+      <router-link to="/app/video/generate" class="btn-primary sm">去图生视频 →</router-link>
     </div>
-    <p class="muted">浏览运镜/轮播案例,获取灵感;生成入口在右上「展示视频」。</p>
+    <p class="muted">浏览案例,获取灵感;生成入口在右上「图生视频」。</p>
 
     <div class="cats">
       <span class="chip" :class="{ on: active === '' }" @click="loadCases('')">全部</span>

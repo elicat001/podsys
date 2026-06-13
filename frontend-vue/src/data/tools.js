@@ -146,9 +146,9 @@ export const TOOLS = [
     ],
   },
   {
-    id: 'videogen', name: '展示视频', icon: '🎬', cat: '视频', ep: 'video/generate',
+    id: 'videogen', name: '图生视频', icon: '🎬', cat: '视频', ep: 'video/generate',
     async: false, result: 'video', cost: 3,
-    desc: '1~2 张图 → 运镜/轮播 GIF 短片',
+    desc: '1~2 张图 + 描述 → AI 生成短视频',
     inputs: [
       { key: 'file', type: 'file', label: '图 1(必填)', required: true },
       { key: 'file2', type: 'file2', label: '图 2(可选)', required: false },

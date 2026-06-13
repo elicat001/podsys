@@ -20,7 +20,7 @@ const features = [
   { icon: '👕', name: '商品套图', desc: '印花秒套到 T恤/水杯/帆布袋,多配色' },
   { icon: '🛡️', name: '侵权检测', desc: 'TRO + 版权库深度检索,上架更安心' },
   { icon: '🏭', name: '生产图导出', desc: '300DPI 工厂级 PNG/TIFF/PDF,直接开印' },
-  { icon: '🎬', name: '展示视频', desc: '1~2 张图生成运镜短视频,引流转化' },
+  { icon: '🎬', name: '图生视频', desc: '1~2 张图 + 描述,AI 生成短视频,引流转化' },
 ]
 </script>
 
