@@ -8,7 +8,7 @@ from PIL import Image
 from sqlalchemy.orm import Session
 
 from .. import storage
-from ..ai.video import ASPECT_RATIOS, LANGUAGES, RESOLUTION_SHORT
+from ..ai.video import ASPECT_RATIOS, CATEGORIES, LANGUAGES, RESOLUTION_SHORT
 from ..auth import current_user
 from ..config import settings
 from ..db import get_db
@@ -28,6 +28,7 @@ def options(user: User = Depends(current_user)):
         "aspects": list(ASPECT_RATIOS),
         "resolutions": list(RESOLUTION_SHORT),
         "languages": LANGUAGES,
+        "categories": CATEGORIES,
         "seconds": settings.video_seconds,
         "ai_ready": settings.video_provider != "local" and bool(settings.video_api_key),
     }
@@ -37,9 +38,11 @@ def options(user: User = Depends(current_user)):
 def ai_generate(
     file: UploadFile = File(...),
     file2: UploadFile | None = File(None),
-    prompt: str = Form(""),          # 视频描述(由前端「视频类型」填入、可自定义编辑)
+    prompt: str = Form(""),          # 视频描述/镜头脚本(由前端「视频类型」填入、可自定义编辑)
     title: str = Form(""),           # 商品标题(选填):给模型语义锚点,商品显示更稳
     language: str = Form("葡萄牙语"),  # 配音/对白语言(主打巴西)
+    category: str = Form("通用"),     # 商品类目:决定专属动作序列 + 场景首帧的场景
+    scene_frame: bool = Form(False),  # 两步:先 gpt-image 生成场景首帧再生视频(缓解硬切;无 key 自动跳过)
     aspect: str = Form("portrait"),
     resolution: str = Form("1080p"),
     user: User = Depends(charge_for("video")),
@@ -62,11 +65,14 @@ def ai_generate(
         aspect = "portrait"
     if resolution not in RESOLUTION_SHORT:
         resolution = "1080p"
+    if category not in CATEGORIES:
+        category = "通用"
     return submit_celery(
         run_tool, db, user, kind="aivideo", tool_id="videogen", op="video",
         raw=img1, mask_raw=img2,
-        params={"prompt": prompt[:2000], "title": title[:200],
-                "language": language[:20], "aspect": aspect, "resolution": resolution, "frames2": bool(img2)},
+        params={"prompt": prompt[:2000], "title": title[:200], "language": language[:20],
+                "category": category, "scene_frame": bool(scene_frame),
+                "aspect": aspect, "resolution": resolution, "frames2": bool(img2)},
     )
 
 

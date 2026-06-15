@@ -136,9 +136,10 @@ def test_video_options_ai_ready_false_offline(client, auth_headers):
     # 扩充后的画幅都在(竖/方/横)
     for a in ("portrait", "portrait34", "square", "landscape43", "landscape"):
         assert a in body["aspects"]
-    # 分辨率 + 语言也返回
+    # 分辨率 + 语言 + 商品类目也返回
     assert "1080p" in body["resolutions"] and "4k" in body["resolutions"]
     assert "葡萄牙语" in body["languages"]
+    assert "通用" in body["categories"] and "马克杯" in body["categories"]
 
 
 def test_aspect_size_by_resolution():
@@ -150,29 +151,57 @@ def test_aspect_size_by_resolution():
     assert aspect_size("portrait", "4k") == "2160x3840"
 
 
-def test_compose_prompt_motion_title_lang_quality():
-    # 提示词:视频描述(用户填/改)+ 商品标题 + 语言 + 一致性/防拉伸指令
+def test_compose_prompt_pro_layers():
+    # 专业化拼装:镜头脚本 + 类目动作(马克杯)+ 巴西风格(葡语)+ 标题 + 语言 + 防拉伸 + 负向
     from app.ai.video import compose_prompt
-    out = compose_prompt("素人开箱,手持拍摄", title="复古印花连衣裙", language="葡萄牙语")
+    out = compose_prompt("素人开箱,手持拍摄", title="复古马克杯", language="葡萄牙语", category="马克杯")
     assert "素人开箱,手持拍摄" in out
-    assert "复古印花连衣裙" in out
-    assert "葡萄牙语" in out                    # 语言指令
-    assert "拉伸" in out                        # 防拉伸指令被统一追加
-    # 「无对白」→ 不加配音语言句;空描述也安全(只剩标题/质感)
-    out2 = compose_prompt("", language="无对白")
-    assert "配音使用" not in out2 and out2.strip()
+    assert "马克杯" in out and "旋转" in out          # 类目专属动作被追加
+    assert "巴西" in out                             # 巴西 UGC 风格(葡语才加)
+    assert "复古马克杯" in out and "葡萄牙语" in out
+    assert "拉伸" in out                             # 防拉伸/一致性
+    assert "避免" in out                             # 负向词被追加
+    # 非葡语 → 不加巴西风格;「无对白」→ 不加配音句
+    out2 = compose_prompt("镜头推近", language="英语", category="通用")
+    assert "巴西" not in out2 and "英语" in out2
+    out3 = compose_prompt("镜头推近", language="无对白")
+    assert "配音使用" not in out3 and out3.strip()
 
 
 def test_ai_generate_full_params(client, auth_headers):
-    # 描述 + 标题 + 语言 + 新画幅(3:4)+ 分辨率(720p)全走通(本地兜底 GIF)
+    # 描述 + 标题 + 语言 + 类目 + 场景首帧(无 key 自动跳过)+ 画幅/分辨率全走通(本地兜底 GIF)
     r = client.post("/api/video/ai-generate", headers=auth_headers,
                     data={"prompt": "达人出镜讲解卖点", "title": "复古印花连衣裙", "language": "英语",
+                          "category": "T恤", "scene_frame": "true",
                           "aspect": "portrait34", "resolution": "720p"},
                     files={"file": ("x.png", _png(), "image/png")})
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
-    assert job["status"] == "done", job
+    assert job["status"] == "done", job   # 无 openai key → 场景首帧优雅跳过,仍出兜底 GIF
     assert job["result"]["video_url"].endswith(".gif")
+
+
+def test_ai_generate_scene_frame_with_gptimage(client, auth_headers, monkeypatch, png):
+    # 配了 key 时「场景首帧」走 gpt-image 编辑首帧,再生视频(本地兜底 GIF);确认流程不崩。
+    from PIL import Image as _Img
+
+    from app.ai import openai_image
+    from app.config import settings
+    called = {"edit": 0}
+
+    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto"):
+        called["edit"] += 1
+        assert "保持商品本身" in prompt   # 用的是场景首帧指令
+        return _Img.new("RGB", (64, 96), (10, 20, 30))
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _fake_edit)
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "开箱", "category": "马克杯", "scene_frame": "true", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert called["edit"] == 1            # 场景首帧确实调了 gpt-image edit
 
 
 # ---------- workflow step ----------

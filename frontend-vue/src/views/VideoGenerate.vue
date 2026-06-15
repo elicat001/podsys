@@ -13,28 +13,34 @@ const title = ref('')
 const aspect = ref('portrait')
 const resolution = ref('1080p')
 const language = ref('葡萄牙语')
+const category = ref('通用')
+const sceneFrame = ref(true)
 const submitting = ref(false)
 const submitted = ref(false)
 const aiReady = ref(true)
 
-// 视频类型:点一下把对应的描述填进「视频描述」框,可自由修改;「自定义」=清空自己写。
-// 语言、画幅是独立选项,不写进这段描述,所以改描述不会冲掉它们。
+// 视频类型:点一下把对应「镜头脚本」填进描述框,可自由修改;「自定义」=清空自己写。
+// 用分时间轴的镜头脚本(动作序列)而非一堆形容词 —— 视频模型更吃这个,出片不僵硬。
+// 类目专属动作 + 巴西 UGC 风格 + 负向词由后端按 类目/语言 自动追加,不写进这段、改描述不冲掉它们。
 const TYPES = [
   { id: 'unbox', icon: '📦', name: '开箱分享', desc: '素人手持开箱,真实有惊喜',
-    text: '基于给定图片生成视频,TikTok 短视频风格,素人开箱视角。手持手机拍摄,轻微抖动,真实自然。镜头从包装盒开始,快速拆封,展示产品细节与第一反应,表情真实、有惊喜感。室内自然光,背景简单生活化,节奏偏快,像普通用户随手拍的开箱分享视频。' },
+    text: '10 秒真实开箱短视频。【0-2秒】镜头对准未拆封的包装,素人第一视角手持手机、轻微手抖与对焦变化,双手把包装拉近镜头。【2-4秒】快速撕开包装袋或打开纸盒,镜头跟随双手移动、画面轻微晃动。【4-6秒】产品首次完整露出,镜头自然向前推进,缓慢转动展示正面和侧面。【6-8秒】拿起产品观察、触摸材质与细节,镜头短暂停留在重点区域,表情真实好奇满意。【8-10秒】快速展示产品使用状态或最终效果,镜头拉远,露出惊喜满意表情,自然结束。' },
   { id: 'influencer', icon: '🎤', name: '达人带货', desc: '达人出镜讲卖点,强种草',
-    text: '基于给定图片生成视频,TikTok 达人带货风格。正对镜头拍摄,构图稳定,达人出镜讲解产品卖点,语气自信有感染力。镜头切换展示产品外观、细节和重点功能,节奏明快,强种草氛围。室内干净背景,适合电商短视频。' },
+    text: '10 秒达人带货短视频。【0-2秒】达人正对镜头出场、手拿产品自信开场,构图稳定。【2-4秒】特写产品外观与核心卖点,达人手指向重点、表情有感染力。【4-6秒】镜头切换展示产品细节与功能,达人边演示边讲解。【6-8秒】展示产品使用或上身效果,达人与产品自然互动。【8-10秒】达人对镜头总结种草、表情真诚有说服力,画面明快收尾。' },
   { id: 'scene', icon: '🛋️', name: '场景介绍', desc: '真实场景中的使用过程',
-    text: '基于给定图片生成视频,TikTok 商品展示与使用场景风格。镜头聚焦产品在真实生活场景中的使用过程,如桌面、客厅或户外。画面干净清晰,慢到中等节奏,突出功能与使用效果。' },
+    text: '10 秒商品使用场景短视频。【0-2秒】产品自然摆放在真实生活场景中(桌面/客厅/户外),镜头轻缓进入。【2-4秒】镜头缓缓推近,展示产品在场景中的状态与质感。【4-6秒】人物自然地拿起并开始使用产品,动作流畅真实。【6-8秒】镜头跟随使用过程,突出功能与实际效果。【8-10秒】展示使用后的满意效果与氛围,镜头轻缓拉远,治愈自然收尾。' },
   { id: 'ad', icon: '🎬', name: '广告大片', desc: '电影级商业广告质感',
-    text: '基于给定图片生成视频,高质感商业广告大片风格。电影级运镜与打光,镜头优雅地推拉、环绕展示产品,突出材质、质感与细节,画面精致高级,节奏沉稳有张力,氛围高端,适合品牌宣传片。' },
+    text: '10 秒高质感商业广告短片。【0-2秒】产品在干净背景中优雅登场,电影级打光,镜头缓缓推入。【2-4秒】镜头优雅地环绕产品,光影流动,突出材质与质感。【4-6秒】特写产品关键细节,景深变化、画面精致。【6-8秒】产品置于高级氛围场景中呈现,沉稳有张力。【8-10秒】镜头缓缓拉远定格,品牌大片质感收尾。' },
   { id: 'interactive', icon: '🤝', name: '互动场景', desc: '人物与产品真实互动',
-    text: '基于给定图片生成视频,真实互动场景风格。人物自然地拿起、试用或使用产品,与产品产生真实互动,动作流畅、表情生动,生活化背景,镜头跟随互动过程,有代入感和说服力。' },
-  { id: 'custom', icon: '✏️', name: '自定义', desc: '自己写画面描述', text: '' },
+    text: '10 秒真实互动短视频。【0-2秒】人物自然进入画面、伸手拿起产品。【2-4秒】人物试用或使用产品,动作流畅、表情生动。【4-6秒】镜头跟随互动过程,捕捉真实表情与反应。【6-8秒】展示产品带来的效果或乐趣,人物自然回应、有代入感。【8-10秒】人物满意收尾,生活化氛围,画面自然结束。' },
+  { id: 'custom', icon: '✏️', name: '自定义', desc: '自己写镜头脚本', text: '' },
 ]
 const selType = ref('unbox')
 const prompt = ref(TYPES[0].text)
 function pickType(t) { selType.value = t.id; prompt.value = t.text }
+
+// 商品类目 → 后端追加专属动作序列(T恤上身/马克杯倒饮料…)+ 决定「场景首帧」的场景
+const CATEGORIES = ['通用', 'T恤', '卫衣', '马克杯', '手机壳', '帆布袋', '海报', '抱枕']
 
 const ASPECTS = [
   { id: 'portrait', label: '9:16', hint: '竖屏·带货' },
@@ -82,6 +88,8 @@ async function run() {
     fd.append('prompt', prompt.value)
     fd.append('title', title.value)
     fd.append('language', language.value)
+    fd.append('category', category.value)
+    fd.append('scene_frame', sceneFrame.value ? 'true' : 'false')
     fd.append('aspect', aspect.value)
     fd.append('resolution', resolution.value)
     await api.post('/video/ai-generate', fd)
@@ -132,12 +140,19 @@ onMounted(async () => {
         </div>
 
         <div class="card">
-          <div class="clabel">视频类型 <span class="opt">选一种,描述会填入右侧,可改</span></div>
+          <div class="clabel">视频类型 <span class="opt">选一种,镜头脚本填入右侧,可改</span></div>
           <div class="types">
             <button v-for="t in TYPES" :key="t.id" class="type" :class="{ on: selType === t.id }" @click="pickType(t)">
               <span class="ti">{{ t.icon }}</span>
               <span class="tt"><b>{{ t.name }}</b><i>{{ t.desc }}</i></span>
             </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="clabel">商品类目 <span class="opt">追加专属动作,出片更对味</span></div>
+          <div class="chips">
+            <button v-for="c in CATEGORIES" :key="c" class="chip" :class="{ on: category === c }" @click="category = c">{{ c }}</button>
           </div>
         </div>
       </div>
@@ -179,6 +194,12 @@ onMounted(async () => {
             </div>
           </div>
         </div>
+
+        <label class="toggle">
+          <input type="checkbox" v-model="sceneFrame" />
+          <span class="tg-box" />
+          <span class="tg-text"><b>🎬 智能场景首帧</b><i>先把商品放进场景做开场首帧,开场更自然、不再硬切(需 AI 图像 key;可能轻微改变商品,关掉=用原图直出)</i></span>
+        </label>
 
         <button class="btn-primary run" :disabled="submitting || !img1" @click="run">
           {{ submitting ? '提交中…' : '生成视频 · 扣 3 点' }}
@@ -237,6 +258,15 @@ onMounted(async () => {
 .chip.on { border-color: var(--brand); color: var(--fg); background: var(--panel2); }
 .chip i { font-style: normal; opacity: .6; font-size: 11px; }
 
+.toggle { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 10px 12px; border: 1px solid var(--line2); border-radius: 11px; background: var(--bg2); }
+.toggle input { display: none; }
+.tg-box { flex: none; width: 38px; height: 22px; border-radius: 11px; background: var(--line2); position: relative; transition: background .2s; margin-top: 1px; }
+.tg-box::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .2s; }
+.toggle input:checked + .tg-box { background: var(--brand); }
+.toggle input:checked + .tg-box::after { transform: translateX(16px); }
+.tg-text { display: flex; flex-direction: column; gap: 2px; }
+.tg-text b { font-size: 13.5px; color: var(--fg); font-weight: 600; }
+.tg-text i { font-size: 12px; color: var(--mut); font-style: normal; line-height: 1.4; }
 .run { width: 100%; margin-top: 4px; padding: 13px; font-size: 15px; }
 .run:disabled { opacity: .5; cursor: not-allowed; }
 .submitted { font-size: 13px; color: var(--fg); background: rgba(103,194,58,.10); border: 1px solid rgba(103,194,58,.35); border-radius: 8px; padding: 9px 12px; }

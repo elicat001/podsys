@@ -406,18 +406,37 @@ def _work_sync(job_id: str, job: Job, db: Session) -> dict:
 def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     """AI 图生视频(智谱 CogVideoX-3 或本地兜底 GIF)。读 1~2 张输入图(2 张=首尾帧)→ provider → 存产物。
     输入图:第 1 张在 upload_path(job_id);可选第 2 张(尾帧)在 upload_path(job_id_mask)。"""
-    from .ai.video import aspect_size, compose_prompt, fit_to_aspect, get_video_provider
+    from .ai.video import (
+        aspect_size,
+        compose_prompt,
+        fit_to_aspect,
+        get_video_provider,
+        gptimage_size,
+        scene_frame_prompt,
+    )
+    from .config import settings
     p = job.params
-    size = aspect_size(p.get("aspect", "portrait"), p.get("resolution", "1080p"))
+    cat = p.get("category", "通用")
+    aspect = p.get("aspect", "portrait")
+    size = aspect_size(aspect, p.get("resolution", "1080p"))
     tw, th = (int(x) for x in size.split("x"))
     raw = [_load_input(job_id)]
     mpath = storage.upload_path(f"{job_id}_mask")   # 复用 mask 槽放第 2 张(尾帧)
     if mpath.exists():
         im2 = Image.open(mpath); im2.load(); raw.append(im2)
     imgs = [fit_to_aspect(im, tw, th) for im in raw]   # 按画幅等比贴合,防模型生硬拉伸
-    # 提示词工程:视频描述(用户填/改)+ 商品标题(语义锚)+ 语言 + 一致性/防拉伸指令
+    # 两步生成(可选「场景首帧」):先用 gpt-image 把商品放进场景做第一帧 → 缓解首帧→场景的硬切。
+    # 无 key / 失败 → 优雅降级,直接用原图首帧(不阻断)。
+    if p.get("scene_frame") and settings.openai_api_key:
+        try:
+            from .ai.openai_image import OpenAIImageClient
+            framed = OpenAIImageClient().edit(raw[0], scene_frame_prompt(cat), size=gptimage_size(aspect))
+            imgs[0] = fit_to_aspect(framed, tw, th)
+        except Exception:  # noqa: BLE001
+            pass
+    # 提示词工程:镜头脚本 + 类目动作 + 巴西风格 + 标题 + 语言 + 一致性/防拉伸 + 负向
     prompt = compose_prompt(p.get("prompt", ""), title=p.get("title", ""),
-                            language=p.get("language", "葡萄牙语"))
+                            language=p.get("language", "葡萄牙语"), category=cat)
     out = get_video_provider().image_to_video(imgs, prompt, size=size)
     ext = out.get("ext", "mp4")
     name = f"video.{ext}"
