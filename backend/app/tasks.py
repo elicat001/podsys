@@ -435,9 +435,8 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             imgs[0] = fit_to_aspect(framed, tw, th)
         except Exception:  # noqa: BLE001
             pass
-    # 提示词工程:镜头脚本 + 类目动作 + 地区风格(随语言)+ 标题 + 语言 + 一致性/防拉伸 + 负向
-    prompt = compose_prompt(p.get("prompt", ""), title=p.get("title", ""),
-                            language=lang, category=cat)
+    # 提示词工程:镜头脚本 + 类目动作 + 地区风格(随语言)+ 语言 + 一致性/防拉伸 + 负向
+    prompt = compose_prompt(p.get("prompt", ""), language=lang, category=cat)
     out = get_video_provider().image_to_video(imgs, prompt, size=size)
     ext = out.get("ext", "mp4")
     name = f"video.{ext}"

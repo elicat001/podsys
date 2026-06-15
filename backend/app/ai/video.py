@@ -37,7 +37,7 @@ LANGUAGES: list[str] = ["葡萄牙语", "英语", "西班牙语", "中文", "无
 # 视频描述(镜头脚本)由前端「视频类型」按钮填入、可自定义编辑(开箱/达人/场景/广告大片/互动/自定义)。
 # ── 专业化提示词架构(参考实操经验)──────────────────────────────────────────
 # 视频模型最吃「镜头脚本(动作序列/时间轴)+ 类目专属动作 + 地区风格 + 负向词」,而非堆形容词。
-# 后端把这些层统一拼到用户的镜头脚本后面:类目动作 + 巴西 UGC 风格 + 一致性 + 负向。
+# 后端把这些层统一拼到用户的镜头脚本后面:类目动作 + 地区 UGC 风格(按语言)+ 一致性 + 负向。
 
 # 商品类目 → 专属动作序列(POD 常见品类;模型有具体动作可演,远胜通用开箱)。
 CATEGORIES: list[str] = ["通用", "T恤", "卫衣", "马克杯", "手机壳", "帆布袋", "海报", "抱枕"]
@@ -113,12 +113,11 @@ def aspect_size(aspect: str = "portrait", resolution: str = "1080p") -> str:
     return f"{_r8(ww)}x{_r8(hh)}"
 
 
-def compose_prompt(motion: str = "", title: str = "", language: str = "葡萄牙语",
-                   category: str = "通用") -> str:
-    """专业化拼装:镜头脚本(用户填/改)+ 类目专属动作 + 巴西 UGC 风格(仅葡语)+ 商品标题 + 语言
-    + 全局一致性/自然开场/防拉伸 + 负向词 → 最终 prompt。语言/画幅是独立选项,不被描述冲掉。"""
+def compose_prompt(motion: str = "", language: str = "葡萄牙语", category: str = "通用") -> str:
+    """专业化拼装:镜头脚本(用户填/改)+ 类目专属动作 + 地区 UGC 风格(按语言)+ 语言
+    + 全局一致性/自然开场/防拉伸 + 负向词 → 最终 prompt。语言/画幅/类目是独立选项,不被描述冲掉。"""
     parts: list[str] = []
-    motion, title = (motion or "").strip(), (title or "").strip()
+    motion = (motion or "").strip()
     if motion:
         parts.append(motion)
     act = CATEGORY_ACTIONS.get(category, "")
@@ -127,8 +126,6 @@ def compose_prompt(motion: str = "", title: str = "", language: str = "葡萄牙
     region = REGION_STYLE.get(language)   # 按语言智能匹配地区风格(无对白/未知 → 不加)
     if region:
         parts.append(region)
-    if title:
-        parts.append(f"商品是「{title}」。")
     if language and language != "无对白":
         parts.append(f"视频中的人物对白与配音使用{language}。")
     parts.append(_QUALITY_SUFFIX)

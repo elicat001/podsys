@@ -9,7 +9,6 @@ import { useAuth } from '../stores/auth.js'
 const auth = useAuth()
 const img1 = ref(null); const img1Url = ref('')
 const img2 = ref(null); const img2Url = ref('')
-const title = ref('')
 const aspect = ref('portrait')
 const resolution = ref('1080p')
 const language = ref('葡萄牙语')
@@ -21,7 +20,7 @@ const aiReady = ref(true)
 
 // 视频类型:点一下把对应「镜头脚本」填进描述框,可自由修改;「自定义」=清空自己写。
 // 用分时间轴的镜头脚本(动作序列)而非一堆形容词 —— 视频模型更吃这个,出片不僵硬。
-// 类目专属动作 + 巴西 UGC 风格 + 负向词由后端按 类目/语言 自动追加,不写进这段、改描述不冲掉它们。
+// 类目专属动作 + 地区 UGC 风格 + 负向词由后端按 类目/语言 自动追加,不写进这段、改描述不冲掉它们。
 const TYPES = [
   { id: 'unbox', icon: '📦', name: '开箱分享', desc: '素人手持开箱,真实有惊喜',
     text: '10 秒真实开箱短视频。【0-2秒】镜头对准未拆封的包装,素人第一视角手持手机、轻微手抖与对焦变化,双手把包装拉近镜头。【2-4秒】快速撕开包装袋或打开纸盒,镜头跟随双手移动、画面轻微晃动。【4-6秒】产品首次完整露出,镜头自然向前推进,缓慢转动展示正面和侧面。【6-8秒】拿起产品观察、触摸材质与细节,镜头短暂停留在重点区域,表情真实好奇满意。【8-10秒】快速展示产品使用状态或最终效果,镜头拉远,露出惊喜满意表情,自然结束。' },
@@ -86,7 +85,6 @@ async function run() {
     fd.append('file', img1.value)
     if (img2.value) fd.append('file2', img2.value)
     fd.append('prompt', prompt.value)
-    fd.append('title', title.value)
     fd.append('language', language.value)
     fd.append('category', category.value)
     fd.append('scene_frame', sceneFrame.value ? 'true' : 'false')
@@ -114,7 +112,7 @@ onMounted(async () => {
       <h2>🎬 图生视频</h2>
       <router-link to="/app/video/cases" class="muted lnk">案例库 →</router-link>
     </div>
-    <p class="muted sub">上传商品图 + 选视频类型,一键生成 TikTok 风格电商短视频(默认葡语,适配巴西市场)。</p>
+    <p class="muted sub">上传商品图 + 选视频类型,一键生成 TikTok 风格电商短视频(默认葡语·巴西,语言/地区可切换)。</p>
     <div v-if="!aiReady" class="warn">⚠ 当前未配置 AI 视频服务(智谱 key),生成结果会是<strong>本地降级 GIF</strong>。配好 key 后即为真视频。</div>
 
     <div class="layout">
@@ -163,10 +161,6 @@ onMounted(async () => {
           <span class="flabel">视频描述 <span class="opt">选了类型自动填入,可自由修改</span></span>
           <textarea v-model="prompt" class="inp desc-ta" maxlength="2000"
             placeholder="描述视频画面与运动过程,例:模特穿着这件卫衣在城市街头自信走动,镜头缓缓推近"></textarea>
-        </div>
-        <div class="field">
-          <span class="flabel">商品标题 <span class="opt">选填 · 让 AI 认出商品,画面更稳更贴合</span></span>
-          <input v-model="title" maxlength="200" class="inp" placeholder="例:Vintage Floral Summer Dress / 复古印花连衣裙" />
         </div>
         <div class="field">
           <span class="flabel">画幅 <span class="opt">按比例贴合·不拉伸</span></span>

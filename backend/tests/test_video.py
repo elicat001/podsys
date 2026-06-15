@@ -152,13 +152,13 @@ def test_aspect_size_by_resolution():
 
 
 def test_compose_prompt_pro_layers():
-    # 专业化拼装:镜头脚本 + 类目动作(马克杯)+ 巴西风格(葡语)+ 标题 + 语言 + 防拉伸 + 负向
+    # 专业化拼装:镜头脚本 + 类目动作(马克杯)+ 巴西风格(葡语)+ 语言 + 防拉伸 + 负向
     from app.ai.video import compose_prompt
-    out = compose_prompt("素人开箱,手持拍摄", title="复古马克杯", language="葡萄牙语", category="马克杯")
+    out = compose_prompt("素人开箱,手持拍摄", language="葡萄牙语", category="马克杯")
     assert "素人开箱,手持拍摄" in out
     assert "马克杯" in out and "旋转" in out          # 类目专属动作被追加
     assert "巴西" in out                             # 葡语 → 巴西本地风格
-    assert "复古马克杯" in out and "葡萄牙语" in out
+    assert "葡萄牙语" in out                          # 语言指令
     assert "拉伸" in out                             # 防拉伸/一致性
     assert "避免" in out                             # 负向词被追加
     # 地区风格跟着语言智能变:英语 → 欧美(不是巴西)
@@ -170,9 +170,9 @@ def test_compose_prompt_pro_layers():
 
 
 def test_ai_generate_full_params(client, auth_headers):
-    # 描述 + 标题 + 语言 + 类目 + 场景首帧(无 key 自动跳过)+ 画幅/分辨率全走通(本地兜底 GIF)
+    # 描述 + 语言 + 类目 + 场景首帧(无 key 自动跳过)+ 画幅/分辨率全走通(本地兜底 GIF)
     r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "达人出镜讲解卖点", "title": "复古印花连衣裙", "language": "英语",
+                    data={"prompt": "达人出镜讲解卖点", "language": "英语",
                           "category": "T恤", "scene_frame": "true",
                           "aspect": "portrait34", "resolution": "720p"},
                     files={"file": ("x.png", _png(), "image/png")})
