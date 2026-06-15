@@ -188,3 +188,15 @@ def test_retention_deletes_only_mirrored_and_aged(s3_backend, png, monkeypatch):
 def test_retention_skips_when_local_or_disabled(png):
     # 默认 local 模式:retention 直接跳过(绝不碰本地真相源)
     assert run_retention().get("skipped") is True
+
+
+# ── 一次性补传:把存量本地文件全镜像进对象存储 ──────────────────────────────
+def test_mirror_all_backfills_existing(s3_backend, png):
+    for jid in ("backfill_a", "backfill_b"):
+        d = settings.outputs_dir / jid
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "print.png").write_bytes(png().read())
+    s = storage.mirror_all()
+    assert s["skipped"] is False
+    assert storage.object_exists("backfill_a", "print.png")
+    assert storage.object_exists("backfill_b", "print.png")

@@ -130,6 +130,26 @@ def mirror_job(job_id: str) -> int:
         return 0
 
 
+def mirror_all() -> dict:
+    """一次性补传:把本地 outputs 下**所有**作业目录的产物镜像进对象存储(幂等,可重跑)。
+
+    用于 MinIO 上线**之前**就存在的存量文件——它们当初没走镜像钩子,只在本地。补传后它们
+    也拥有 MinIO 副本(可备份、将来可被 retention 清理释放盘)。仅 s3 模式生效。
+    """
+    if not _is_s3():
+        return {"skipped": True, "jobs": 0, "files": 0}
+    out = settings.outputs_dir
+    stats = {"skipped": False, "jobs": 0, "files": 0}
+    if out.is_dir():
+        for job_dir in sorted(out.iterdir()):
+            if job_dir.is_dir():
+                n = mirror_job(job_dir.name)
+                if n:
+                    stats["jobs"] += 1
+                    stats["files"] += n
+    return stats
+
+
 def fetch_to_local(job_id: str, name: str) -> Path | None:
     """本地缺失时从对象存储原子下载到本地缓存,返回本地路径;local/对象不存在/失败返回 None。
 
