@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
 from ..models_db import Job
-from ..storage import new_job_id
+from ..storage import mirror_job, new_job_id
 
 
 def _now() -> datetime:
@@ -120,6 +120,7 @@ def run_job(job_id: str, fn: Callable[[], dict]) -> None:
             job.status = "done"
             job.result = result if isinstance(result, dict) else {"value": result}
             job.error = ""
+            mirror_job(job_id)  # 镜像产物进对象存储(local no-op);覆盖 /api/process-async + workflow_custom 等
         except Exception as exc:  # noqa: BLE001
             job.status = "error"
             # P1-1:保留异常类型,无 message 的异常(如 KeyError())也能定位

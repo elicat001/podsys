@@ -157,6 +157,21 @@ def png():
 
 
 @pytest.fixture()
+def s3_backend(monkeypatch):
+    """opt-in:把存储切到 s3 后端 + 注入内存假 client,跑完自动恢复 local。
+
+    只有显式声明本 fixture 的测试才走 s3;其余测试默认 local(零行为变化,保持基线全绿)。
+    不连任何真实 MinIO/网络。返回 FakeS3Client,测试可断言 .store 里有哪些对象 key。
+    """
+    from app import storage
+    from tests._fakes import FakeS3Client
+    fake = FakeS3Client()
+    monkeypatch.setattr(storage, "_make_s3_client", lambda: fake)
+    monkeypatch.setattr(settings, "storage_backend", "s3")
+    return fake
+
+
+@pytest.fixture()
 def tool_result(client):
     """异步工具端点助手:POST 响应 → 轮询作业 → 断言 done 并返回 result。
 

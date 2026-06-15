@@ -41,6 +41,7 @@ def add_asset(file: UploadFile = File(...), source: str = Form("upload"),
                   dhash=chk["dhash"], chash=chk["chash"], source=source, risk=chk["risk"],
                   size_bytes=len(raw))
     db.add(asset); db.commit(); db.refresh(asset)
+    storage.mirror_job(job_id)  # 镜像进对象存储(local no-op)
     return {"asset_id": asset.id, "risk": asset.risk, "url": url, "infringement": chk}
 
 

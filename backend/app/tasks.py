@@ -60,6 +60,9 @@ def run_job_in_worker(job_id: str, work: Work, *, refund_op: str | None = None,
             job.status = "done"
             job.result = result if isinstance(result, dict) else {"value": result}
             job.error = ""
+            # 产物已落本地盘 → 镜像进对象存储(local 模式 no-op;失败只 warning 不影响 done)。
+            # 注:采集同步 collect_sync 每张图新建独立 job_id,由 sync_images 内部各自 mirror,不靠这里。
+            storage.mirror_job(job_id)
         except Exception as exc:  # noqa: BLE001 — 作业内任何失败都记 error + 退点,不让 worker 崩
             db.rollback()
             job = db.get(Job, job_id)

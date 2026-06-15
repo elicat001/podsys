@@ -51,6 +51,7 @@ def _delete_asset_file(asset: Asset) -> None:
                 pass
     except Exception:  # noqa: BLE001 — 删盘失败不应阻断 DB 清理
         pass
+    storage.delete_object_for_path(fp)  # 同步删对象存储里的副本(local no-op;缩略图不入桶不必删)
 
 
 def _serialize(a: Asset) -> dict:

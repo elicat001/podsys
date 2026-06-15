@@ -23,7 +23,7 @@
   仍**同步**的:一键抠图 `/api/process`(核心管线)、标题/侵权(分析类,返回文字/风险而非可下载图)。
   详见「异步作业(Celery)」一节。(历史上是 BackgroundTasks,已迁移。)
 - 图像:Pillow(默认离线 CPU),可切换 rembg / OpenAI gpt-image / 第三方 API
-- 存储:本地文件 + **MySQL 8**(SQLAlchemy 2.0,utf8mb4;已全面转 MySQL,不再支持 SQLite)。`POD_DATABASE_URL` 必填;测试走 `*_test` 隔离库(conftest)。S3/MinIO 接口已预留
+- 存储:本地文件 + **MySQL 8**(SQLAlchemy 2.0,utf8mb4;已全面转 MySQL,不再支持 SQLite)。`POD_DATABASE_URL` 必填;测试走 `*_test` 隔离库(conftest)。文件存储默认本地盘,可切 MinIO/S3(`POD_STORAGE_BACKEND=s3`,见「配置开关」+ `scripts/setup-minio.sh`)
 - 前端:**Vue 3 SPA**(`frontend-vue/`:Vite + vue-router(history 模式)+ pinia + element-plus,深色风格)。后端 `main.py` 服务其构建产物 `dist`(SPA 回退,见「部署」一节);旧的静态 `frontend/*.html` 已废弃删除。**需登录才能用**(无游客自动注册)。
 - 鉴权:JWT(PyJWT)+ pbkdf2 密码哈希;计费:点数(credits)模式
 
@@ -200,12 +200,15 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 | `POD_REGISTER_RATE_LIMIT` | `1000` | 注册限流;**生产应调到 ~5** 防刷点 |
 | `POD_CELERY_BROKER_URL` | `redis://127.0.0.1:6380/0` | 异步作业 broker(**独立** Redis 实例,与别的项目隔离) |
 | `POD_CELERY_EAGER` | `false` | true=任务同进程同步执行(测试用,conftest 强制开)。生产/本地真跑保持 false |
+| `POD_STORAGE_BACKEND` | `local` | 文件存储:local(纯本地盘,对象层全 no-op)/ s3(本地盘当写缓存 + MinIO 当存储 of record:作业收尾镜像、/files 缺失回源、删除两边删)。换阿里云 OSS/腾讯 COS 同走 s3 + 改 endpoint。仅加 `storage.py` 不动业务层 |
+| `POD_S3_*` | 空 | `POD_STORAGE_BACKEND=s3` 时必填:`endpoint_url`(MinIO=`http://127.0.0.1:9000`)、`access_key`/`secret_key`(=MinIO root 凭据)、`bucket`(默认 podsys)、`addressing`(MinIO 必须 path)、`mirror_uploads`(默认 false)、`retention_days`(默认 0;>0 清本地缓存,**开启前必须先把 quota 改 DB 真相**)。详见 `.env.example` |
 
 ## 已知技术债 / 生产前必处理
 
 - 生产前三件套:换 `POD_JWT_SECRET`、关 `POD_DEV_BILLING`、收紧 `POD_REGISTER_RATE_LIMIT`。
 - `services/phash.py` 用了 Pillow 已弃用的 `getdata()`(Pillow 14 移除),是测试 warning 主因,可顺手清理。
-- **已全面转 MySQL 8(不再支持 SQLite)**:`db.py` 只建 MySQL 引擎(`POD_DATABASE_URL` 必填、非 mysql 直接抛错;连接池硬化 pool_pre_ping/recycle)。已加索引:`jobs(owner_id,created_at)`+`jobs(status)`、`assets(owner_id,deleted)`、`collected_images(task_id,synced)`。**测试也走 MySQL** 的 `*_test` 隔离库(conftest 自动 `<库>_test` + `_test` 栅栏 + drop/create)。本地 MySQL 8.4 在 `D:\mysql-local\data`(localhost-only,Windows 服务 `MySQLPodsys` 自启),库 `podsys`+`podsys_test`;生产是系统 MySQL 8.0 上的独立库 `podsys`+独立用户(权限只授 `podsys.*`,与同机 Django 的 `kejing`/`kejing_staging` 物理隔离)。存储仍本地文件,上量再换 S3/MinIO。
+- **已全面转 MySQL 8(不再支持 SQLite)**:`db.py` 只建 MySQL 引擎(`POD_DATABASE_URL` 必填、非 mysql 直接抛错;连接池硬化 pool_pre_ping/recycle)。已加索引:`jobs(owner_id,created_at)`+`jobs(status)`、`assets(owner_id,deleted)`、`collected_images(task_id,synced)`。**测试也走 MySQL** 的 `*_test` 隔离库(conftest 自动 `<库>_test` + `_test` 栅栏 + drop/create)。本地 MySQL 8.4 在 `D:\mysql-local\data`(localhost-only,Windows 服务 `MySQLPodsys` 自启),库 `podsys`+`podsys_test`;生产是系统 MySQL 8.0 上的独立库 `podsys`+独立用户(权限只授 `podsys.*`,与同机 Django 的 `kejing`/`kejing_staging` 物理隔离)。
+- **文件存储已接入 MinIO/S3(默认仍 local)**:`storage.py` 加了对象存储镜像层(`mirror_job`/`fetch_to_local`/`delete_object`),`POD_STORAGE_BACKEND=s3` 时本地盘当写缓存、MinIO 当存储 of record(作业收尾镜像产物、`/files` 本地缺失自动回源、删除两边都删);默认 `local` 时全 no-op,行为与纯本地一致。生产 MinIO 用 `scripts/setup-minio.sh` 一次性部署(systemd 原生、绑 127.0.0.1:9000/9001、与 Django/6379 物理隔离、私有桶不暴露公网)。boto3 惰性 import。**未做**:retention 清本地缓存(需先把 `quota.py` 从「磁盘游走」改成「`Asset.size_bytes` 之和」为准,否则配额失真——见计划阶段三)。
 - **已接入 Alembic 管 schema 版本**(`backend/alembic/`,基线 `5d2d1973fc1a`)。`create_all` 仍留作安全网(新表自愈),但**改/加列、加索引等对已存在表的改动必须走 Alembic**(`create_all` 改不了存量表)。改表标准流程见下「Alembic」一节。一次性迁移脚本 `migrate_sqlite_to_mysql.py` 已完成使命删除(git 历史 da577a4 可取回)。
 - `ai/upscale.py` 的 `realesrgan` 已接 Real-ESRGAN(SRVGG general-x4v3,onnx,~几秒真提质);模型 `models/realesr_x4v3.onnx` 不入库,缺失自动降级 Lanczos。
 
@@ -289,8 +292,15 @@ print/mockup/production 三个 URL 可访问(HTTP 200),production 为 30×40cm@3
 > - **`podsys-worker.service`**(用户 `www`,`celery -A app.celery_app worker -l info --concurrency=3`,
 >   prefork 池=最多 3 任务并发;连 6380;enable+start)。日志 `/var/log/podsys/worker-{out,err}.log`。
 >   (本地 Windows 用 `--pool=threads --concurrency=3`,同样 3 并发。)
-> - `deploy.sh` 已补:`pip install -r requirements.txt`(装 celery/redis)+ 末尾 restart worker。
+> - `deploy.sh` 已补:`pip install -r requirements.txt`(装 celery/redis/boto3)+ 末尾 restart worker。
 > 排障:`systemctl status redis-server@podsys podsys-worker podsys`。**动服务器前先 SSH 核对边界,不碰 Django/6379。**
+
+> **🗄️ MinIO 对象存储基建(一次性,`scripts/setup-minio.sh` 部署)**:`POD_STORAGE_BACKEND=s3` 时用。
+> - `minio`/`mc` 二进制在 `/usr/local/bin`;数据目录 `/www/wwwroot/podsys-data/minio`(www:www, 750,仓库树外)。
+> - systemd **`minio.service`**(User=www,`EnvironmentFile=/etc/default/minio-podsys`,**只绑 127.0.0.1:9000(API)/9001(Console)**,Restart=on-failure)。私有桶 `podsys`(`mc anonymous set none`,不暴露公网)。
+> - 凭据只在 `/etc/default/minio-podsys`(root:600)+ podsys `backend/.env` 的 `POD_S3_*`,**绝不入 git**。与 Django/6379 物理隔离。
+> - 文件不走 nginx——仍经 podsys `/files` 端点出去(owner 隔离留在应用层)。Console 运维用 SSH 隧道:`ssh -L 9001:127.0.0.1:9001 pod-kejing`。
+> 排障:`systemctl status minio.service`、`curl 127.0.0.1:9000/minio/health/live`、`mc ls podsys-local/podsys/`。**未做 retention**(开启前先改 quota,见技术债)。
 
 **架构**:nginx 把 `/` 全转给后端;后端一身二职——`/api`、`/files` 走业务,其余路径服务
 Vue 构建产物 `frontend-vue/dist`(`main.py` 的 `_SPAStaticFiles`:404 回退 `index.html`,支持

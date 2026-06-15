@@ -79,6 +79,7 @@ async def create_template(name: str = Form(...), files: list[UploadFile] = File(
         db.add(MockupTemplateImage(template_id=tpl.id, path=storage.output_url(job_id, name_i), idx=i))
 
     db.commit(); db.refresh(tpl)
+    storage.mirror_job(job_id)  # 镜像产品照进对象存储(local no-op)
     return _serialize(tpl)
 
 
@@ -105,6 +106,7 @@ async def add_images(tid: int, files: list[UploadFile] = File(...),
         Image.open(io.BytesIO(raw)).convert("RGB").save(storage.output_path(job_id, name_i), format="PNG")
         db.add(MockupTemplateImage(template_id=tpl.id, path=storage.output_url(job_id, name_i), idx=next_idx + i))
     db.commit(); db.refresh(tpl)
+    storage.mirror_job(job_id)  # 镜像追加的产品照进对象存储(local no-op)
     return _serialize(tpl)
 
 
@@ -123,6 +125,7 @@ def delete_image(tid: int, img_id: int, user: User = Depends(current_user), db: 
             p.unlink()
     except Exception:  # noqa: BLE001
         pass
+    storage.delete_object_for_path(p)  # 同步删对象存储副本(local no-op)
     db.delete(im); db.commit(); db.refresh(tpl)
     return _serialize(tpl)
 
@@ -138,5 +141,6 @@ def delete_template(tid: int, user: User = Depends(current_user), db: Session = 
                 p.unlink()
         except Exception:  # noqa: BLE001
             pass
+        storage.delete_object_for_path(p)  # 同步删对象存储副本(local no-op)
     db.delete(tpl); db.commit()
     return {"id": tid, "deleted": True}

@@ -270,6 +270,7 @@ def sync_images(db: Session, owner_id: int, image_ids: list[int], fetcher=None) 
             img.asset_url = url
             db.add(img)
             db.commit()
+            storage.mirror_job(job_id)  # 每张采集图独立 job_id,各自镜像进对象存储(local no-op)
             synced += 1
         except Exception as e:  # noqa: BLE001
             db.rollback()

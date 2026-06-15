@@ -180,6 +180,8 @@ def process(
     prod_path = storage.output_path(job_id, "production.png")
     meta = export_production(print_img, prod_path, width_cm=width_cm, height_cm=height_cm, dpi=dpi)
 
+    storage.mirror_job(job_id)  # 三件套已落盘 → 镜像进对象存储(local no-op)
+
     return JSONResponse({
         "job_id": job_id,
         "print_url": storage.output_url(job_id, "print.png"),
@@ -264,6 +266,7 @@ async def generate(background_tasks: BackgroundTasks,
     out = storage.output_path(job_id, "generated.png")
     img.save(out, format="PNG")
     save_as_asset(db, user.id, img, f"文生图: {prompt[:24]}", storage.output_url(job_id, "generated.png"), source="generated")
+    storage.mirror_job(job_id)  # 镜像进对象存储(local no-op)
     return JSONResponse({
         "job_id": job_id,
         "image_url": storage.output_url(job_id, "generated.png"),
@@ -304,6 +307,7 @@ async def edit(
     job_id = storage.new_job_id()
     out = storage.output_path(job_id, "edited.png")
     out_img.save(out, format="PNG")
+    storage.mirror_job(job_id)  # 镜像进对象存储(local no-op)
     return JSONResponse({"job_id": job_id, "image_url": storage.output_url(job_id, "edited.png")})
 
 
@@ -335,7 +339,10 @@ def get_file(job_id: str, name: str, w: int = 0):
     非栅格图(svg/pdf)或缩略失败 → 回退原文件。"""
     p = settings.outputs_dir / job_id / name
     if not p.exists():
-        raise HTTPException(status_code=404, detail="file not found")
+        # 本地缓存缺失(retention 清掉 / 多实例没这份)→ 从对象存储回源到本地;local 模式返回 None。
+        storage.fetch_to_local(job_id, name)
+        if not p.exists():
+            raise HTTPException(status_code=404, detail="file not found")
     if w and 0 < w <= 1024 and not name.lower().endswith((".svg", ".pdf")):
         thumb = settings.outputs_dir / job_id / f".thumb_{w}_{name}.png"
         if not thumb.exists():            # 仅首次生成并存盘;之后直接读这个小文件

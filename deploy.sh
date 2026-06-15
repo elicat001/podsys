@@ -84,6 +84,10 @@ done
 home=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "http://127.0.0.1:$PORT/")
 api=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "http://127.0.0.1:$PORT/api/templates")
 echo "    站点 / = $home   /api/templates = $api   服务=$(systemctl is-active "$SVC")"
+# (可选)MinIO 存储探活——仅信息提示;挂了不影响发布(产物镜像失败只 warning,Job 表才是真相源)
+if systemctl list-unit-files minio.service --no-legend 2>/dev/null | grep -q minio.service; then
+  echo "    MinIO 存储 = $(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:9000/minio/health/live || echo N/A)"
+fi
 if [ "$home" = "200" ] && [ "$api" = "200" ]; then
   echo "✅ 部署完成(HEAD=$HEAD)"
 else

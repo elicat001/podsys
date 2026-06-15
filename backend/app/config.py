@@ -17,6 +17,20 @@ class Settings(BaseSettings):
     # storage
     data_dir: Path = _BACKEND_DIR / "data"
 
+    # 对象存储(MinIO/S3)。默认 local=纯本地盘(所有对象层函数 no-op,行为与今天一致)。
+    # storage_backend=s3 时:作业收尾镜像产物进 MinIO(=存储 of record),/files 本地缺失自动回源,
+    # 删除两边都删。MinIO 生产部署在 127.0.0.1:9000(localhost-only,与旁边 Django 物理隔离)。
+    # 换阿里云 OSS / 腾讯 COS 只需填它们的 S3 兼容 endpoint/密钥,业务/前端不动。
+    storage_backend: str = "local"          # local | s3
+    s3_endpoint_url: str = ""               # 如 http://127.0.0.1:9000;官方 AWS S3 留空
+    s3_region: str = "us-east-1"
+    s3_access_key: str = ""                 # = MinIO 的 MINIO_ROOT_USER(或独立 access key)
+    s3_secret_key: str = ""                 # = MinIO 的 MINIO_ROOT_PASSWORD(或独立 secret key)
+    s3_bucket: str = "podsys"
+    s3_addressing: str = "path"             # MinIO 必须 path-style;AWS 可 virtual
+    s3_mirror_uploads: bool = False         # 是否连输入图(uploads)也镜像(默认只镜像产物 outputs)
+    s3_retention_days: int = 0              # >0:retention 命令删早于 N 天的本地产物缓存(MinIO 已有副本)。0=不清理
+
     # 数据库:**必须**是 MySQL 连接串(项目已全面转 MySQL,不再支持 SQLite),如:
     #   mysql+pymysql://podsys:<pwd>@127.0.0.1:3306/podsys?charset=utf8mb4
     # dev/prod 在 .env 配;测试由 conftest 指向同库名加 _test 的隔离库(见 tests/conftest.py)。
