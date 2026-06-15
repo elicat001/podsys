@@ -7,6 +7,7 @@ from app.db import Base, SessionLocal, engine
 from app.main import app
 from app.models_db import Asset
 from app.routers import space as space_router
+from app.services.quota import quota_bytes_limit
 
 # 确保新增列(deleted/batch/tags/size_bytes)所在表已建
 Base.metadata.create_all(engine)
@@ -46,7 +47,7 @@ def test_quota_counts_bytes_and_categories(client, auth_headers, png):
     assert resp.status_code == 200, resp.text
     q = resp.json()
     assert q["used_bytes"] > 0
-    assert q["quota_bytes"] == 2 * 1024 ** 3
+    assert q["quota_bytes"] == quota_bytes_limit()   # 默认 1 GiB(POD_USER_QUOTA_GB)
     assert 0 <= q["percent"] <= 100
     assert q["over"] is False
     # collected 1 张,material(upload)2 张

@@ -13,8 +13,10 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models_db import Asset, Job
 
-# 演示配额上限(settings 未配置时的常量):2 GiB
-QUOTA_BYTES = 2 * 1024 ** 3
+
+def quota_bytes_limit() -> int:
+    """每用户存储额度(字节),由 POD_USER_QUOTA_GB 决定(默认 1 GiB)。"""
+    return int(settings.user_quota_gb * 1024 ** 3)
 
 
 def _owner_job_ids(db: Session, owner_id: int) -> set[str]:
@@ -92,10 +94,15 @@ def usage(db: Session, owner_id: int) -> dict:
     ).one()
     trash = {"count": int(trash_cnt), "bytes": int(trash_bytes)}
 
-    # 真实占用:把该用户**所有作业目录**的磁盘大小加起来——这才是"用户的全部东西":
-    # 主产物 + 额外格式(tiff/pdf/psd) + 缩略图缓存 + 源图预览 + 打样图 + 回收站未清的文件,全算上。
-    total_bytes = sum(_dir_bytes(settings.outputs_dir / jid) for jid in _owner_job_ids(db, owner_id))
-    quota_bytes = QUOTA_BYTES
+    # 真实占用:两种口径——
+    # - s3 模式:本地盘只是「可被 retention 清掉的缓存」,磁盘游走会失真 → 以 DB(Asset.size_bytes)为准
+    #   (= 未删 collected/material + 回收站 trash 三者之和,与上面 by_category/trash 同源,口径自洽)。
+    # - local 模式:沿用磁盘游走——把该用户所有作业目录大小加起来(含额外格式/缩略图/源图/打样/未清回收站文件)。
+    if (settings.storage_backend or "local").lower() == "s3":
+        total_bytes = collected["bytes"] + material["bytes"] + trash["bytes"]
+    else:
+        total_bytes = sum(_dir_bytes(settings.outputs_dir / jid) for jid in _owner_job_ids(db, owner_id))
+    quota_bytes = quota_bytes_limit()
     percent = round(total_bytes / quota_bytes * 100, 2) if quota_bytes else 0.0
     over = total_bytes > quota_bytes
 

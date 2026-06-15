@@ -201,14 +201,15 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 | `POD_CELERY_BROKER_URL` | `redis://127.0.0.1:6380/0` | 异步作业 broker(**独立** Redis 实例,与别的项目隔离) |
 | `POD_CELERY_EAGER` | `false` | true=任务同进程同步执行(测试用,conftest 强制开)。生产/本地真跑保持 false |
 | `POD_STORAGE_BACKEND` | `local` | 文件存储:local(纯本地盘,对象层全 no-op)/ s3(本地盘当写缓存 + MinIO 当存储 of record:作业收尾镜像、/files 缺失回源、删除两边删)。换阿里云 OSS/腾讯 COS 同走 s3 + 改 endpoint。仅加 `storage.py` 不动业务层 |
-| `POD_S3_*` | 空 | `POD_STORAGE_BACKEND=s3` 时必填:`endpoint_url`(MinIO=`http://127.0.0.1:9000`)、`access_key`/`secret_key`(=MinIO root 凭据)、`bucket`(默认 podsys)、`addressing`(MinIO 必须 path)、`mirror_uploads`(默认 false)、`retention_days`(默认 0;>0 清本地缓存,**开启前必须先把 quota 改 DB 真相**)。详见 `.env.example` |
+| `POD_S3_*` | 空 | `POD_STORAGE_BACKEND=s3` 时必填:`endpoint_url`(MinIO=`http://127.0.0.1:9000`)、`access_key`/`secret_key`(=MinIO root 凭据)、`bucket`(默认 podsys)、`addressing`(MinIO 必须 path)、`mirror_uploads`(默认 false)、`retention_days`(默认 0;>0=retention 删早于 N 天且有副本的本地缓存,释放盘)。详见 `.env.example` |
+| `POD_USER_QUOTA_GB` | `1.0` | 我的空间每用户默认存储额度(GiB)。软上限,超出新作业 413。s3 模式下用量按 DB(`Asset.size_bytes`)计,local 模式按磁盘游走 |
 
 ## 已知技术债 / 生产前必处理
 
 - 生产前三件套:换 `POD_JWT_SECRET`、关 `POD_DEV_BILLING`、收紧 `POD_REGISTER_RATE_LIMIT`。
 - `services/phash.py` 用了 Pillow 已弃用的 `getdata()`(Pillow 14 移除),是测试 warning 主因,可顺手清理。
 - **已全面转 MySQL 8(不再支持 SQLite)**:`db.py` 只建 MySQL 引擎(`POD_DATABASE_URL` 必填、非 mysql 直接抛错;连接池硬化 pool_pre_ping/recycle)。已加索引:`jobs(owner_id,created_at)`+`jobs(status)`、`assets(owner_id,deleted)`、`collected_images(task_id,synced)`。**测试也走 MySQL** 的 `*_test` 隔离库(conftest 自动 `<库>_test` + `_test` 栅栏 + drop/create)。本地 MySQL 8.4 在 `D:\mysql-local\data`(localhost-only,Windows 服务 `MySQLPodsys` 自启),库 `podsys`+`podsys_test`;生产是系统 MySQL 8.0 上的独立库 `podsys`+独立用户(权限只授 `podsys.*`,与同机 Django 的 `kejing`/`kejing_staging` 物理隔离)。
-- **文件存储已接入 MinIO/S3(默认仍 local)**:`storage.py` 加了对象存储镜像层(`mirror_job`/`fetch_to_local`/`delete_object`),`POD_STORAGE_BACKEND=s3` 时本地盘当写缓存、MinIO 当存储 of record(作业收尾镜像产物、`/files` 本地缺失自动回源、删除两边都删);默认 `local` 时全 no-op,行为与纯本地一致。生产 MinIO 用 `scripts/setup-minio.sh` 一次性部署(systemd 原生、绑 127.0.0.1:9000/9001、与 Django/6379 物理隔离、私有桶不暴露公网)。boto3 惰性 import。**未做**:retention 清本地缓存(需先把 `quota.py` 从「磁盘游走」改成「`Asset.size_bytes` 之和」为准,否则配额失真——见计划阶段三)。
+- **文件存储已接入 MinIO/S3(默认仍 local)**:`storage.py` 加了对象存储镜像层(`mirror_job`/`fetch_to_local`/`delete_object`),`POD_STORAGE_BACKEND=s3` 时本地盘当写缓存、MinIO 当存储 of record(作业收尾镜像产物、`/files` 本地缺失自动回源、删除两边都删);默认 `local` 时全 no-op,行为与纯本地一致。生产 MinIO 用 `scripts/setup-minio.sh` 一次性部署(systemd 原生、绑 127.0.0.1:9000/9001、与 Django/6379 物理隔离、私有桶不暴露公网)。boto3 惰性 import。**retention 已就绪(阶段三)**:`services/retention.py` 删早于 `POD_S3_RETENTION_DAYS` 天且 MinIO 已确认有副本的本地产物(无副本绝不删、判龄用 mtime、缩略图可重生直接删);`scripts/retention.py` CLI + `scripts/setup-retention.sh` 装每日 systemd timer。配套:s3 模式下 `quota.py` 用量已改按 DB(`Asset.size_bytes`)计(否则删本地缓存会让配额失真),local 模式仍磁盘游走。默认每用户额度 `POD_USER_QUOTA_GB=1`。
 - **已接入 Alembic 管 schema 版本**(`backend/alembic/`,基线 `5d2d1973fc1a`)。`create_all` 仍留作安全网(新表自愈),但**改/加列、加索引等对已存在表的改动必须走 Alembic**(`create_all` 改不了存量表)。改表标准流程见下「Alembic」一节。一次性迁移脚本 `migrate_sqlite_to_mysql.py` 已完成使命删除(git 历史 da577a4 可取回)。
 - `ai/upscale.py` 的 `realesrgan` 已接 Real-ESRGAN(SRVGG general-x4v3,onnx,~几秒真提质);模型 `models/realesr_x4v3.onnx` 不入库,缺失自动降级 Lanczos。
 
@@ -300,7 +301,8 @@ print/mockup/production 三个 URL 可访问(HTTP 200),production 为 30×40cm@3
 > - systemd **`minio.service`**(User=www,`EnvironmentFile=/etc/default/minio-podsys`,**只绑 127.0.0.1:9000(API)/9001(Console)**,Restart=on-failure)。私有桶 `podsys`(`mc anonymous set none`,不暴露公网)。
 > - 凭据只在 `/etc/default/minio-podsys`(root:600)+ podsys `backend/.env` 的 `POD_S3_*`,**绝不入 git**。与 Django/6379 物理隔离。
 > - 文件不走 nginx——仍经 podsys `/files` 端点出去(owner 隔离留在应用层)。Console 运维用 SSH 隧道:`ssh -L 9001:127.0.0.1:9001 pod-kejing`。
-> 排障:`systemctl status minio.service`、`curl 127.0.0.1:9000/minio/health/live`、`mc ls podsys-local/podsys/`。**未做 retention**(开启前先改 quota,见技术债)。
+> 排障:`systemctl status minio.service`、`curl 127.0.0.1:9000/minio/health/live`、`mc ls podsys-local/podsys/`。
+> - **retention(阶段三,释放盘)**:`.env` 设 `POD_S3_RETENTION_DAYS=N` + `scripts/setup-retention.sh` 装每日 timer(`podsys-retention.timer`,03:30)。手动:`systemctl start podsys-retention.service`。配额已自动改按 DB 计,删本地缓存不失真。
 
 **架构**:nginx 把 `/` 全转给后端;后端一身二职——`/api`、`/files` 走业务,其余路径服务
 Vue 构建产物 `frontend-vue/dist`(`main.py` 的 `_SPAStaticFiles`:404 回退 `index.html`,支持

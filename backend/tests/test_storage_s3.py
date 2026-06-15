@@ -6,10 +6,13 @@
 """
 from __future__ import annotations
 
+import os
 import shutil
+import time
 
 from app import storage
 from app.config import settings
+from app.services.retention import run_retention
 
 
 def _f(png):
@@ -127,3 +130,61 @@ def test_mirror_failure_swallowed(s3_backend, png):
 
     s3_backend.upload_file = boom
     assert storage.mirror_job(jid) == 0  # 被吞,返回 0,不抛
+
+
+# ── 阶段三:s3 模式配额按 DB(Asset)计,删本地缓存不影响用量(retention 安全)─────────
+def test_quota_db_truth_in_s3_mode(client, auth_headers, png, s3_backend):
+    from app.services.quota import quota_bytes_limit
+    r = client.post("/api/assets", headers=auth_headers, files=_f(png))
+    assert r.status_code == 200, r.text
+    jid = _jid_from_url(r.json()["url"])
+
+    q1 = client.get("/api/space/quota", headers=auth_headers).json()
+    assert q1["quota_bytes"] == quota_bytes_limit()      # 默认 1 GiB
+    assert q1["used_bytes"] > 0
+
+    # 模拟 retention 删掉本地缓存文件(MinIO 仍有副本)
+    (settings.outputs_dir / jid / "asset.png").unlink()
+    q2 = client.get("/api/space/quota", headers=auth_headers).json()
+    assert q2["used_bytes"] == q1["used_bytes"], "s3 模式用量按 DB 计,删本地缓存不应让配额失真"
+
+
+# ── 阶段三:retention 只删「超龄 + MinIO 有副本」的本地文件,无副本/新文件都保留 ─────
+def test_retention_deletes_only_mirrored_and_aged(s3_backend, png, monkeypatch):
+    monkeypatch.setattr(settings, "s3_retention_days", 1)
+    old = time.time() - 2 * 86400  # 2 天前(超过 1 天阈值)
+
+    # A:超龄 + 已镜像 → 应删本地、保留 MinIO
+    ja = "ret_mirrored"
+    da = settings.outputs_dir / ja; da.mkdir(parents=True, exist_ok=True)
+    (da / "print.png").write_bytes(png().read())
+    assert storage.mirror_job(ja) == 1
+    os.utime(da / "print.png", (old, old))
+
+    # B:超龄 + 未镜像 → 绝不删(防丢数据)
+    jb = "ret_nocopy"
+    db_ = settings.outputs_dir / jb; db_.mkdir(parents=True, exist_ok=True)
+    (db_ / "print.png").write_bytes(png().read())
+    os.utime(db_ / "print.png", (old, old))
+
+    # C:已镜像但新鲜 → 保留
+    jc = "ret_fresh"
+    dc = settings.outputs_dir / jc; dc.mkdir(parents=True, exist_ok=True)
+    (dc / "print.png").write_bytes(png().read())
+    storage.mirror_job(jc)
+
+    run_retention()
+
+    assert not (da / "print.png").exists(), "超龄+有副本 应删本地"
+    assert storage.object_exists(ja, "print.png"), "retention 只删本地,MinIO 副本须保留"
+    assert (db_ / "print.png").exists(), "无副本 绝不删"
+    assert (dc / "print.png").exists(), "新鲜文件 应保留"
+
+    # 删后仍可经 fetch_to_local 从 MinIO 回源
+    assert storage.fetch_to_local(ja, "print.png") is not None
+    assert (da / "print.png").exists()
+
+
+def test_retention_skips_when_local_or_disabled(png):
+    # 默认 local 模式:retention 直接跳过(绝不碰本地真相源)
+    assert run_retention().get("skipped") is True

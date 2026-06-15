@@ -29,7 +29,10 @@ class Settings(BaseSettings):
     s3_bucket: str = "podsys"
     s3_addressing: str = "path"             # MinIO 必须 path-style;AWS 可 virtual
     s3_mirror_uploads: bool = False         # 是否连输入图(uploads)也镜像(默认只镜像产物 outputs)
-    s3_retention_days: int = 0              # >0:retention 命令删早于 N 天的本地产物缓存(MinIO 已有副本)。0=不清理
+    s3_retention_days: int = 0              # >0:retention 删早于 N 天且 MinIO 已有副本的本地产物缓存(释放应用盘)。0=不清理
+
+    # 我的空间:每用户默认存储额度(GB)。演示用软上限,超出则拦新作业(submit_celery 413)。
+    user_quota_gb: float = 1.0
 
     # 数据库:**必须**是 MySQL 连接串(项目已全面转 MySQL,不再支持 SQLite),如:
     #   mysql+pymysql://podsys:<pwd>@127.0.0.1:3306/podsys?charset=utf8mb4
