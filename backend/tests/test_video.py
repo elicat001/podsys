@@ -157,15 +157,16 @@ def test_compose_prompt_pro_layers():
     out = compose_prompt("素人开箱,手持拍摄", title="复古马克杯", language="葡萄牙语", category="马克杯")
     assert "素人开箱,手持拍摄" in out
     assert "马克杯" in out and "旋转" in out          # 类目专属动作被追加
-    assert "巴西" in out                             # 巴西 UGC 风格(葡语才加)
+    assert "巴西" in out                             # 葡语 → 巴西本地风格
     assert "复古马克杯" in out and "葡萄牙语" in out
     assert "拉伸" in out                             # 防拉伸/一致性
     assert "避免" in out                             # 负向词被追加
-    # 非葡语 → 不加巴西风格;「无对白」→ 不加配音句
+    # 地区风格跟着语言智能变:英语 → 欧美(不是巴西)
     out2 = compose_prompt("镜头推近", language="英语", category="通用")
-    assert "巴西" not in out2 and "英语" in out2
+    assert "巴西" not in out2 and "欧美" in out2 and "英语" in out2
+    # 「无对白」→ 不加地区风格、不加配音句
     out3 = compose_prompt("镜头推近", language="无对白")
-    assert "配音使用" not in out3 and out3.strip()
+    assert "巴西" not in out3 and "欧美" not in out3 and "配音使用" not in out3 and out3.strip()
 
 
 def test_ai_generate_full_params(client, auth_headers):

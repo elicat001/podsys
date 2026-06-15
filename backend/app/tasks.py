@@ -427,16 +427,17 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     imgs = [fit_to_aspect(im, tw, th) for im in raw]   # 按画幅等比贴合,防模型生硬拉伸
     # 两步生成(可选「场景首帧」):先用 gpt-image 把商品放进场景做第一帧 → 缓解首帧→场景的硬切。
     # 无 key / 失败 → 优雅降级,直接用原图首帧(不阻断)。
+    lang = p.get("language", "葡萄牙语")
     if p.get("scene_frame") and settings.openai_api_key:
         try:
             from .ai.openai_image import OpenAIImageClient
-            framed = OpenAIImageClient().edit(raw[0], scene_frame_prompt(cat), size=gptimage_size(aspect))
+            framed = OpenAIImageClient().edit(raw[0], scene_frame_prompt(cat, lang), size=gptimage_size(aspect))
             imgs[0] = fit_to_aspect(framed, tw, th)
         except Exception:  # noqa: BLE001
             pass
-    # 提示词工程:镜头脚本 + 类目动作 + 巴西风格 + 标题 + 语言 + 一致性/防拉伸 + 负向
+    # 提示词工程:镜头脚本 + 类目动作 + 地区风格(随语言)+ 标题 + 语言 + 一致性/防拉伸 + 负向
     prompt = compose_prompt(p.get("prompt", ""), title=p.get("title", ""),
-                            language=p.get("language", "葡萄牙语"), category=cat)
+                            language=lang, category=cat)
     out = get_video_provider().image_to_video(imgs, prompt, size=size)
     ext = out.get("ext", "mp4")
     name = f"video.{ext}"

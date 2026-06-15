@@ -52,11 +52,18 @@ CATEGORY_ACTIONS: dict[str, str] = {
     "抱枕": "拿起抱枕展示双面印花,捏一捏展示蓬松手感,放到沙发上摆好展示家居氛围。",
 }
 
-# 巴西 TikTok UGC 风格(主打市场):仅在语言=葡萄牙语时追加,避免生成像国内主播。
-BRAZIL_STYLE = (
-    "整体为巴西 TikTok UGC 风格:年轻的巴西本地用户,居家随性的真实环境,温暖的自然阳光,"
-    "热情、有活力、表情丰富的肢体语言,真实社交媒体随手拍质感,而非商业摄影棚摆拍。"
-)
+# 地区 TikTok UGC 风格:按所选语言智能匹配本地风格(别写死巴西!选什么语言出什么地区的人/氛围),
+# 避免「葡语视频里却是国内主播」这种违和。「无对白」=不指定地区风格(中性)。
+REGION_STYLE: dict[str, str] = {
+    "葡萄牙语": ("整体为巴西 TikTok UGC 风格:年轻的巴西本地用户,居家随性的真实环境,温暖的自然阳光,"
+                "热情、有活力、表情丰富的肢体语言,真实社媒随手拍质感,而非商业摄影棚摆拍。"),
+    "英语": ("整体为欧美 TikTok UGC 风格:年轻的欧美本地用户,日常居家或街头环境,自然光照,"
+            "自信轻松、自然亲切的表达,真实社媒随手拍质感,而非商业摄影棚摆拍。"),
+    "西班牙语": ("整体为拉美/西语区 TikTok UGC 风格:年轻的西语区本地用户,热情活力的生活化环境,温暖明亮的光线,"
+                "表情丰富、有感染力的肢体语言,真实社媒随手拍质感,而非商业摄影棚摆拍。"),
+    "中文": ("整体为中国抖音/TikTok UGC 风格:年轻的本地用户,生活化的居家或街头环境,自然光照,"
+            "真实自然的表达,真实社媒随手拍质感,而非商业摄影棚摆拍。"),
+}
 
 # 负向提示词(模型对负向词很敏感,提升常比正向词更大)。以文本形式追加(稳妥,不依赖单独 API 字段)。
 NEGATIVE_BLOCK = (
@@ -117,8 +124,9 @@ def compose_prompt(motion: str = "", title: str = "", language: str = "葡萄牙
     act = CATEGORY_ACTIONS.get(category, "")
     if act:
         parts.append(act)
-    if language == "葡萄牙语":
-        parts.append(BRAZIL_STYLE)
+    region = REGION_STYLE.get(language)   # 按语言智能匹配地区风格(无对白/未知 → 不加)
+    if region:
+        parts.append(region)
     if title:
         parts.append(f"商品是「{title}」。")
     if language and language != "无对白":
@@ -138,13 +146,19 @@ def gptimage_size(aspect: str = "portrait") -> str:
     return "1024x1024"       # 方
 
 
-def scene_frame_prompt(category: str = "通用") -> str:
-    """「场景首帧」用的 gpt-image 编辑指令:把商品放进类目对应的场景、保持商品本身不变。"""
+# 语言 → 地区(场景首帧的本地风格也跟着语言变,别写死巴西)
+_REGION_HINT: dict[str, str] = {"葡萄牙语": "巴西", "英语": "欧美", "西班牙语": "拉美/西语区", "中文": "中国"}
+
+
+def scene_frame_prompt(category: str = "通用", language: str = "葡萄牙语") -> str:
+    """「场景首帧」用的 gpt-image 编辑指令:把商品放进类目对应的场景、保持商品本身不变。地区风格随语言变。"""
     scene = _SCENE_BY_CAT.get(category, _SCENE_BY_CAT["通用"])
+    region = _REGION_HINT.get(language, "")
+    region_txt = f"{region}本地" if region else "本地"
     return (
         f"把图中的商品自然地放进「{scene}」中,作为一段 TikTok 短视频的第一帧画面。"
         "严格保持商品本身的图案、文字、颜色、形状和比例完全不变,只生成商品周围真实生活化的场景与背景,"
-        "巴西居家风格、温暖自然光、真实 UGC 随手拍质感,不要广告摄影棚感、不要改动商品。"
+        f"{region_txt}居家风格、温暖自然光、真实 UGC 随手拍质感,不要广告摄影棚感、不要改动商品。"
     )
 
 
