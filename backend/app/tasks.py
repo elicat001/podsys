@@ -437,7 +437,7 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             pass
     # 提示词工程:镜头脚本 + 类目动作 + 地区风格(随语言)+ 语言 + 一致性/防拉伸 + 负向
     prompt = compose_prompt(p.get("prompt", ""), language=lang, category=cat)
-    out = get_video_provider().image_to_video(imgs, prompt, size=size)
+    out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"))
     ext = out.get("ext", "mp4")
     name = f"video.{ext}"
     storage.output_path(job_id, name).write_bytes(out["bytes"])

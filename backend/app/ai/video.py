@@ -31,6 +31,9 @@ ASPECT_RATIOS: dict[str, tuple[int, int]] = {
 # 分辨率档 → 短边像素(长边按比例算)。flat price,4K 也不额外收费,只是更慢、文件更大。
 RESOLUTION_SHORT: dict[str, int] = {"720p": 720, "1080p": 1080, "4k": 2160}
 
+# 视频时长(秒)。CogVideoX-3 支持 5 / 10 秒。前端先选时长再选视频类型(脚本随时长变)。
+DURATIONS: list[int] = [5, 10]
+
 # 视频配音/对白语言(主打巴西=葡萄牙语)。「无对白」=不加语言指令。
 LANGUAGES: list[str] = ["葡萄牙语", "英语", "西班牙语", "中文", "无对白"]
 
@@ -177,7 +180,8 @@ def fit_to_aspect(im: Image.Image, target_w: int, target_h: int) -> Image.Image:
 class VideoProvider(Protocol):
     name: str
 
-    def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920") -> dict:
+    def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920",
+                       seconds: int | None = None) -> dict:
         """images: 1~2 张(2 张=首尾帧),已按 size 画幅处理好。返回 {bytes, url, ext('mp4'|'gif'), meta}。"""
         ...
 
@@ -200,12 +204,14 @@ class LocalGifProvider:
     """离线兜底:不调 AI,用现有运镜/轮播出 GIF(降级,非真 AI 视频)。无 key/未配置时用它。"""
     name = "local"
 
-    def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920") -> dict:
+    def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920",
+                       seconds: int | None = None) -> dict:
         from ..services.video import make_showcase
         w, h = _parse_size(size)
         aspect = "portrait" if w < h else ("landscape" if w > h else "square")
         style = "slideshow" if len(images) > 1 else "kenburns"
-        out = make_showcase(images[:2], style=style, aspect=aspect, fps=12, seconds=settings.video_seconds)
+        out = make_showcase(images[:2], style=style, aspect=aspect, fps=12,
+                            seconds=int(seconds or settings.video_seconds))
         return {
             "bytes": out["bytes"], "url": "", "ext": "gif",
             "meta": {"engine": "local-gif", "degraded": True,
@@ -223,7 +229,8 @@ class ZhipuCogVideoProvider:
         self.base = (settings.video_base_url or "https://open.bigmodel.cn/api/paas/v4").rstrip("/")
         self.model = settings.video_model or "cogvideox-3"
 
-    def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920") -> dict:
+    def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920",
+                       seconds: int | None = None) -> dict:
         import httpx  # 惰性
         if not images:
             raise RuntimeError("图生视频至少需要 1 张图")
@@ -239,9 +246,10 @@ class ZhipuCogVideoProvider:
             "fps": int(settings.video_fps or 30),
             "with_audio": bool(settings.video_with_audio),
         }
-        if settings.video_seconds:
-            # ⚠ duration 字段名/取值以智谱实测为准(拿到 key 跑通后微调);不支持就删这行。
-            body["duration"] = int(settings.video_seconds)
+        dur = int(seconds or settings.video_seconds or 0)
+        if dur:
+            # ⚠ duration 字段名/取值以智谱实测为准(拿到 key 跑通后微调);不支持就删这行。CogVideoX-3 支持 5/10。
+            body["duration"] = dur
         headers = {"Authorization": "Bearer " + settings.video_api_key, "Content-Type": "application/json"}
 
         with httpx.Client(timeout=httpx.Timeout(60.0)) as c:

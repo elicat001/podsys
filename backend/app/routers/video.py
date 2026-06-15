@@ -8,7 +8,7 @@ from PIL import Image
 from sqlalchemy.orm import Session
 
 from .. import storage
-from ..ai.video import ASPECT_RATIOS, CATEGORIES, LANGUAGES, RESOLUTION_SHORT
+from ..ai.video import ASPECT_RATIOS, CATEGORIES, DURATIONS, LANGUAGES, RESOLUTION_SHORT
 from ..auth import current_user
 from ..config import settings
 from ..db import get_db
@@ -29,9 +29,38 @@ def options(user: User = Depends(current_user)):
         "resolutions": list(RESOLUTION_SHORT),
         "languages": LANGUAGES,
         "categories": CATEGORIES,
-        "seconds": settings.video_seconds,
+        "durations": DURATIONS,
+        # smart_ready=true 表示配了作图网关 key,可用「智能识别」(看图自动写脚本)。
+        "smart_ready": bool(settings.openai_api_key),
         "ai_ready": settings.video_provider != "local" and bool(settings.video_api_key),
     }
+
+
+@router.post("/smart-describe")
+def smart_describe_endpoint(
+    file: UploadFile = File(...),
+    video_type: str = Form("开箱分享"),
+    seconds: int = Form(10),
+    language: str = Form("葡萄牙语"),
+    category: str = Form("通用"),
+    user: User = Depends(charge_for("title")),
+    db: Session = Depends(get_db),
+):
+    """智能识别:看商品图 → 自动生成贴合该商品的镜头脚本(填进「视频描述」)。同步,扣 title=1,失败退点。
+    复用作图的网关视觉模型(POD_OPENAI_API_KEY);无 key/失败 → 502 + 退点。"""
+    img = read_image_or_refund(file.file.read(), db, user, "title")
+    if seconds not in DURATIONS:
+        seconds = 10
+    try:
+        from ..services.video_describe import smart_describe
+        text = smart_describe(img, video_type=video_type, seconds=seconds, language=language, category=category)
+    except Exception as exc:  # noqa: BLE001
+        refund(db, user, "title")
+        raise HTTPException(status_code=502, detail="智能识别失败(作图 AI 服务未配置或调用失败)") from exc
+    if not text:
+        refund(db, user, "title")
+        raise HTTPException(status_code=502, detail="智能识别未返回内容,请重试")
+    return {"description": text[:2000]}
 
 
 @router.post("/ai-generate")
@@ -44,6 +73,7 @@ def ai_generate(
     scene_frame: bool = Form(False),  # 两步:先 gpt-image 生成场景首帧再生视频(缓解硬切;无 key 自动跳过)
     aspect: str = Form("portrait"),
     resolution: str = Form("1080p"),
+    seconds: int = Form(10),          # 视频时长(秒):5 / 10
     user: User = Depends(charge_for("video")),
     db: Session = Depends(get_db),
 ):
@@ -66,12 +96,14 @@ def ai_generate(
         resolution = "1080p"
     if category not in CATEGORIES:
         category = "通用"
+    if seconds not in DURATIONS:
+        seconds = 10
     return submit_celery(
         run_tool, db, user, kind="aivideo", tool_id="videogen", op="video",
         raw=img1, mask_raw=img2,
         params={"prompt": prompt[:2000], "language": language[:20],
                 "category": category, "scene_frame": bool(scene_frame),
-                "aspect": aspect, "resolution": resolution, "frames2": bool(img2)},
+                "aspect": aspect, "resolution": resolution, "seconds": seconds, "frames2": bool(img2)},
     )
 
 

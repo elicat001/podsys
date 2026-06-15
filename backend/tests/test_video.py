@@ -136,10 +136,36 @@ def test_video_options_ai_ready_false_offline(client, auth_headers):
     # 扩充后的画幅都在(竖/方/横)
     for a in ("portrait", "portrait34", "square", "landscape43", "landscape"):
         assert a in body["aspects"]
-    # 分辨率 + 语言 + 商品类目也返回
+    # 分辨率 + 语言 + 商品类目 + 时长也返回
     assert "1080p" in body["resolutions"] and "4k" in body["resolutions"]
     assert "葡萄牙语" in body["languages"]
     assert "通用" in body["categories"] and "马克杯" in body["categories"]
+    assert 5 in body["durations"] and 10 in body["durations"]
+    assert body["smart_ready"] is False   # 无 openai key → 智能识别不可用
+
+
+def test_smart_describe_no_key_502_refunds(client, auth_headers):
+    # 无 openai key(conftest 清空)→ 502 + 退点(title=1)
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/smart-describe", headers=auth_headers,
+                    data={"video_type": "开箱分享", "seconds": "5"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    assert r.status_code == 502
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0
+
+
+def test_smart_describe_ok_charges_title(client, auth_headers, monkeypatch):
+    # mock 视觉模型 → 返回脚本;扣 title=1
+    from app.services import video_describe
+    monkeypatch.setattr(video_describe, "smart_describe",
+                        lambda *a, **k: "【0-2秒】镜头推近这件商品,展示印花细节。【2-5秒】拿起转动展示。")
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/smart-describe", headers=auth_headers,
+                    data={"video_type": "开箱分享", "seconds": "5", "category": "马克杯"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    assert r.status_code == 200, r.text
+    assert "【0-2秒】" in r.json()["description"]
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 1
 
 
 def test_aspect_size_by_resolution():
@@ -173,7 +199,7 @@ def test_ai_generate_full_params(client, auth_headers):
     # 描述 + 语言 + 类目 + 场景首帧(无 key 自动跳过)+ 画幅/分辨率全走通(本地兜底 GIF)
     r = client.post("/api/video/ai-generate", headers=auth_headers,
                     data={"prompt": "达人出镜讲解卖点", "language": "英语",
-                          "category": "T恤", "scene_frame": "true",
+                          "category": "T恤", "scene_frame": "true", "seconds": "5",
                           "aspect": "portrait34", "resolution": "720p"},
                     files={"file": ("x.png", _png(), "image/png")})
     assert r.status_code == 200, r.text
