@@ -101,8 +101,16 @@ def _make_s3_client():
     return client
 
 
+# 视频类扩展名(含展示 GIF —— 本应用里 .gif 都是「展示视频」产物,无静态 gif 图)。
+_VIDEO_EXTS = {".mp4", ".gif", ".webm", ".mov", ".avi", ".mkv"}
+
+
 def object_key(job_id: str, name: str) -> str:
-    return f"outputs/{job_id}/{name}"
+    """对象存储 key:按媒体类型分顶层目录,便于在桶里分类浏览/管理。
+    视频(含展示 GIF)→ videos/{job_id}/{name};其余(图片/svg/pdf/psd/json 等设计文件)→ images/{job_id}/{name}。
+    类型仅由扩展名推断 → fetch/delete 只凭 (job_id, name) 即可还原 key,**不依赖数据库**(存储层保持零 DB 耦合)。"""
+    top = "videos" if os.path.splitext(name)[1].lower() in _VIDEO_EXTS else "images"
+    return f"{top}/{job_id}/{name}"
 
 
 def mirror_job(job_id: str) -> int:

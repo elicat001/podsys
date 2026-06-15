@@ -24,6 +24,14 @@ def _jid_from_url(url: str) -> str:
     return url.split("/")[2]
 
 
+# ── key 按媒体类型分顶层目录(images/ vs videos/),仅凭扩展名、不依赖 DB ──
+def test_object_key_splits_images_and_videos():
+    for name in ("print.png", "production.png", "vector.svg", "production.json", "design.png"):
+        assert storage.object_key("j1", name) == f"images/j1/{name}"
+    for name in ("video.mp4", "video.gif", "showcase.gif"):
+        assert storage.object_key("j1", name) == f"videos/j1/{name}"
+
+
 # ── local 默认:全部 no-op,守住基线 ──────────────────────────────────────
 def test_local_mode_noop(png, tmp_path):
     """不声明 s3_backend → 默认 local:对象层函数都是 no-op,不抛、不动网络。"""
@@ -45,8 +53,8 @@ def test_mirror_uploads_outputs_skips_thumb(s3_backend, png):
 
     n = storage.mirror_job(jid)
     assert n == 1
-    assert f"outputs/{jid}/print.png" in s3_backend.store
-    assert f"outputs/{jid}/.thumb_72_print.png" not in s3_backend.store
+    assert storage.object_key(jid, "print.png") in s3_backend.store
+    assert storage.object_key(jid, ".thumb_72_print.png") not in s3_backend.store
 
 
 def test_object_exists_and_delete(s3_backend, png):
@@ -66,7 +74,7 @@ def test_process_sync_finalizes_and_files_refetch(client, auth_headers, png, s3_
     assert r.status_code == 200, r.text
     jid = r.json()["job_id"]
     for name in ("print.png", "mockup.png", "production.png"):
-        assert f"outputs/{jid}/{name}" in s3_backend.store, f"{name} 应已镜像进对象存储"
+        assert storage.object_key(jid, name) in s3_backend.store, f"{name} 应已镜像进对象存储"
 
     # 模拟 retention 清掉本地缓存:删整个作业目录
     shutil.rmtree(settings.outputs_dir / jid)
@@ -92,7 +100,7 @@ def test_async_tool_finalizes(client, auth_headers, png, s3_backend, tool_result
     r = client.post("/api/print-extract", headers=auth_headers, data={"engine": "fast"}, files=_f(png))
     assert "image_url" in tool_result(auth_headers, r)
     jid = r.json()["job_id"]
-    assert any(k.startswith(f"outputs/{jid}/") for k in s3_backend.store), "异步工具产物应镜像进对象存储"
+    assert any(f"/{jid}/" in k for k in s3_backend.store), "异步工具产物应镜像进对象存储"
 
 
 # ── 收尾点覆盖:无 key 同步分支(/api/generate)→ 产物进桶 ──────────────────
@@ -100,7 +108,7 @@ def test_generate_nokey_finalizes(client, auth_headers, s3_backend):
     r = client.post("/api/generate", headers=auth_headers, data={"prompt": "galaxy cat", "size": "512x512"})
     assert r.status_code == 200, r.text
     jid = r.json()["job_id"]
-    assert f"outputs/{jid}/generated.png" in s3_backend.store
+    assert storage.object_key(jid, "generated.png") in s3_backend.store
 
 
 # ── 收尾点覆盖:素材上传(/api/assets)+ 删除同步删对象 ───────────────────
@@ -109,7 +117,7 @@ def test_asset_upload_finalizes_and_purge_deletes_object(client, auth_headers, p
     assert r.status_code == 200, r.text
     body = r.json()
     jid = _jid_from_url(body["url"])
-    key = f"outputs/{jid}/asset.png"
+    key = storage.object_key(jid, "asset.png")
     assert key in s3_backend.store
 
     # 永久删除 → 应同步删掉对象存储里的副本
