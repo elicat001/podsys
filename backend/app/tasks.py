@@ -147,7 +147,10 @@ def _work_edit(job_id: str, job: Job, db: Session) -> dict:
         mask.load()
     out = image_to_image(src, job.params["prompt"], mask=mask, size=job.params.get("size", "auto"))
     out.save(storage.output_path(job_id, "edited.png"), format="PNG")
-    return {"image_url": storage.output_url(job_id, "edited.png")}
+    url = storage.output_url(job_id, "edited.png")
+    if job.owner_id is not None:  # 入库 → 可进回收站/计配额/可清理(否则删任务后文件成幽灵)
+        save_as_asset(db, job.owner_id, out, "改图", url, source="generated")
+    return {"image_url": url}
 
 
 def _work_variants(job_id: str, job: Job, db: Session) -> dict:
@@ -214,10 +217,15 @@ def _work_gptedit(job_id: str, job: Job, db: Session) -> dict:
 
 def _work_vectorize(job_id: str, job: Job, db: Session) -> dict:
     from .services.vectorize import to_svg
+    src = _load_input(job_id)
     colors = int(job.params.get("colors", 8))
-    svg, rect_count = to_svg(_load_input(job_id), colors=colors, preset=job.params.get("preset", "auto"))
+    svg, rect_count = to_svg(src, colors=colors, preset=job.params.get("preset", "auto"))
     storage.output_path(job_id, "vector.svg").write_text(svg, encoding="utf-8")
-    return {"svg_url": storage.output_url(job_id, "vector.svg"), "rect_count": rect_count, "colors": colors}
+    url = storage.output_url(job_id, "vector.svg")
+    if job.owner_id is not None:  # 入库(用输入图做缩略/查重源,size 用 svg 字节)→ 可进回收站/可清理
+        save_as_asset(db, job.owner_id, src, "转矢量", url, source="generated",
+                      size_bytes=len(svg.encode("utf-8")))
+    return {"svg_url": url, "rect_count": rect_count, "colors": colors}
 
 
 def _work_mockup(job_id: str, job: Job, db: Session) -> dict:
@@ -444,8 +452,12 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     ext = out.get("ext", "mp4")
     name = f"video.{ext}"
     storage.output_path(job_id, name).write_bytes(out["bytes"])
+    url = storage.output_url(job_id, name)
     meta = out.get("meta", {})
-    return {"video_url": storage.output_url(job_id, name), "ext": ext,
+    if job.owner_id is not None:  # 入库(用首帧做查重源,size 用视频字节)→ 删任务时可进回收站,不再成幽灵
+        save_as_asset(db, job.owner_id, imgs[0], f"图生视频 {cat}", url, source="generated",
+                      size_bytes=len(out["bytes"]))
+    return {"video_url": url, "ext": ext,
             "cover": meta.get("cover", ""), "engine": meta.get("engine", ""),
             "degraded": bool(meta.get("degraded"))}
 

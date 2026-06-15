@@ -15,6 +15,7 @@ from ..db import get_db
 from ..models_db import User
 from ..services import video as video_svc
 from ..services.billing import charge_for, refund
+from ..services.library import save_as_asset
 from ..tasks import run_tool
 from ..web_utils import read_image_or_refund, submit_celery
 
@@ -134,9 +135,14 @@ def generate(
 
     job_id = storage.new_job_id()
     storage.output_path(job_id, "showcase.gif").write_bytes(result["bytes"])
+    url = storage.output_url(job_id, "showcase.gif")
+    # 入库 → 进我的空间/可删可恢复;镜像进对象存储(local no-op)。否则 GIF 既不计配额也成幽灵。
+    save_as_asset(db, user.id, images[0], "商品展示视频", url, source="generated",
+                  size_bytes=len(result["bytes"]))
+    storage.mirror_job(job_id)
     return {
         "job_id": job_id,
-        "video_url": storage.output_url(job_id, "showcase.gif"),
+        "video_url": url,
         "frames": result["frames"],
         "width": result["width"],
         "height": result["height"],

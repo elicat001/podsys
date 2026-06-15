@@ -108,6 +108,36 @@ def test_ai_generate_requires_auth(client):
     assert r.status_code == 401
 
 
+def test_video_delete_goes_to_trash(client, auth_headers):
+    """回归:图生视频应入库为素材;删任务 → 素材进回收站(此前视频没入库 → 删了成幽灵、不进回收站)。"""
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "镜头推近", "aspect": "portrait"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    assert r.status_code == 200, r.text
+    jid = r.json()["job_id"]
+    job = client.get(f"/api/jobs/{jid}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    vurl = job["result"]["video_url"]
+    # ① 已登记为素材(否则删任务时无 Asset 可移入回收站)
+    assets = client.get("/api/space/assets", headers=auth_headers).json()["items"]
+    assert any(a["url"] == vurl for a in assets), "视频应已登记为素材"
+    # ② 删任务 → 该视频素材进回收站(可恢复)
+    assert client.delete(f"/api/jobs/{jid}", headers=auth_headers).status_code == 200
+    trash = client.get("/api/space/trash", headers=auth_headers).json()["items"]
+    assert any(t["url"] == vurl for t in trash), "删任务后视频应出现在回收站"
+
+
+def test_local_gif_generate_lands_in_library(client, auth_headers):
+    """回归:本地 GIF(/api/video/generate)也应入库(此前漏 save_as_asset+mirror,GIF 成幽灵)。"""
+    r = client.post("/api/video/generate", headers=auth_headers,
+                    data={"style": "kenburns", "aspect": "square"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    assert r.status_code == 200, r.text
+    vurl = r.json()["video_url"]
+    assets = client.get("/api/space/assets", headers=auth_headers).json()["items"]
+    assert any(a["url"] == vurl for a in assets), "本地 GIF 应已登记为素材"
+
+
 def test_ai_generate_bad_image_refunds(client, auth_headers):
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     r = client.post("/api/video/ai-generate", headers=auth_headers,

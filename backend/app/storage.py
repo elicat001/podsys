@@ -89,8 +89,13 @@ def _make_s3_client():
             aws_access_key_id=settings.s3_access_key or None,
             aws_secret_access_key=settings.s3_secret_key or None,
             region_name=settings.s3_region or None,
+            # 显式超时:MinIO 卡住/挂掉时**快速失败 + 抛异常**(由 mirror/fetch 的 try 兜成 warning),
+            # 绝不无限期挂住作业线程(对齐"别像忘关 IO 那样把服务卡死"的教训)。MinIO 在 127.0.0.1,
+            # 正常毫秒级;connect 5s 足够探活,read 120s 容得下大文件(视频~十几 MB)上传/下载。
             config=Config(signature_version="s3v4",
-                          s3={"addressing_style": settings.s3_addressing or "path"}),
+                          s3={"addressing_style": settings.s3_addressing or "path"},
+                          connect_timeout=5, read_timeout=120,
+                          retries={"max_attempts": 2, "mode": "standard"}),
         )
         _S3_CLIENT_CACHE[key] = client
     return client
