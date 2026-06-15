@@ -194,7 +194,7 @@ onMounted(async () => {
           <div class="clabel mt">视频类型</div>
           <button class="smart" :class="{ on: selType === 'smart' }" :disabled="!seconds || smartLoading" @click="smartDetect">
             <span class="si">✨</span>
-            <span class="st"><b>{{ smartLoading ? '识别中…' : '智能识别' }}</b><i>看图自动写贴合的镜头脚本</i></span>
+            <span class="st"><b>{{ smartLoading ? '识别中…' : '智能识别 · 扣 1 点' }}</b><i>看图自动写贴合的镜头脚本</i></span>
           </button>
           <div class="types" :class="{ locked: !seconds }">
             <button v-for="t in TYPES" :key="t.id" class="type" :class="{ on: selType === t.id }" :disabled="!seconds" @click="pickType(t)">
@@ -284,9 +284,10 @@ onMounted(async () => {
 .slot .up { font-size: 20px; }
 .slot .x { position: absolute; top: 5px; right: 6px; width: 21px; height: 21px; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; display: grid; place-items: center; font-size: 15px; }
 
-.smart { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; margin-bottom: 8px; border: 1px solid var(--brand); border-radius: 11px; background: var(--panel2); cursor: pointer; text-align: left; }
+.smart { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; margin-bottom: 8px; border: 1px solid var(--line2); border-radius: 11px; background: var(--bg2); cursor: pointer; text-align: left; }
+.smart:hover:not(:disabled) { border-color: var(--brand); }
 .smart:disabled { opacity: .45; cursor: not-allowed; }
-.smart.on { background: rgba(255,138,61,.16); }
+.smart.on { border-color: var(--brand); background: var(--panel2); }
 .smart .si { font-size: 18px; }
 .smart .st { display: flex; flex-direction: column; }
 .smart .st b { font-size: 13.5px; color: var(--brand2); font-weight: 600; }
