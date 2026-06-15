@@ -96,8 +96,10 @@ fi
 echo "    health=200 ✓  服务=$(systemctl is-active minio.service)"
 
 echo "==> [6/6] 建私有桶 $BUCKET"
-# shellcheck disable=SC1090
-source "$ENV_FILE"
+# 注意:不能 `source` env 文件——MINIO_OPTS 行含空格未加引号,bash 会把它当命令执行报错
+# (systemd 的 EnvironmentFile 解析没这问题,所以服务本身正常)。这里只精确取两个凭据。
+MINIO_ROOT_USER=$(grep -E '^MINIO_ROOT_USER=' "$ENV_FILE" | cut -d= -f2-)
+MINIO_ROOT_PASSWORD=$(grep -E '^MINIO_ROOT_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
 "$BIN_MC" alias set "$ALIAS" "http://$API_ADDR" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
 "$BIN_MC" mb --ignore-existing "$ALIAS/$BUCKET" >/dev/null
 "$BIN_MC" anonymous set none "$ALIAS/$BUCKET" >/dev/null   # 强制私有,杜绝匿名读
