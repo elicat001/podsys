@@ -16,11 +16,9 @@ const routes = [
       // 找图
       { path: 'find', redirect: '/app/find/collect' },
       { path: 'find/collect', component: () => import('../views/Collect.vue') },
-      // 作图(画廊 + 工具运行 + 工作流 + DIY)
+      // 作图(画廊 + 工具运行)
       { path: 'design', component: () => import('../views/DesignHome.vue') },
       { path: 'design/tool/:id', component: () => import('../views/ToolRunner.vue') },
-      { path: 'workflow', component: () => import('../views/WorkflowEditor.vue') },
-      { path: 'editor', component: () => import('../views/Editor.vue') },
       // 视频
       { path: 'video', redirect: '/app/video/generate' },
       { path: 'video/generate', component: () => import('../views/VideoGenerate.vue') },

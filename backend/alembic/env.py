@@ -19,7 +19,6 @@ from app import (  # noqa: E402,F401
     models_shop,
     models_team,
     models_template,
-    models_workflow,
 )
 
 config = context.config

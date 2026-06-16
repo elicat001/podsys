@@ -6,7 +6,7 @@ const CAT_ICON = {
   印花提取: '✂️', 印花设计: '🎨', 图案处理: '🖼️', 侵权检测: '🛡️', 套图标题: '👕', 履约: '🏭',
 }
 
-// 顶部 6 大模块。active 判定:路径以 base 开头(design 额外含 workflow/editor)。
+// 顶部 6 大模块。active 判定:路径以 base 开头。
 export const MODULES = [
   { id: 'home', name: '首页', base: '/app/home' },
   { id: 'find', name: '找图', base: '/app/find' },
@@ -23,10 +23,8 @@ export const SIDEBARS = {
     { icon: '🌐', label: '采集', to: '/app/find/collect' },
   ],
   design: [
-    { icon: '🔗', label: '工作流', to: '/app/workflow', hl: true },
     { icon: '🧰', label: '全部工具', to: '/app/design' },
     ...TOOL_CATS.map((c) => ({ icon: CAT_ICON[c] || '•', label: c, to: { path: '/app/design', query: { cat: c } } })),
-    { icon: '🖌️', label: 'DIY 编辑器', to: '/app/editor' },
   ],
   video: [
     { icon: '🎬', label: '图生视频', to: '/app/video/generate' },
@@ -40,9 +38,8 @@ export const SIDEBARS = {
   space: [{ icon: '🗂️', label: '我的空间', to: '/app/space' }],
 }
 
-// 由当前路径判定属于哪个大模块(workflow/editor 归 design)。
+// 由当前路径判定属于哪个大模块。
 export function moduleOf(path) {
-  if (path.startsWith('/app/workflow') || path.startsWith('/app/editor')) return 'design'
   const m = MODULES.find((mod) => path.startsWith(mod.base))
   return m ? m.id : 'design'
 }

@@ -259,16 +259,3 @@ def test_ai_generate_scene_frame_with_gptimage(client, auth_headers, monkeypatch
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
     assert called["edit"] == 1            # 场景首帧确实调了 gpt-image edit
-
-
-# ---------- workflow step ----------
-def test_video_workflow_step(client, auth_headers):
-    r = client.post("/api/workflows/run-custom", headers=auth_headers,
-                    data={"steps": "extract,mockup,video", "params": "{}"},
-                    files={"file": ("x.png", _png(), "image/png")})
-    assert r.status_code == 200, r.text
-    jid = r.json()["job_id"]
-    j = client.get(f"/api/jobs/{jid}", headers=auth_headers).json()
-    assert j["status"] == "done", j
-    assert any(u.endswith("showcase.gif") for u in j["result"]["outputs"])
-    assert j["result"]["meta"].get("video")

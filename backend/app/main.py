@@ -30,7 +30,6 @@ from .routers import jobs as jobs_router
 from .routers import matting as matting_router
 from .routers import me as me_router
 from .routers import mockup as mockup_router
-from .routers import my_workflows as my_workflows_router
 from .routers import print_extract as print_extract_router
 from .routers import product_admin as product_admin_router
 from .routers import products as products_router
@@ -42,8 +41,6 @@ from .routers import templates as templates_router
 from .routers import vectorize as vectorize_router
 from .routers import video as video_router
 from .routers import video_cases as video_cases_router
-from .routers import workflow as workflow_router
-from .routers import workflow_custom as workflow_custom_router
 from .services.billing import charge_for, refund
 from .services.collectors import detect_platform, upgrade_to_hires
 from .services.export import export_production
@@ -84,7 +81,6 @@ app.include_router(assets_router.router)
 app.include_router(products_router.router)
 app.include_router(jobs_router.router)
 app.include_router(billing_router.router)
-app.include_router(workflow_router.router)
 app.include_router(design_tools_router.router)
 app.include_router(image_tools_router.router)
 app.include_router(studio_tools_router.router)
@@ -92,8 +88,6 @@ app.include_router(ip_guard_router.router)
 app.include_router(vectorize_router.router)
 app.include_router(collect_tasks_router.router)
 app.include_router(shops_router.router)
-app.include_router(workflow_custom_router.router)
-app.include_router(my_workflows_router.router)
 app.include_router(me_router.router)
 app.include_router(video_router.router)
 app.include_router(product_admin_router.router)

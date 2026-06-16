@@ -46,7 +46,6 @@ def init_db() -> None:
         models_shop,  # noqa: F401  (店铺表)
         models_team,  # noqa: F401  (团队资源:套图模板)
         models_template,  # noqa: F401  (刊登/导出模板表)
-        models_workflow,  # noqa: F401  (保存的自定义工作流表)
     )
     Base.metadata.create_all(engine)
 
