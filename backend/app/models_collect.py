@@ -20,12 +20,13 @@ def _now() -> datetime:
 class CollectionTask(Base):
     """一次采集动作产生的任务,聚合若干采集图。"""
     __tablename__ = "collection_tasks"
-    id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    source: Mapped[str] = mapped_column(String(64), default="plugin")
-    status: Mapped[str] = mapped_column(String(16), default="collected")
-    count: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    __table_args__ = ({"comment": "采集任务表:一次采集动作(聚合若干采集图)"},)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, comment="采集任务ID(随机hex)")
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, comment="归属用户ID")
+    source: Mapped[str] = mapped_column(String(64), default="plugin", comment="采集来源(默认 plugin 浏览器插件)")
+    status: Mapped[str] = mapped_column(String(16), default="collected", comment="状态:collected已采集等")
+    count: Mapped[int] = mapped_column(Integer, default=0, comment="本次采集图片数")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, comment="创建时间(UTC)")
 
     images: Mapped[list[CollectedImage]] = relationship(
         back_populates="task", cascade="all, delete-orphan"
@@ -37,22 +38,26 @@ class CollectedImage(Base):
     (图 + 标题/价格/评分/来源链接 + 同步后的 asset 直链)。"""
     __tablename__ = "collected_images"
     # 采集箱/找图都是 join 后 `WHERE task_id 属本人 AND synced=?` → 复合索引
-    __table_args__ = (Index("ix_collected_task_synced", "task_id", "synced"),)
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    task_id: Mapped[str] = mapped_column(
-        ForeignKey("collection_tasks.id"), index=True
+    __table_args__ = (
+        Index("ix_collected_task_synced", "task_id", "synced"),
+        {"comment": "采集图表:暂存(synced=0)+ 同步入库后的富记录(图+标题/价格/评分/来源链接)"},
     )
-    url: Mapped[str] = mapped_column(String(1024))
-    hires_url: Mapped[str] = mapped_column(String(1024))
-    platform: Mapped[str] = mapped_column(String(32))
-    title: Mapped[str] = mapped_column(String(255), default="")
-    selected: Mapped[bool] = mapped_column(Boolean, default=False)
-    # batch13:采集→选择→同步。暂存只存元数据 + URL(零存储),同步时服务端取图入库。
-    price: Mapped[str] = mapped_column(String(32), default="")
-    rating: Mapped[str] = mapped_column(String(16), default="")
-    source_url: Mapped[str] = mapped_column(String(1024), default="")
-    synced: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    synced_asset_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    asset_url: Mapped[str] = mapped_column(String(1024), default="")
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="采集图ID(主键)")
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("collection_tasks.id"), index=True, comment="所属采集任务ID(FK collection_tasks.id)"
+    )
+    url: Mapped[str] = mapped_column(String(1024), comment="原图URL(采集到的图片地址)")
+    hires_url: Mapped[str] = mapped_column(String(1024), comment="高清图URL(若有)")
+    platform: Mapped[str] = mapped_column(String(32), comment="来源平台:temu/amazon 等")
+    title: Mapped[str] = mapped_column(String(255), default="", comment="商品标题")
+    selected: Mapped[bool] = mapped_column(Boolean, default=False, comment="工作台是否勾选")
+    price: Mapped[str] = mapped_column(String(32), default="", comment="商品价格(文本)")
+    rating: Mapped[str] = mapped_column(String(16), default="", comment="商品评分(文本)")
+    source_url: Mapped[str] = mapped_column(String(1024), default="", comment="商品详情页URL")
+    synced: Mapped[bool] = mapped_column(Boolean, default=False, index=True,
+                                         comment="是否已同步入库(true=已取图存为 Asset 进找图库)")
+    synced_asset_id: Mapped[int | None] = mapped_column(Integer, nullable=True,
+                                                        comment="同步后对应的素材ID(Asset.id)")
+    asset_url: Mapped[str] = mapped_column(String(1024), default="", comment="同步后素材的对外直链(/files/...)")
 
     task: Mapped[CollectionTask] = relationship(back_populates="images")

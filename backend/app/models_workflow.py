@@ -16,9 +16,10 @@ def _now() -> datetime:
 class SavedWorkflow(Base):
     """用户保存的自定义工作流:有序 step 列表 + 参数。"""
     __tablename__ = "saved_workflows"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    name: Mapped[str] = mapped_column(String(255))
-    steps: Mapped[list] = mapped_column(JSON, default=list)   # list[str]
-    params: Mapped[dict] = mapped_column(JSON, default=dict)  # dict
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    __table_args__ = ({"comment": "自定义工作流表:用户保存的有序 step 列表 + 参数"},)
+    id: Mapped[int] = mapped_column(primary_key=True, comment="工作流ID(主键)")
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, comment="归属用户ID")
+    name: Mapped[str] = mapped_column(String(255), comment="工作流名")
+    steps: Mapped[list] = mapped_column(JSON, default=list, comment="有序步骤列表(JSON 字符串数组)")
+    params: Mapped[dict] = mapped_column(JSON, default=dict, comment="步骤参数(JSON)")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, comment="创建时间(UTC)")
