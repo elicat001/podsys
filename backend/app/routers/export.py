@@ -20,6 +20,7 @@ from ..web_utils import read_image_or_refund, submit_celery
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 
+# 底色:transparent(默认)= png/tiff/psd 透明、jpg/pdf 兜底白;white/black = 所有格式压平到该底色。
 _BG = {"white": (255, 255, 255), "black": (0, 0, 0)}
 
 
@@ -42,7 +43,7 @@ async def production(
     height_cm: float = Form(40.0),
     dpi: int = Form(300),
     formats: str = Form("png,jpg,tiff,pdf,psd"),
-    bg: str = Form("white"),
+    bg: str = Form("transparent"),
     bleed_mm: float = Form(0.0),
     safe_mm: float = Form(0.0),
     scale: str = Form("contain"),
@@ -84,5 +85,6 @@ async def production(
     return submit_celery(
         run_tool, db, user, kind="production", tool_id="production", op="asset", raw=raw,
         params={"width_cm": width_cm, "height_cm": height_cm, "dpi": dpi, "formats": fmts,
-                "bg": list(_BG.get(bg, (255, 255, 255))), "bleed_mm": bleed_mm, "safe_mm": safe_mm,
+                "bg": list(_BG.get(bg, (255, 255, 255))), "transparent": bg == "transparent",
+                "bleed_mm": bleed_mm, "safe_mm": safe_mm,
                 "scale": scale, "anchor": anchor, "cmyk": cmyk, "proof": proof})

@@ -21,6 +21,8 @@ ANCHORS = ("center", "top", "bottom")
 
 # 支持的导出格式。psd=Photoshop 源文件(自写编码器,保留透明,见 services/psd.py)。
 SUPPORTED_FORMATS: tuple[str, ...] = ("png", "jpg", "tiff", "pdf", "psd")
+# 无透明通道的格式:透明模式下跳过(不偷偷填白底),只有选白/黑底时才产出。
+_NO_ALPHA_FORMATS: frozenset[str] = frozenset({"jpg", "pdf"})
 # 单张画布像素上限(防超大尺寸×高 DPI 打爆内存;生产稿本就高清,放宽到 1.2 亿)。
 MAX_PX = 120_000_000
 
@@ -131,16 +133,20 @@ def _compose(
 
 
 def _save_one(
-    canvas: Image.Image, flat: Image.Image, fmt: str, path: Path, dpi: int, cmyk: bool
+    canvas: Image.Image, flat: Image.Image, fmt: str, path: Path, dpi: int, cmyk: bool,
+    transparent: bool = True,
 ) -> None:
-    """按格式保存单个生产文件。canvas=透明 RGBA;flat=已压平 RGB(JPG/PDF/CMYK 用)。
+    """按格式保存单个生产文件。canvas=透明 RGBA;flat=已压平到底色的 RGB。
 
-    cmyk=True 时对 jpg/tiff/pdf 做【近似】CMYK 转换(无 ICC);png 不支持 CMYK,始终 RGBA。
+    transparent=True:支持透明的格式(png/tiff/psd)输出透明底(用 canvas);
+    transparent=False:这些格式也压平到底色(用 flat),整张不透明 —— 例如做"黑杯/白杯"满底图案。
+    jpg/pdf 物理上无透明通道,永远用 flat(透明模式下 flat 已兜底为白底)。
+    cmyk=True 时对 jpg/tiff/pdf 做【近似】CMYK 转换(无 ICC,隐含不透明)。
     """
     if fmt == "png":
-        canvas.save(path, format="PNG", dpi=(dpi, dpi))
+        (canvas if transparent else flat).save(path, format="PNG", dpi=(dpi, dpi))
     elif fmt == "tiff":
-        img = flat.convert("CMYK") if cmyk else canvas
+        img = flat.convert("CMYK") if cmyk else (canvas if transparent else flat)
         img.save(path, format="TIFF", dpi=(dpi, dpi), compression="tiff_lzw")
     elif fmt == "jpg":
         img = flat.convert("CMYK") if cmyk else flat
@@ -149,9 +155,9 @@ def _save_one(
         img = flat.convert("CMYK") if cmyk else flat
         img.save(path, format="PDF", resolution=float(dpi))
     elif fmt == "psd":
-        # Photoshop 源文件:保留透明(RGBA);cmyk 不适用(同 png,始终 RGB/RGBA)。自写编码器。
+        # Photoshop 源文件:透明时保留 RGBA;指定底色时压平到底色(仍以 RGBA 编码,alpha 全 255)。自写编码器。
         from .psd import encode_psd
-        path.write_bytes(encode_psd(canvas, dpi))
+        path.write_bytes(encode_psd(canvas if transparent else flat.convert("RGBA"), dpi))
     else:  # pragma: no cover - 上游已过滤
         raise ValueError(f"unsupported format: {fmt}")
 
@@ -223,6 +229,7 @@ def export_production_multi(
     dpi: int = 300,
     formats: tuple[str, ...] = SUPPORTED_FORMATS,
     bg: tuple[int, int, int] = (255, 255, 255),
+    transparent: bool = True,
     bleed_mm: float = 0.0,
     safe_mm: float = 0.0,
     scale: str = "contain",
@@ -234,6 +241,8 @@ def export_production_multi(
 
     几何:成品净尺寸=width×height(裁切区);四周加 bleed(出血)→ 全幅画布;安全区=裁切区内缩 safe。
     生产文件输出为【全幅(含出血)】尺寸。formats/scale/anchor 须合法(上游校验)。
+    transparent=True(默认):png/tiff/psd 输出透明底(印花常态,只印图案、露杯子本色),
+    jpg/pdf 无透明通道则用 bg(白)兜底;transparent=False:所有格式都压平到 bg(白/黑等满底)。
     cmyk 仅对 jpg/tiff/pdf 生效(近似,无 ICC)。proof=True 额外出一张打样核对图。
     超过 MAX_PX 抛 ValueError(防 OOM,路由层转 400)。
     """
@@ -275,14 +284,19 @@ def export_production_multi(
         "scale": scale,
         "anchor": anchor,
         "color_mode": "CMYK(近似·无ICC)" if cmyk else "RGB",
+        "background": "transparent" if transparent else ("black" if tuple(bg) == (0, 0, 0) else "white"),
     }
 
     files: dict[str, str] = {}
     for fmt in formats:
         if fmt not in SUPPORTED_FORMATS:
             continue
+        # 透明模式跳过无透明通道的格式(jpg/pdf):它们做不出透明,与其偷偷填白底不如不出,
+        # 让「白底/黑底」选项才产出 jpg/pdf。要透明就用 png/tiff/psd。
+        if transparent and fmt in _NO_ALPHA_FORMATS:
+            continue
         fname = f"{name_base}.{fmt}"
-        _save_one(canvas, flat, fmt, out_dir / fname, dpi, cmyk)
+        _save_one(canvas, flat, fmt, out_dir / fname, dpi, cmyk, transparent)
         files[fmt] = fname
     meta["formats"] = list(files.keys())
 

@@ -39,10 +39,10 @@ def test_export_unauth_401(client, png):
     assert r.status_code == 401
 
 
-# ---- 正常路径:默认 30×40@300,四格式齐全 --------------------------------
+# ---- 正常路径:白底 30×40@300,五格式齐全 --------------------------------
 def test_export_default_all_formats(client, auth_headers, png, tool_result):
     before = _balance(client, auth_headers)
-    r = _post(client, auth_headers, png)
+    r = _post(client, auth_headers, png, bg="white")  # 白底才出全部5格式(默认透明会跳过 jpg/pdf)
     body = tool_result(auth_headers, r)
     # 五格式都在(含 PSD),URL 指向 /files 且可下载
     assert set(body["files"].keys()) == {"png", "jpg", "tiff", "pdf", "psd"}
@@ -66,7 +66,8 @@ def test_export_default_all_formats(client, auth_headers, png, tool_result):
 
 # ---- 自定义尺寸 / DPI / 格式子集 -----------------------------------------
 def test_export_custom_size_dpi_subset(client, auth_headers, png, tool_result):
-    r = _post(client, auth_headers, png, width_cm="10", height_cm="10", dpi="150", formats="png,jpg")
+    r = _post(client, auth_headers, png, width_cm="10", height_cm="10", dpi="150",
+              formats="png,jpg", bg="white")  # 含 jpg → 需白底(默认透明会跳过 jpg)
     body = tool_result(auth_headers, r)
     assert set(body["files"].keys()) == {"png", "jpg"}
     # 10cm @ 150DPI = round(10/2.54*150) = 591
@@ -140,7 +141,7 @@ def test_export_scale_anchor_modes(client, auth_headers, png, tool_result):
 # ---- CMYK:jpg 输出确为 CMYK 模式;png 仍 RGB ----------------------------
 def test_export_cmyk_jpg(client, auth_headers, png, tool_result):
     r = _post(client, auth_headers, png, formats="jpg,png", width_cm="10", height_cm="10",
-              dpi="150", cmyk="true")
+              dpi="150", cmyk="true", bg="white")  # jpg 需底色(默认透明会跳过 jpg)
     body = tool_result(auth_headers, r)
     assert "CMYK" in body["meta"]["color_mode"]
     jpg = client.get(body["files"]["jpg"])
@@ -148,6 +149,31 @@ def test_export_cmyk_jpg(client, auth_headers, png, tool_result):
     # png 不支持 CMYK,仍是 RGBA/RGB(非 CMYK)
     pn = client.get(body["files"]["png"])
     assert Image.open(io.BytesIO(pn.content)).mode != "CMYK"
+
+
+# ---- 底色:透明(默认,跳过无透明通道的 jpg/pdf)/ 白·黑底(所有格式压平)-------
+def test_export_background_modes_all_formats(client, auth_headers, png, tool_result):
+    """透明默认:只出能真透明的 png/tiff/psd、跳过 jpg/pdf;白/黑底:所有格式压平到底色。
+    用非正方画布(10×20)逼出透明 padding 检验角落。"""
+    # ① 透明(默认):请求全部5格式 → 只产出 png/tiff/psd,跳过 jpg/pdf;角落 padding 透明
+    r = _post(client, auth_headers, png, formats="png,jpg,tiff,pdf,psd",
+              width_cm="10", height_cm="20", dpi="150")
+    body = tool_result(auth_headers, r)
+    assert body["meta"]["background"] == "transparent"
+    assert set(body["files"].keys()) == {"png", "tiff", "psd"}, "透明应跳过 jpg/pdf"
+    for fmt in ("png", "tiff"):
+        im = Image.open(io.BytesIO(client.get(body["files"][fmt]).content)); im.load()
+        assert im.mode == "RGBA" and im.getpixel((0, 0))[3] == 0, f"{fmt} 角落 padding 应透明"
+
+    # ② 黑底:全部5格式都产出,且 png/tiff 压平成不透明黑底(此前这俩格式忽略底色)
+    r = _post(client, auth_headers, png, formats="png,jpg,tiff,pdf,psd",
+              width_cm="10", height_cm="20", dpi="150", bg="black")
+    body = tool_result(auth_headers, r)
+    assert body["meta"]["background"] == "black"
+    assert set(body["files"].keys()) == {"png", "jpg", "tiff", "pdf", "psd"}, "白/黑底应出全部格式"
+    for fmt in ("png", "tiff"):
+        im = Image.open(io.BytesIO(client.get(body["files"][fmt]).content)); im.load()
+        assert im.convert("RGBA").getpixel((0, 0)) == (0, 0, 0, 255), f"{fmt} 角落应不透明黑底"
 
 
 # ---- 打样核对图 -----------------------------------------------------------

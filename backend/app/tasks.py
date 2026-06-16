@@ -308,7 +308,7 @@ def _work_production(job_id: str, job: Job, db: Session) -> dict:
     result = export.export_production_multi(
         _load_input(job_id), out_dir, name_base="production",
         width_cm=p["width_cm"], height_cm=p["height_cm"], dpi=p["dpi"],
-        formats=tuple(p["formats"]), bg=tuple(p["bg"]),
+        formats=tuple(p["formats"]), bg=tuple(p["bg"]), transparent=p.get("transparent", True),
         bleed_mm=p["bleed_mm"], safe_mm=p["safe_mm"], scale=p["scale"], anchor=p["anchor"],
         cmyk=p["cmyk"], proof=p["proof"])
     files = {fmt: storage.output_url(job_id, name) for fmt, name in result["files"].items()}
