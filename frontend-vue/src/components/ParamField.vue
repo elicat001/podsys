@@ -60,8 +60,10 @@ const opts = computed(() =>
     <!-- 成品尺寸:预设 + 自定义 -->
     <div v-else-if="field.type === 'sizePreset'" class="size-preset">
       <el-select v-model="val.preset" style="width: 100%">
-        <el-option value="30x40" label="30 × 40 cm(默认)" />
-        <el-option value="21x29.7" label="A4(21 × 29.7 cm)" />
+        <el-option value="30x40" label="30 × 40 cm (默认)" />
+        <el-option value="28.2x20.7" label="28.2 × 20.7 cm (30杯)" />
+        <el-option value="31.5x23.7" label="31.5 × 23.7 cm (40杯)" />
+        <el-option value="21x29.7" label="21 × 29.7 cm (A4)" />
         <el-option value="custom" label="自定义" />
       </el-select>
       <div v-if="val.preset === 'custom'" class="size-custom">
