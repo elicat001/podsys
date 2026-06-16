@@ -28,7 +28,7 @@
 - 鉴权:JWT(PyJWT)+ pbkdf2 密码哈希;计费:点数(credits)模式
 
 **⚠️ 别低估范围**:核心是上面那条 5 步主线,但项目其实已铺开 **~26 个 router** 的完整能力矩阵(对标灵图 ipoddy 的"采集→作图→上架→制图"):
-采集(collectors/collect_tasks/Chrome 插件规划)、抠图、印花提取、放大/提质、套图(+批量替换)、生产图导出、文生图/图生图/改图、作图工具(裂变/风格转绘/梗图)、去水印、标题提取、侵权检测、转矢量、店铺/商品/上架、可视化工作流编辑器、我的空间(配额/回收站)、图生视频(智谱 CogVideoX-3,可插拔,有声,无 key 兜底 GIF)、视频案例库、模板。
+采集(collectors/collect_tasks/Chrome 插件规划)、抠图、印花提取、放大/提质、套图(+批量替换)、生产图导出、文生图/图生图/改图、作图工具(裂变/风格转绘/梗图)、去水印、标题提取、侵权检测、转矢量、店铺/商品/上架、我的空间(配额/回收站)、图生视频(智谱 CogVideoX-3,可插拔,有声,无 key 兜底 GIF)、视频案例库、模板。
 **广度够、深度浅**:多数功能停在"架构完整 + MVP 实现 / 留接口";AI 类功能无 key 时是占位。改动前先 `git log --oneline` + 翻 `routers/` 了解已有什么,别重复造。
 
 **🟦 AI 厂商未定(重要)**:本文档示例多用 OpenAI/gpt-image,但公司大概率选**国产**视觉/文生图厂商(通义万相 / 豆包即梦 / 百度 / 智谱等)。**要换厂商,只在 `app/ai/` 那层加一个 Provider 实现**(照 `matting.py` 的策略模式),**严禁在 `services/`、`routers/` 里写死某家 API**。
@@ -43,14 +43,14 @@ backend/app/
 ├── storage.py         # 本地文件存储,对外 /files/{job_id}/{name}
 ├── auth.py            # JWT + pbkdf2;current_user 依赖
 ├── models_db.py       # 核心表:User / Asset / Job / Product / Listing
-├── models_*.py        # 其它表:collect / shop / workflow / template(各自独立文件)
+├── models_*.py        # 其它表:collect / shop / template(各自独立文件)
 ├── ai/                # 可插拔 AI Provider(策略模式)
 │   ├── base.py        # Protocol 接口:MattingProvider / UpscaleProvider
 │   ├── matting.py     # 抠图实现:pillow(默认) / rembg / api / gptimage
 │   ├── upscale.py     # 放大实现:pillow(Lanczos,默认) / realesrgan(Real-ESRGAN SRVGG onnx,真提质)
 │   └── openai_image.py# OpenAI gpt-image-1 客户端
 ├── routers/           # 接口层(薄,只做参数校验 + 调 service)
-├── services/          # 业务逻辑层(extract/mockup/export/workflow/billing/...)
+├── services/          # 业务逻辑层(extract/mockup/export/billing/...)
 └── data_seed/         # 演示种子数据(JSON)
 
 backend/tests/         # pytest 测试(conftest.py 提供 client / auth_headers / png fixtures)
@@ -133,9 +133,7 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 
 7. **可插拔 Provider**:涉及抠图/放大,只调 `get_matting_provider()` / `get_upscale_provider()`,**不要在业务层硬编码具体实现**。切换实现改 `.env` 配置即可。
 
-8. **工作流 step**:新作图工具若要进工作流编排,在 `services/workflow.py` 注册成 step(`@step("name")` + 加 `STEP_META`),即可被自定义工作流复用。
-
-9. **新增第三方库必须登记依赖(AI 自动执行,勿遗漏)**:只要代码里 `import` 了一个**不在标准库、也不在现有 `requirements.txt`** 里的新包,**必须同步把它(带版本约束)写进 `backend/requirements.txt` 并提醒用户提交**。否则会出现"本地能跑、远端/别人 clone 后缺包跑不起来"。
+8. **新增第三方库必须登记依赖(AI 自动执行,勿遗漏)**:只要代码里 `import` 了一个**不在标准库、也不在现有 `requirements.txt`** 里的新包,**必须同步把它(带版本约束)写进 `backend/requirements.txt` 并提醒用户提交**。否则会出现"本地能跑、远端/别人 clone 后缺包跑不起来"。
    - 判断标准:能 `pip install xxx` 的就是第三方库,需登记;Python 自带的(如 `io`/`os`/`json`/`pathlib`/`hashlib`)不用。
    - 重依赖(如 `rembg`/`onnxruntime`)若是可选功能,按现有风格在 `requirements.txt` 里用注释列出(`# 可选 ...`)并保持惰性 import,不强制安装。
    - 每次交付前自检:`git diff` 有没有新 import 却没改 `requirements.txt`。
