@@ -57,6 +57,31 @@ def test_quota_counts_bytes_and_categories(client, auth_headers, png):
     assert q["trash"]["count"] == 0
 
 
+def test_library_order_and_date_filter(client, auth_headers, png):
+    """素材库:按时间排序(最新/最早)+ 日期范围筛选。"""
+    from datetime import UTC, datetime, timedelta
+    H = auth_headers
+    for s in (1, 2, 3):
+        _add_asset(client, H, png=png, shape="noise", source="upload", seed=s)
+
+    # 排序:最新在前 → created_at 非递增;最早在前 → 非递减(同秒并列也成立)
+    new = client.get("/api/space/assets", headers=H, params={"order": "new"}).json()["items"]
+    t_new = [i["created_at"] for i in new]
+    assert t_new == sorted(t_new, reverse=True)
+    old = client.get("/api/space/assets", headers=H, params={"order": "old"}).json()["items"]
+    t_old = [i["created_at"] for i in old]
+    assert t_old == sorted(t_old)
+
+    today = datetime.now(UTC).date()
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    # date_from=今天 → 含;date_from=明天 → 空;date_to=今天 → 含(含当天)
+    assert client.get("/api/space/assets", headers=H, params={"date_from": today.isoformat()}).json()["total"] >= 3
+    assert client.get("/api/space/assets", headers=H, params={"date_from": tomorrow}).json()["total"] == 0
+    assert client.get("/api/space/assets", headers=H, params={"date_to": today.isoformat()}).json()["total"] >= 3
+    # 非法日期串 → 跳过该过滤(不报错)
+    assert client.get("/api/space/assets", headers=H, params={"date_from": "bad"}).json()["total"] >= 3
+
+
 def test_trash_restore_purge_flow(client, auth_headers, png):
     a1 = _add_asset(client, auth_headers, png=png, shape="circle", source="upload", seed=11)
     a2 = _add_asset(client, auth_headers, png=png, shape="rect", source="upload", seed=12)

@@ -215,16 +215,28 @@ const libSel = ref([])
 const libSource = ref('')
 const libRisk = ref('')
 const libQuery = ref('')
+const libOrder = ref('new')   // new=最新在前 | old=最早在前
+const libFrom = ref('')       // 起始日期 YYYY-MM-DD
+const libTo = ref('')         // 结束日期 YYYY-MM-DD(含当天)
 const libPage = ref(0)
 const libPages = computed(() => Math.max(1, Math.ceil(libTotal.value / LIB_PAGE)))
 const libAllSel = computed(() => libAssets.value.length > 0 && libAssets.value.every((a) => libSel.value.includes(a.id)))
 function srcLabel(s) { return SRC_LABEL[s] || s }
+function fmtDateTime(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
 async function loadLibrary() {
   try {
-    const params = { limit: LIB_PAGE, offset: libPage.value * LIB_PAGE }
+    const params = { limit: LIB_PAGE, offset: libPage.value * LIB_PAGE, order: libOrder.value }
     if (libSource.value) params.source = libSource.value
     if (libRisk.value) params.risk = libRisk.value
     if (libQuery.value.trim()) params.q = libQuery.value.trim()
+    if (libFrom.value) params.date_from = libFrom.value
+    if (libTo.value) params.date_to = libTo.value
     const d = (await api.get('/space/assets', { params })).data
     libAssets.value = d.items || []
     libTotal.value = d.total || 0
@@ -531,8 +543,17 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
             <el-option value="review" label="待复核" />
             <el-option value="high" label="高风险" />
           </el-select>
-          <el-input v-model="libQuery" size="small" clearable placeholder="按名称搜索" style="width: 180px"
+          <el-input v-model="libQuery" size="small" clearable placeholder="按名称搜索" style="width: 160px"
                     @keyup.enter="libReload" @clear="libReload" />
+          <el-date-picker v-model="libFrom" type="date" size="small" value-format="YYYY-MM-DD"
+                          placeholder="起始日期" style="width: 140px" @change="libReload" />
+          <span class="muted">~</span>
+          <el-date-picker v-model="libTo" type="date" size="small" value-format="YYYY-MM-DD"
+                          placeholder="结束日期" style="width: 140px" @change="libReload" />
+          <el-select v-model="libOrder" size="small" style="width: 116px" @change="libReload">
+            <el-option value="new" label="最新在前" />
+            <el-option value="old" label="最早在前" />
+          </el-select>
           <el-button size="small" @click="libReload">🔍 查询</el-button>
           <span style="flex: 1" />
           <el-button size="small" @click="loadLibrary">🔄 刷新</el-button>
@@ -560,6 +581,7 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
                 <span v-if="a.risk === 'high' || a.risk === 'review'" class="tag-risk" :class="a.risk">{{ a.risk === 'high' ? '高危' : '待核' }}</span>
                 <span class="muted">{{ fmtBytes(a.size_bytes) }}</span>
               </div>
+              <div class="lib-time muted">🕒 {{ fmtDateTime(a.created_at) }}</div>
             </div>
           </div>
         </div>
@@ -1084,6 +1106,10 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
   align-items: center;
   gap: 6px;
   margin-top: 4px;
+  font-size: 11px;
+}
+.lib-time {
+  margin-top: 3px;
   font-size: 11px;
 }
 .tag-src {

@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -97,6 +98,16 @@ def delete_collected(image_id: int, user: User = Depends(current_user), db: Sess
     return {"id": image_id, "deleted": True}
 
 
+def _parse_day(s: str | None) -> datetime | None:
+    """把 'YYYY-MM-DD' 解析成当天 0 点;非法/空 → None(该日期过滤跳过)。"""
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s.strip()[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
 @router.get("/assets")
 def list_assets(
     source: str | None = Query(default=None),
@@ -104,6 +115,9 @@ def list_assets(
     tagged: bool | None = Query(default=None),
     risk: str | None = Query(default=None),
     q: str | None = Query(default=None),
+    order: str = Query(default="new"),          # new=最新在前(默认) | old=最早在前
+    date_from: str | None = Query(default=None),  # YYYY-MM-DD,含当天起
+    date_to: str | None = Query(default=None),    # YYYY-MM-DD,含当天止
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     user: User = Depends(current_user),
@@ -118,11 +132,19 @@ def list_assets(
         conds.append(Asset.risk == risk)
     if q:
         conds.append(Asset.name.ilike(f"%{q}%"))
+    # 按创建时间范围过滤(created_at 按 UTC 存;date_to 含当天 = < 次日 0 点)。走 ix_assets_owner_created 索引。
+    df = _parse_day(date_from)
+    if df is not None:
+        conds.append(Asset.created_at >= df)
+    dt_ = _parse_day(date_to)
+    if dt_ is not None:
+        conds.append(Asset.created_at < dt_ + timedelta(days=1))
     if tagged is not None:
         # 有标签 = tags 非空列表。JSON 列含标签判断用 python 侧过滤(简单可移植,见下)。
         pass
 
-    base = select(Asset).where(*conds)
+    order_col = Asset.created_at.asc() if order == "old" else Asset.created_at.desc()
+    base = select(Asset).where(*conds).order_by(order_col)
     rows = db.execute(base).scalars().all()
 
     if tagged is not None:
