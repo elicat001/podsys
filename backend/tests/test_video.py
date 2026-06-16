@@ -225,6 +225,18 @@ def test_compose_prompt_pro_layers():
     assert "巴西" not in out3 and "欧美" not in out3 and "配音使用" not in out3 and out3.strip()
 
 
+def test_compose_prompt_has_physics_constraints():
+    # 物理连贯约束:无论什么品类(含未知/通用)都通用追加,治"瓶盖凭空而启"这类违背物理的画面。
+    # 关键是"通用",不是给某个品类写死 —— 用多个品类都断言它在。
+    from app.ai.video import compose_prompt
+    for cat in ("通用", "马克杯", "手机壳", "不存在的品类"):
+        out = compose_prompt("展示商品", language="无对白", category=cat)
+        assert "物理" in out                       # 正/负向都强调遵循真实物理
+        assert "自行开合" in out                    # 负向:部件无人触碰不得自行开合
+        assert "凭空" in out and "瞬移" in out       # 负向:物体不得凭空出现/瞬移
+        assert "保持不变" in out                    # 正向后缀:商品形态/开合状态保持不变
+
+
 def test_ai_generate_full_params(client, auth_headers):
     # 描述 + 语言 + 类目 + 场景首帧(无 key 自动跳过)+ 画幅/分辨率全走通(本地兜底 GIF)
     r = client.post("/api/video/ai-generate", headers=auth_headers,

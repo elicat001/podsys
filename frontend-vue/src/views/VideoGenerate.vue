@@ -45,7 +45,7 @@ const TYPES = [
 const selType = ref('')
 const prompt = ref('')
 
-const CATEGORIES = ['通用', 'T恤', '卫衣', '马克杯', '手机壳', '帆布袋', '海报', '抱枕']
+const CATEGORIES = ['通用', 'T恤', '卫衣', '马克杯', '水杯', '手机壳', '帆布袋', '海报', '抱枕']
 const ASPECTS = [
   { id: 'portrait', label: '9:16', hint: '竖屏·带货' },
   { id: 'portrait34', label: '3:4', hint: '竖屏' },
