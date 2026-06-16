@@ -134,14 +134,14 @@ export const TOOLS = [
   {
     id: 'production', name: '生产图', icon: '🏭', cat: '履约', ep: 'export/production',
     async: true, result: 'filesMap', cost: 1,
-    desc: '设计稿 → 印厂格式(PNG/JPG/TIFF/PDF/PSD)。先用印花提取/抠图做成透明 PNG 再来。',
+    desc: '设计稿 → 印厂格式:透明底出 PNG/TIFF/PSD,选白/黑底再加 JPG/PDF。先用印花提取/抠图做成透明 PNG 再来。',
     inputs: [
       { key: 'file', type: 'file', label: '上传设计稿(透明 PNG)', required: true },
       { key: '__size', type: 'sizePreset', label: '成品尺寸' },
       { key: 'dpi', type: 'select', label: '分辨率 DPI', default: '300',
         options: [['150', '150(草稿)'], ['300', '300(标准印刷)'], ['600', '600(高精)']] },
       { key: 'bg', type: 'select', label: '底色', default: 'transparent',
-        options: [['transparent', '透明(印花常用·只出 PNG/TIFF/PSD)'], ['white', '白底'], ['black', '黑底']] },
+        options: [['transparent', '透明(印花常用)'], ['white', '白底'], ['black', '黑底']] },
       { key: 'formats', type: 'hidden', default: 'png,jpg,tiff,pdf,psd' },
     ],
   },
