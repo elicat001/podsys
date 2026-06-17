@@ -97,8 +97,23 @@ def synthesize(text: str, language: str) -> bytes:
         return b""
 
 
+def _probe_dur(ff: str, path: str) -> float:
+    """ffmpeg 读时长(秒);读不到 → 0.0。"""
+    import subprocess
+    r = subprocess.run([ff, "-i", path], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    for line in r.stderr.splitlines():
+        if "Duration:" in line:
+            try:
+                hh, mm, ss = line.split("Duration:")[1].split(",")[0].strip().split(":")
+                return int(hh) * 3600 + int(mm) * 60 + float(ss)
+            except Exception:  # noqa: BLE001
+                return 0.0
+    return 0.0
+
+
 def mux(video_bytes: bytes, audio_bytes: bytes) -> bytes:
-    """ffmpeg 用配音替换视频音轨(视频时长不变;配音比视频短则尾部静音,二期由配乐填)。失败 → 原视频。"""
+    """ffmpeg 用配音替换视频音轨,并用 atempo 把配音**精确贴合视频时长**(快了放慢/慢了加快,保真不变调,
+    夹在 0.8~1.5 倍内避免失真)。失败 → 原视频。"""
     if not audio_bytes:
         return video_bytes
     try:
@@ -112,9 +127,16 @@ def mux(video_bytes: bytes, audio_bytes: bytes) -> bytes:
             vp = os.path.join(d, "v.mp4"); ap = os.path.join(d, "a.mp3"); op = os.path.join(d, "o.mp4")
             with open(vp, "wb") as f: f.write(video_bytes)
             with open(ap, "wb") as f: f.write(audio_bytes)
+            # 时长微调:atempo=配音时长/视频时长 → 合成后配音≈视频时长(夹 0.8~1.5,差异<3% 不动)
+            vdur, adur = _probe_dur(ff, vp), _probe_dur(ff, ap)
+            af: list[str] = []
+            if vdur > 0.5 and adur > 0.5:
+                factor = max(0.8, min(1.5, adur / vdur))
+                if abs(factor - 1.0) > 0.03:
+                    af = ["-filter:a", f"atempo={factor:.3f}"]
             r = subprocess.run(
                 [ff, "-y", "-i", vp, "-i", ap, "-map", "0:v:0", "-map", "1:a:0",
-                 "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-loglevel", "error", op],
+                 "-c:v", "copy", *af, "-c:a", "aac", "-b:a", "128k", "-loglevel", "error", op],
                 capture_output=True)
             if r.returncode != 0 or not os.path.exists(op) or os.path.getsize(op) < 1024:
                 log.warning("ffmpeg 叠加失败: %s", (r.stderr or b"")[:200])
