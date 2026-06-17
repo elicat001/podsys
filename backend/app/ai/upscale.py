@@ -42,7 +42,13 @@ class RealEsrganOnnxProvider:
             path = settings.upscale_realesrgan_path
             if not path.exists():
                 raise FileNotFoundError(f"Real-ESRGAN 模型缺失: {path}")
-            _REALESR_SESSION = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+            opts = ort.SessionOptions()
+            n = max(0, int(settings.upscale_sr_threads))
+            if n > 0:  # 限核:共享服务器上别让超分吃满所有 CPU 拖垮旁站(0=自动取满核)
+                opts.intra_op_num_threads = n
+                opts.inter_op_num_threads = 1
+            _REALESR_SESSION = ort.InferenceSession(str(path), sess_options=opts,
+                                                    providers=["CPUExecutionProvider"])
         return _REALESR_SESSION
 
     def upscale(self, image: Image.Image, scale: float = 1.0) -> Image.Image:

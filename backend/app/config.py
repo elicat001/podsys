@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     upscale_provider: str = "pillow"         # pillow(Lanczos 兜底) | realesrgan(本地AI·真提质·~几秒)
     upscale_realesrgan_model: str = "realesr_x4v3.onnx"  # Real-ESRGAN 精简版(SRVGG x4,onnx,真提质);缺失降级 Lanczos
     upscale_sr_max_input: int = 768          # AI 超分输入长边上限:大图先缩(控耗时;~768→几秒)
+    upscale_sr_threads: int = 0              # Real-ESRGAN onnxruntime 线程数(0=自动取满核;共享服务器应设 2~3 防吃满 CPU 拖垮旁站)
 
     # third-party API config (used when *_provider == "api")
     matting_api_url: str = ""
