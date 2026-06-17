@@ -15,7 +15,11 @@ const resolution = ref('1080p')
 const language = ref('葡萄牙语')
 const category = ref('通用')
 const sceneFrame = ref(true)   // 场景首帧:默认开、不再暴露开关(始终随请求发 true)
-const subtitle = ref(true)     // 字幕开关(替代原旁白配音开关);旁白本身已由「语言」自动决定
+const nativeSound = ref(true)  // 人声:用视频自带音频(with_audio),默认开;与旁白互斥
+const voiceover = ref(false)   // 旁白设置:默认关;开启后无声生成 + 叠 AI 旁白,再选语言/字幕
+const subtitle = ref(true)     // 字幕开关:仅旁白开启时生效
+// 互斥:开人声 → 自动关旁白(旁白开关在人声开时禁用,只能先关人声再开旁白)
+function onNativeToggle() { if (nativeSound.value) voiceover.value = false }
 const submitting = ref(false)
 const submitted = ref(false)
 const aiReady = ref(true)
@@ -64,7 +68,6 @@ const LANGS = [
   { id: '英语', label: '英语' },
   { id: '西班牙语', label: '西班牙语' },
   { id: '中文', label: '中文' },
-  { id: '无对白', label: '无人声' },
 ]
 
 const isFrames2 = computed(() => !!img2.value)
@@ -131,6 +134,8 @@ async function run() {
     fd.append('language', language.value)
     fd.append('category', category.value)
     fd.append('scene_frame', sceneFrame.value ? 'true' : 'false')
+    fd.append('native_sound', nativeSound.value ? 'true' : 'false')
+    fd.append('voiceover', voiceover.value ? 'true' : 'false')
     fd.append('subtitle', subtitle.value ? 'true' : 'false')
     fd.append('aspect', aspect.value)
     fd.append('resolution', resolution.value)
@@ -229,26 +234,38 @@ onMounted(async () => {
             </div>
           </div>
         </div>
-        <div class="row">
-          <div class="field">
-            <span class="flabel">语言 <span class="opt">配音/地区</span></span>
-            <div class="chips">
-              <button v-for="l in LANGS" :key="l.id" class="chip" :class="{ on: language === l.id }" @click="language = l.id">{{ l.label }}</button>
-            </div>
-          </div>
-          <div class="field">
-            <span class="flabel">商品类目 <span class="opt">追加专属动作</span></span>
-            <div class="chips">
-              <button v-for="c in CATEGORIES" :key="c" class="chip" :class="{ on: category === c }" @click="category = c">{{ c }}</button>
-            </div>
+        <div class="field">
+          <span class="flabel">商品类目 <span class="opt">追加专属动作</span></span>
+          <div class="chips">
+            <button v-for="c in CATEGORIES" :key="c" class="chip" :class="{ on: category === c }" @click="category = c">{{ c }}</button>
           </div>
         </div>
 
         <label class="toggle">
-          <input type="checkbox" v-model="subtitle" />
+          <input type="checkbox" v-model="nativeSound" @change="onNativeToggle" />
           <span class="tg-box" />
-          <span class="tg-text"><b>📝 字幕</b><i>把口播旁白按所选语言烧进视频画面;选「无人声」无旁白则无字幕</i></span>
+          <span class="tg-text"><b>🔊 人声</b><i>用视频自带音频(默认开);需关掉才能开启 AI 旁白</i></span>
         </label>
+
+        <label class="toggle" :class="{ disabled: nativeSound }">
+          <input type="checkbox" v-model="voiceover" :disabled="nativeSound" />
+          <span class="tg-box" />
+          <span class="tg-text"><b>🎙️ 旁白设置</b><i>{{ nativeSound ? '先关掉「人声」才能开启' : '无声生成 + AI 配音,下方选语言' }}</i></span>
+        </label>
+
+        <div v-if="voiceover && !nativeSound" class="vo-panel">
+          <div class="field">
+            <span class="flabel">旁白语言 <span class="opt">配音/字幕/地区</span></span>
+            <div class="chips">
+              <button v-for="l in LANGS" :key="l.id" class="chip" :class="{ on: language === l.id }" @click="language = l.id">{{ l.label }}</button>
+            </div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" v-model="subtitle" />
+            <span class="tg-box" />
+            <span class="tg-text"><b>📝 字幕</b><i>把口播旁白按所选语言烧进视频画面</i></span>
+          </label>
+        </div>
 
         <button class="btn-primary run" :disabled="submitting || !img1 || !seconds" @click="run">
           {{ submitting ? '提交中…' : '生成视频 · 扣 3 点' }}
@@ -326,6 +343,8 @@ onMounted(async () => {
 .tg-text { display: flex; flex-direction: column; gap: 1px; }
 .tg-text b { font-size: 13px; color: var(--fg); font-weight: 600; }
 .tg-text i { font-size: 11.5px; color: var(--mut); font-style: normal; line-height: 1.35; }
+.toggle.disabled { cursor: not-allowed; opacity: .55; }
+.vo-panel { display: flex; flex-direction: column; gap: 12px; padding: 12px; border: 1px dashed var(--line2); border-radius: 11px; background: rgba(64,158,255,.05); }
 
 .run { width: 100%; margin-top: 2px; padding: 12px; font-size: 15px; }
 .run:disabled { opacity: .5; cursor: not-allowed; }

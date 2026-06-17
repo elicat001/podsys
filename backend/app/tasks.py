@@ -448,10 +448,13 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             pass
     # 提示词工程:镜头脚本 + 类目动作 + 地区风格(随语言)+ 语言 + 一致性/防拉伸 + 负向
     prompt = compose_prompt(p.get("prompt", ""), language=lang, category=cat)
-    out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"))
-    # 旁白配音(best-effort):选了配音 + 真 mp4(非本地兜底 GIF)才做。看图写目标语言口播稿 → edge-tts → 叠回。
+    # 人声(默认)= 用 CogVideoX 自带音频(with_audio=true);旁白设置开 = 无声生成(with_audio=false)再叠 AI 旁白。二者互斥。
+    native_sound = bool(p.get("native_sound", True))
+    out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"),
+                                              with_audio=native_sound)
+    # 旁白配音(best-effort):仅「旁白设置」开 + 真 mp4(非本地兜底 GIF)才做。看图写目标语言口播稿 → edge-tts → 叠回。
     # 失败/无网/无 key 一律保留原视频,绝不阻断视频作业(CogVideoX 只产音效不产语音,语音靠这条补)。
-    if out.get("ext") == "mp4":   # 真 mp4 才配音(本地兜底 GIF 跳过);是否配由 add_voiceover 按语言自动判定(无人声→跳过)
+    if p.get("voiceover") and out.get("ext") == "mp4":
         try:
             from .services.voiceover import add_voiceover
             new_bytes, script = add_voiceover(out["bytes"], raw[0], p.get("prompt", ""),

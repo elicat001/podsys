@@ -319,11 +319,51 @@ def test_subtitle_segments_timed():
 
 
 def test_ai_generate_subtitle_offline_skips(client, auth_headers, png):
-    # 选了字幕但离线(provider=local → GIF):配音/字幕因 ext!=mp4 跳过,仍出兜底 GIF、作业 done
+    # 开旁白+字幕但离线(provider=local → GIF):配音/字幕因 ext!=mp4 跳过,仍出兜底 GIF、作业 done
     r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "达人带货", "subtitle": "true", "aspect": "portrait"},
+                    data={"prompt": "达人带货", "native_sound": "false", "voiceover": "true",
+                          "subtitle": "true", "language": "英语", "aspect": "portrait"},
                     files={"file": ("x.png", png(), "image/png")})
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
     assert job["result"]["video_url"].endswith(".gif")   # 本地兜底,配音/字幕跳过,作业不受影响
+
+
+def test_video_native_sound_and_voiceover_gate(client, auth_headers, monkeypatch, png):
+    # 人声(默认)→ with_audio=True 且不叠旁白;关人声+开旁白 → with_audio=False 且叠旁白(互斥语义)
+    from app.ai import video as video_mod
+    from app.services import voiceover as vo_mod
+
+    calls = {"with_audio": [], "voiceover": 0}
+
+    class _FakeProvider:
+        def image_to_video(self, images, prompt, size=None, seconds=None, with_audio=None):
+            calls["with_audio"].append(with_audio)
+            return {"bytes": b"FAKEMP4" * 16, "ext": "mp4", "meta": {"engine": "fake"}}
+
+    def _fake_add_voiceover(video_bytes, image, description, language, seconds, subtitle=False):
+        calls["voiceover"] += 1
+        return video_bytes, "口播稿"
+
+    monkeypatch.setattr(video_mod, "get_video_provider", lambda: _FakeProvider())
+    monkeypatch.setattr(vo_mod, "add_voiceover", _fake_add_voiceover)
+
+    # 默认:人声开 → with_audio=True、不叠旁白
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "带货", "aspect": "portrait", "seconds": "5"},
+                    files={"file": ("x.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert calls["with_audio"][-1] is True and calls["voiceover"] == 0
+
+    # 关人声 + 开旁白 → with_audio=False、叠旁白一次
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "带货", "aspect": "portrait", "seconds": "5",
+                          "native_sound": "false", "voiceover": "true", "language": "英语"},
+                    files={"file": ("x.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert calls["with_audio"][-1] is False and calls["voiceover"] == 1

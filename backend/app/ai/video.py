@@ -190,7 +190,7 @@ class VideoProvider(Protocol):
     name: str
 
     def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920",
-                       seconds: int | None = None) -> dict:
+                       seconds: int | None = None, with_audio: bool | None = None) -> dict:
         """images: 1~2 张(2 张=首尾帧),已按 size 画幅处理好。返回 {bytes, url, ext('mp4'|'gif'), meta}。"""
         ...
 
@@ -214,7 +214,7 @@ class LocalGifProvider:
     name = "local"
 
     def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920",
-                       seconds: int | None = None) -> dict:
+                       seconds: int | None = None, with_audio: bool | None = None) -> dict:
         from ..services.video import make_showcase
         w, h = _parse_size(size)
         aspect = "portrait" if w < h else ("landscape" if w > h else "square")
@@ -239,7 +239,7 @@ class ZhipuCogVideoProvider:
         self.model = settings.video_model or "cogvideox-3"
 
     def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920",
-                       seconds: int | None = None) -> dict:
+                       seconds: int | None = None, with_audio: bool | None = None) -> dict:
         import httpx  # 惰性
         if not images:
             raise RuntimeError("图生视频至少需要 1 张图")
@@ -253,7 +253,8 @@ class ZhipuCogVideoProvider:
             "quality": settings.video_quality or "quality",
             "size": size,
             "fps": int(settings.video_fps or 30),
-            "with_audio": bool(settings.video_with_audio),
+            # 有声/无声按请求决定(人声 on→true 自带音效;旁白 on→false 出无声,再叠 AI 旁白)。未传则回退配置。
+            "with_audio": bool(settings.video_with_audio if with_audio is None else with_audio),
         }
         dur = int(seconds or settings.video_seconds or 0)
         if dur:
