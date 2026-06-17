@@ -111,9 +111,77 @@ def _probe_dur(ff: str, path: str) -> float:
     return 0.0
 
 
-def mux(video_bytes: bytes, audio_bytes: bytes) -> bytes:
-    """ffmpeg 用配音替换视频音轨,并用 atempo 把配音**精确贴合视频时长**(快了放慢/慢了加快,保真不变调,
-    夹在 0.8~1.5 倍内避免失真)。失败 → 原视频。"""
+def _probe_size(ff: str, path: str) -> tuple[int, int]:
+    """ffmpeg 读视频分辨率 (w,h);读不到 → (0,0)。"""
+    import re
+    import subprocess
+    r = subprocess.run([ff, "-i", path], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    m = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", r.stderr)
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+
+# 字幕字体候选(按语言)。中文需中日韩字体(生产装 fonts-noto-cjk;本地 Windows 用雅黑),拉丁文用 DejaVu/Arial。
+# 都找不到 → 跳过字幕(不烧方框,优雅降级)。
+_FONT_CANDS: dict[str, list[str]] = {
+    "cjk": ["/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+            "C:/Windows/Fonts/msyhbd.ttc", "C:/Windows/Fonts/msyh.ttc"],
+    "latin": ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+              "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+              "C:/Windows/Fonts/arialbd.ttf"],
+}
+
+
+def _subtitle_png(text: str, language: str, vw: int) -> bytes:
+    """字幕文字 → 与视频同宽的透明 PNG(自动换行、白字黑描边、半透明底条)。无对应字体/失败 → b''。"""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        cjk = language == "中文"
+        size = max(26, vw // 22)
+        font = None
+        for p in _FONT_CANDS["cjk" if cjk else "latin"]:
+            try:
+                font = ImageFont.truetype(p, size); break
+            except Exception:  # noqa: BLE001
+                continue
+        if font is None:
+            return b""   # 无对应字体 → 不烧字幕(避免方框)
+        probe = ImageDraw.Draw(Image.new("RGBA", (4, 4)))
+        maxw = int(vw * 0.9)
+        lines: list[str] = []
+        cur = ""
+        for u in (list(text) if cjk else text.split()):     # 中文按字、拉丁按词换行
+            test = (cur + ("" if cjk else " ") + u) if cur else u
+            if probe.textlength(test, font=font) > maxw and cur:
+                lines.append(cur); cur = u
+            else:
+                cur = test
+        if cur:
+            lines.append(cur)
+        lines = lines[:4]
+        pad = size // 2
+        lh = int(size * 1.32)
+        h = lh * len(lines) + pad
+        img = Image.new("RGBA", (vw, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.rectangle([0, 0, vw, h], fill=(0, 0, 0, 120))      # 半透明底条
+        for i, ln in enumerate(lines):
+            x = int((vw - probe.textlength(ln, font=font)) / 2); y = pad // 2 + i * lh
+            for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2)):
+                d.text((x + dx, y + dy), ln, font=font, fill=(0, 0, 0, 255))   # 黑描边
+            d.text((x, y), ln, font=font, fill=(255, 255, 255, 255))           # 白字
+        import io as _io
+        b = _io.BytesIO(); img.save(b, "PNG")
+        return b.getvalue()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("字幕渲染失败: %s", exc)
+        return b""
+
+
+def mux(video_bytes: bytes, audio_bytes: bytes, subtitle_text: str = "", language: str = "") -> bytes:
+    """ffmpeg 把配音叠回视频(atempo 贴合时长),可选把 subtitle_text 烧成字幕。失败 → 原视频。
+    无字幕:`-c:v copy`(快);有字幕:overlay 字幕 PNG → 重编码视频(libx264,限 3 线程防吃满共享 CPU)。"""
     if not audio_bytes:
         return video_bytes
     try:
@@ -127,19 +195,30 @@ def mux(video_bytes: bytes, audio_bytes: bytes) -> bytes:
             vp = os.path.join(d, "v.mp4"); ap = os.path.join(d, "a.mp3"); op = os.path.join(d, "o.mp4")
             with open(vp, "wb") as f: f.write(video_bytes)
             with open(ap, "wb") as f: f.write(audio_bytes)
-            # 时长微调:atempo=配音时长/视频时长 → 合成后配音≈视频时长(夹 0.8~1.5,差异<3% 不动)
+            # 时长微调:atempo=配音时长/视频时长(夹 0.8~1.5),合成后配音≈视频时长
             vdur, adur = _probe_dur(ff, vp), _probe_dur(ff, ap)
-            af: list[str] = []
-            if vdur > 0.5 and adur > 0.5:
-                factor = max(0.8, min(1.5, adur / vdur))
-                if abs(factor - 1.0) > 0.03:
-                    af = ["-filter:a", f"atempo={factor:.3f}"]
-            r = subprocess.run(
-                [ff, "-y", "-i", vp, "-i", ap, "-map", "0:v:0", "-map", "1:a:0",
-                 "-c:v", "copy", *af, "-c:a", "aac", "-b:a", "128k", "-loglevel", "error", op],
-                capture_output=True)
+            factor = max(0.8, min(1.5, adur / vdur)) if vdur > 0.5 and adur > 0.5 else 1.0
+            # 字幕 PNG(与视频同宽);渲染不出(无字体)则退回无字幕路径
+            sub_png = b""
+            if subtitle_text:
+                vw, _vh = _probe_size(ff, vp)
+                if vw > 0:
+                    sub_png = _subtitle_png(subtitle_text, language, vw)
+            if sub_png:
+                sp = os.path.join(d, "sub.png")
+                with open(sp, "wb") as f: f.write(sub_png)
+                fc = f"[1:a]atempo={factor:.3f}[aud];[0:v][2:v]overlay=(W-w)/2:H-h-(H/10)[vid]"
+                cmd = [ff, "-y", "-i", vp, "-i", ap, "-i", sp, "-filter_complex", fc,
+                       "-map", "[vid]", "-map", "[aud]", "-c:v", "libx264", "-preset", "veryfast",
+                       "-crf", "23", "-pix_fmt", "yuv420p", "-threads", "3",
+                       "-c:a", "aac", "-b:a", "128k", "-loglevel", "error", op]
+            else:
+                af = ["-filter:a", f"atempo={factor:.3f}"] if abs(factor - 1.0) > 0.03 else []
+                cmd = [ff, "-y", "-i", vp, "-i", ap, "-map", "0:v:0", "-map", "1:a:0",
+                       "-c:v", "copy", *af, "-c:a", "aac", "-b:a", "128k", "-loglevel", "error", op]
+            r = subprocess.run(cmd, capture_output=True)
             if r.returncode != 0 or not os.path.exists(op) or os.path.getsize(op) < 1024:
-                log.warning("ffmpeg 叠加失败: %s", (r.stderr or b"")[:200])
+                log.warning("ffmpeg 叠加失败: %s", (r.stderr or b"")[:300])
                 return video_bytes
             with open(op, "rb") as f:
                 return f.read()
@@ -149,8 +228,9 @@ def mux(video_bytes: bytes, audio_bytes: bytes) -> bytes:
 
 
 def add_voiceover(video_bytes: bytes, image: Image.Image, description: str,
-                  language: str, seconds: int) -> tuple[bytes, str]:
-    """编排:写稿 → 配音 → 叠回。任一步失败都原样返回视频。返回 (视频bytes, 旁白稿 | '')。"""
+                  language: str, seconds: int, subtitle: bool = False) -> tuple[bytes, str]:
+    """编排:写稿 → 配音 →(可选烧字幕)→ 叠回。任一步失败都原样返回视频。返回 (视频bytes, 旁白稿 | '')。
+    subtitle=True 时把口播稿同语言烧进画面;language 不支持(无人声)→ 无稿 → 既不配音也不出字幕。"""
     if not settings.voiceover_enabled or not _VOICE.get(language):
         return video_bytes, ""
     script = write_script(image, description, language, seconds)
@@ -159,4 +239,4 @@ def add_voiceover(video_bytes: bytes, image: Image.Image, description: str,
     audio = synthesize(script, language)
     if not audio:
         return video_bytes, script
-    return mux(video_bytes, audio), script
+    return mux(video_bytes, audio, script if subtitle else "", language), script

@@ -451,11 +451,12 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"))
     # 旁白配音(best-effort):选了配音 + 真 mp4(非本地兜底 GIF)才做。看图写目标语言口播稿 → edge-tts → 叠回。
     # 失败/无网/无 key 一律保留原视频,绝不阻断视频作业(CogVideoX 只产音效不产语音,语音靠这条补)。
-    if p.get("voiceover") and out.get("ext") == "mp4":
+    if out.get("ext") == "mp4":   # 真 mp4 才配音(本地兜底 GIF 跳过);是否配由 add_voiceover 按语言自动判定(无人声→跳过)
         try:
             from .services.voiceover import add_voiceover
             new_bytes, script = add_voiceover(out["bytes"], raw[0], p.get("prompt", ""),
-                                              lang, int(p.get("seconds") or settings.video_seconds))
+                                              lang, int(p.get("seconds") or settings.video_seconds),
+                                              subtitle=bool(p.get("subtitle", True)))
             out["bytes"] = new_bytes
             if script:
                 out.setdefault("meta", {})["voiceover"] = script[:200]

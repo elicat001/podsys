@@ -14,8 +14,8 @@ const aspect = ref('portrait')
 const resolution = ref('1080p')
 const language = ref('葡萄牙语')
 const category = ref('通用')
-const sceneFrame = ref(true)
-const voiceover = ref(true)
+const sceneFrame = ref(true)   // 场景首帧:默认开、不再暴露开关(始终随请求发 true)
+const subtitle = ref(true)     // 字幕开关(替代原旁白配音开关);旁白本身已由「语言」自动决定
 const submitting = ref(false)
 const submitted = ref(false)
 const aiReady = ref(true)
@@ -131,7 +131,7 @@ async function run() {
     fd.append('language', language.value)
     fd.append('category', category.value)
     fd.append('scene_frame', sceneFrame.value ? 'true' : 'false')
-    fd.append('voiceover', voiceover.value ? 'true' : 'false')
+    fd.append('subtitle', subtitle.value ? 'true' : 'false')
     fd.append('aspect', aspect.value)
     fd.append('resolution', resolution.value)
     fd.append('seconds', seconds.value)
@@ -245,15 +245,9 @@ onMounted(async () => {
         </div>
 
         <label class="toggle">
-          <input type="checkbox" v-model="voiceover" />
+          <input type="checkbox" v-model="subtitle" />
           <span class="tg-box" />
-          <span class="tg-text"><b>🎙️ AI 旁白配音</b><i>按所选语言看图自动写口播稿并配音(免费 TTS)。CogVideoX 本身不出人声,靠这个补;选「无人声」则不配</i></span>
-        </label>
-
-        <label class="toggle">
-          <input type="checkbox" v-model="sceneFrame" />
-          <span class="tg-box" />
-          <span class="tg-text"><b>🎬 智能场景首帧</b><i>先把商品放进场景做开场首帧,开场更自然(需 AI 图像 key;可能轻微改变商品)</i></span>
+          <span class="tg-text"><b>📝 字幕</b><i>把口播旁白按所选语言烧进视频画面;选「无人声」无旁白则无字幕</i></span>
         </label>
 
         <button class="btn-primary run" :disabled="submitting || !img1 || !seconds" @click="run">

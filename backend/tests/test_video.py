@@ -289,19 +289,27 @@ def test_voiceover_graceful_no_key(png):
     from app.services import voiceover
     vid = b"FAKE_MP4_BYTES" * 20
     img = Image.open(png())
-    out, script = voiceover.add_voiceover(vid, img, "镜头脚本", "葡萄牙语", 10)
-    assert out == vid and script == "", "无 key 应原样返回视频、无旁白"
+    for sub in (False, True):   # 字幕开/关都应优雅降级(无 key 无稿)
+        out, script = voiceover.add_voiceover(vid, img, "镜头脚本", "葡萄牙语", 10, subtitle=sub)
+        assert out == vid and script == "", "无 key 应原样返回视频、无旁白/字幕"
     # 不支持的语言(无对白)→ 直接跳过
-    out2, script2 = voiceover.add_voiceover(vid, img, "x", "无对白", 10)
+    out2, script2 = voiceover.add_voiceover(vid, img, "x", "无对白", 10, subtitle=True)
     assert out2 == vid and script2 == ""
 
 
-def test_ai_generate_voiceover_offline_skips(client, auth_headers, png):
-    # 选了配音但离线(provider=local → GIF):配音步骤因 ext!=mp4 跳过,仍出兜底 GIF、作业 done
+def test_subtitle_render_no_crash():
+    # 字幕渲染:有字体→返回合法 PNG;无字体→返回空(优雅降级)。两种都不应崩。
+    from app.services import voiceover
+    out = voiceover._subtitle_png("Hello world, buy now!", "英语", 720)
+    assert out == b"" or out[:8] == b"\x89PNG\r\n\x1a\n", "应为空或合法 PNG"
+
+
+def test_ai_generate_subtitle_offline_skips(client, auth_headers, png):
+    # 选了字幕但离线(provider=local → GIF):配音/字幕因 ext!=mp4 跳过,仍出兜底 GIF、作业 done
     r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "达人带货", "voiceover": "true", "aspect": "portrait"},
+                    data={"prompt": "达人带货", "subtitle": "true", "aspect": "portrait"},
                     files={"file": ("x.png", png(), "image/png")})
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
-    assert job["result"]["video_url"].endswith(".gif")   # 本地兜底,配音跳过,作业不受影响
+    assert job["result"]["video_url"].endswith(".gif")   # 本地兜底,配音/字幕跳过,作业不受影响
