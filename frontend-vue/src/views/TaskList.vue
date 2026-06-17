@@ -13,6 +13,12 @@ const route = useRoute()
 const router = useRouter()
 const cat = computed(() => route.query.cat || '')
 const status = ref(route.query.status || 'all')
+// 筛选(客户端,对齐原素材库:名称 / 日期范围 / 排序)
+const q = ref('')
+const dateFrom = ref('')   // YYYY-MM-DD(本地日期)
+const dateTo = ref('')
+const order = ref('new')   // new=最新在前 | old=最早在前
+const sel = ref([])        // 批量删除:选中的任务 id
 
 const jobs = ref([])
 const now = ref(Date.now())
@@ -21,15 +27,37 @@ let refreshTimer = null
 
 async function load() {
   try { jobs.value = await listJobs() } catch (e) { ElMessage.error('任务列表加载失败:' + (e.message || e)) }
+  const ids = new Set(jobs.value.map((j) => j.id))   // 刷新后清掉已不存在的选中项
+  sel.value = sel.value.filter((id) => ids.has(id))
 }
 
-// 该 cat 下、按状态过滤的全部任务(最近在前)
+// 本地日期(YYYY-MM-DD):日期范围按用户本地时区比较(created_at 存的是 UTC)
+function localDate(iso) {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+// 该 cat 下:按 状态 + 名称 + 日期范围 过滤,再按所选顺序排序
 const items = computed(() => {
-  return jobs.value
+  let list = jobs.value
     .map((j) => ({ ...j, _tool: toolForJob(j) }))
     .filter((j) => (j._tool?.cat || '其它') === cat.value)
     .filter((j) => status.value === 'all'
       || (status.value === 'active' ? (j.status === 'pending' || j.status === 'running') : j.status === status.value))
+  const kw = q.value.trim().toLowerCase()
+  if (kw) {
+    list = list.filter((j) => (jobTitle(j) || '').toLowerCase().includes(kw)
+      || (j.result?.title || '').toLowerCase().includes(kw))
+  }
+  if (dateFrom.value) list = list.filter((j) => localDate(j.created_at) >= dateFrom.value)
+  if (dateTo.value) list = list.filter((j) => localDate(j.created_at) <= dateTo.value)
+  return [...list].sort((a, b) => {
+    const ta = new Date(a.created_at).getTime() || 0
+    const tb = new Date(b.created_at).getTime() || 0
+    return order.value === 'old' ? ta - tb : tb - ta
+  })
 })
 const hasActive = computed(() => items.value.some((j) => j.status === 'pending' || j.status === 'running'))
 
@@ -107,6 +135,25 @@ async function delJob(job) {
   ElMessage.success('已删除'); load()
 }
 
+// ── 批量选择 / 删除 ──
+const allSel = computed(() => items.value.length > 0 && items.value.every((j) => sel.value.includes(j.id)))
+function toggleSel(id) { const i = sel.value.indexOf(id); if (i >= 0) sel.value.splice(i, 1); else sel.value.push(id) }
+function toggleAll() {
+  const ids = items.value.map((j) => j.id)
+  if (allSel.value) sel.value = sel.value.filter((id) => !ids.includes(id))
+  else sel.value = [...new Set([...sel.value, ...ids])]
+}
+async function delBatch() {
+  if (!sel.value.length) return ElMessage.warning('请先勾选要删除的任务')
+  try { await ElMessageBox.confirm(`删除选中的 ${sel.value.length} 个任务?产出的素材会移入回收站(可恢复)。`, '确认批量删除', { type: 'warning' }) }
+  catch (e) { return }
+  const ids = [...sel.value]
+  const r = await Promise.allSettled(ids.map((id) => api.delete('/jobs/' + id)))
+  const ok = r.filter((x) => x.status === 'fulfilled').length
+  ElMessage.success(`已删除 ${ok} 个` + (ok < ids.length ? `(${ids.length - ok} 个失败)` : ''))
+  sel.value = []; load()
+}
+
 onMounted(() => {
   load()
   tickTimer = setInterval(() => { if (hasActive.value) now.value = Date.now() }, 1000)
@@ -129,9 +176,30 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
       <el-button size="small" @click="load">🔄 刷新</el-button>
     </div>
 
+    <div class="filters2">
+      <el-input v-model="q" size="small" clearable placeholder="按名称搜索" style="width: 170px" />
+      <el-date-picker v-model="dateFrom" type="date" size="small" value-format="YYYY-MM-DD"
+                      placeholder="起始日期" style="width: 140px" />
+      <span class="muted">~</span>
+      <el-date-picker v-model="dateTo" type="date" size="small" value-format="YYYY-MM-DD"
+                      placeholder="结束日期" style="width: 140px" />
+      <el-select v-model="order" size="small" style="width: 116px">
+        <el-option value="new" label="最新在前" />
+        <el-option value="old" label="最早在前" />
+      </el-select>
+    </div>
+
+    <div v-if="items.length" class="batchbar">
+      <button class="bbtn" @click="toggleAll">{{ allSel ? '取消全选' : '全选本页' }}</button>
+      <span class="muted small">已选 <b>{{ sel.length }}</b> · 共 {{ items.length }} 个</span>
+      <span style="flex:1" />
+      <button class="bbtn danger" :disabled="!sel.length" @click="delBatch">🗑 批量删除 ({{ sel.length }})</button>
+    </div>
+
     <div v-if="!items.length" class="empty muted">该模块暂无任务</div>
 
-    <div v-for="job in items" :key="job.id" class="row panel">
+    <div v-for="job in items" :key="job.id" class="row panel" :class="{ sel: sel.includes(job.id) }">
+      <el-checkbox class="rowcheck" :model-value="sel.includes(job.id)" @change="toggleSel(job.id)" />
       <!-- 缩略图 / 完成态 -->
       <div class="thumb" :class="{ clickable: job.status === 'done' && job.result }" @click="openPreview(job)">
         <img v-if="job.status === 'done' && jobThumb(job.result)" :src="jobThumb(job.result) + '?w=192'" class="checker" loading="lazy" decoding="async" />
@@ -188,6 +256,15 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
 .filters { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
 .fchip { border: 1px solid var(--line2); background: var(--panel); color: var(--mut); border-radius: 16px; padding: 4px 14px; font-size: 13px; cursor: pointer; }
 .fchip.on { border-color: var(--brand); color: var(--fg); background: var(--panel2); }
+.filters2 { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.batchbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.bbtn { border: 1px solid var(--line2); background: var(--panel); color: var(--mut); border-radius: 12px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
+.bbtn:hover:not(:disabled) { border-color: var(--brand); color: var(--fg); }
+.bbtn:disabled { opacity: .5; cursor: not-allowed; }
+.bbtn.danger { color: var(--err); }
+.bbtn.danger:hover:not(:disabled) { border-color: var(--err); }
+.rowcheck { flex: 0 0 auto; align-self: flex-start; margin-top: 2px; }
+.row.sel { border-color: var(--brand); }
 .empty { padding: 48px 0; text-align: center; }
 .row { display: flex; gap: 14px; padding: 14px; margin-bottom: 10px; content-visibility: auto; contain-intrinsic-size: auto 140px; }
 .thumb { flex: 0 0 96px; width: 96px; height: 96px; border-radius: 10px; overflow: hidden; }
