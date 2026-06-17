@@ -70,10 +70,12 @@ export const TOOLS = [
   {
     id: 'upscale', name: '图像提质', icon: '🔍', cat: '图案处理', ep: 'image-tools/upscale',
     async: true, result: 'image', cost: 2,
-    desc: 'AI 去噪 + 复原细节',
+    desc: 'AI 去噪 + 复原细节,可放大到 1K/2K/4K',
     inputs: [
       { key: 'file', type: 'file', label: '上传图片', required: true },
-      { key: 'scale', type: 'number', label: '放大倍数', default: 1, min: 1, max: 4, step: 0.5 },
+      { key: 'target', type: 'select', label: '目标分辨率', default: 'none',
+        options: [['none', '原图尺寸(仅提质·不放大)'], ['1k', '1K(长边 1024)'],
+          ['2k', '2K(长边 2048)'], ['4k', '4K(长边 4096)']] },
     ],
   },
   {

@@ -43,6 +43,19 @@ def test_upscale_actually_enlarges(client, auth_headers):
     assert got.status_code == 200 and Image.open(io.BytesIO(got.content)).size == (400, 400)
 
 
+def test_upscale_target_resolution(client, auth_headers):
+    # 目标分辨率「2K」:256px 长边 → 长边 2048(scale=8)
+    r = client.post("/api/image-tools/upscale", headers=auth_headers,
+                    data={"target": "2k"}, files={"file": ("x.png", _png(size=(256, 256)), "image/png")})
+    assert r.status_code == 200, r.text
+    assert r.json()["width"] == 2048 and r.json()["height"] == 2048, "2K 应放大到长边 2048"
+    # 已 ≥ 目标 → 不缩小:2000px 选「1K」仍是 2000
+    r2 = client.post("/api/image-tools/upscale", headers=auth_headers,
+                     data={"target": "1k"}, files={"file": ("x.png", _png(size=(2000, 2000)), "image/png")})
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["width"] == 2000, "已大于目标 → 不缩小"
+
+
 # ---------- 侵权库扩充 + 关键词命中 ----------
 def test_ipguard_library_expanded_and_hits(client, auth_headers, tool_result):
     lib = client.get("/api/ip-guard/library", headers=auth_headers).json()

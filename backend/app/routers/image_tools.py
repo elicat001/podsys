@@ -28,6 +28,20 @@ _DEWATERMARK_PROMPT = (
     "watermark-free, keeping the main subject and style intact."
 )
 
+# 图像提质「目标分辨率」→ 目标长边像素。换算成放大倍数的事放在 router 做(此处已读图、知尺寸),
+# 下游 worker / 超分 provider 仍只吃 scale,不必改。4K=4096 同时是输出长边天花板(防超大)。
+_RES_TARGETS = {"1k": 1024, "2k": 2048, "4k": 4096}
+
+
+def _resolve_scale(size: tuple[int, int], target: str, scale: float) -> float:
+    """目标分辨率(1k/2k/4k=长边像素)→ 放大倍数;已 ≥ 目标则不缩小(取 1.0)。
+    target=none/未知 → 回退旧的「放大倍数」(封顶 4x)。"""
+    t = (target or "none").lower()
+    if t in _RES_TARGETS:
+        long_edge = max(size) or 1
+        return max(1.0, _RES_TARGETS[t] / long_edge)   # 目标 ≤4096,天然封顶;不缩小
+    return max(1.0, min(scale, 4.0))
+
 
 def _edit_endpoint(raw: bytes, prompt: str, size: str, db: Session, user: User, offline=None) -> str:
     """读图 → 有 key 走 gpt-image,无 key 走本地引擎 offline(真实处理,不报错)→ 落盘。"""
@@ -54,16 +68,18 @@ def _edit_endpoint(raw: bytes, prompt: str, size: str, db: Session, user: User, 
 @router.post("/upscale")
 async def upscale(
     file: UploadFile = File(...),
-    scale: float = Form(1.0),
+    target: str = Form("none"),     # 目标分辨率:none(仅提质不放大) | 1k | 2k | 4k(长边像素)
+    scale: float = Form(1.0),       # 旧版「放大倍数」(target=none/未知 时生效,兼容旧前端)
     user: User = Depends(charge_for("process")),
     db: Session = Depends(get_db),
 ):
-    """图像提质:本地 AI 超分(Real-ESRGAN)去噪 + 复原细节,**默认保持原尺寸不放大**(scale=1);
-    scale>1 时放大。AI 提质 ~几秒 → 后台作业;pillow → 同步;无模型自动降级 Lanczos。
+    """图像提质:本地 AI 超分(Real-ESRGAN)去噪 + 复原细节。
+    目标分辨率(1K/2K/4K=长边像素)在此换算成放大倍数;none=仅提质不放大;已 ≥ 目标则不缩小。
+    AI 提质 ~几秒 → 后台作业;pillow → 同步;无模型自动降级 Lanczos。
     """
     raw = await file.read()
     src = _read_image(raw, db, user, "process")
-    scale = max(1.0, min(scale, 4.0))
+    scale = _resolve_scale(src.size, target, scale)
 
     if settings.upscale_provider == "realesrgan":  # AI 提质 ~几秒 → Celery 后台作业,前端轮询
         return JSONResponse(submit_celery(run_tool, db, user, kind="upscale", tool_id="upscale",
