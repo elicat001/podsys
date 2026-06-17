@@ -75,6 +75,7 @@ def ai_generate(
     aspect: str = Form("portrait"),
     resolution: str = Form("1080p"),
     seconds: int = Form(10),          # 视频时长(秒):5 / 10
+    voiceover: bool = Form(True),     # AI 旁白配音:看图写目标语言口播稿→edge-tts→叠回(CogVideoX 不产语音,故补)
     user: User = Depends(charge_for("video")),
     db: Session = Depends(get_db),
 ):
@@ -103,7 +104,7 @@ def ai_generate(
         run_tool, db, user, kind="aivideo", tool_id="videogen", op="video",
         raw=img1, mask_raw=img2,
         params={"prompt": prompt[:2000], "language": language[:20],
-                "category": category, "scene_frame": bool(scene_frame),
+                "category": category, "scene_frame": bool(scene_frame), "voiceover": bool(voiceover),
                 "aspect": aspect, "resolution": resolution, "seconds": seconds, "frames2": bool(img2)},
     )
 

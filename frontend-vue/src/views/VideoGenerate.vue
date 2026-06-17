@@ -15,6 +15,7 @@ const resolution = ref('1080p')
 const language = ref('葡萄牙语')
 const category = ref('通用')
 const sceneFrame = ref(true)
+const voiceover = ref(true)
 const submitting = ref(false)
 const submitted = ref(false)
 const aiReady = ref(true)
@@ -130,6 +131,7 @@ async function run() {
     fd.append('language', language.value)
     fd.append('category', category.value)
     fd.append('scene_frame', sceneFrame.value ? 'true' : 'false')
+    fd.append('voiceover', voiceover.value ? 'true' : 'false')
     fd.append('aspect', aspect.value)
     fd.append('resolution', resolution.value)
     fd.append('seconds', seconds.value)
@@ -241,6 +243,12 @@ onMounted(async () => {
             </div>
           </div>
         </div>
+
+        <label class="toggle">
+          <input type="checkbox" v-model="voiceover" />
+          <span class="tg-box" />
+          <span class="tg-text"><b>🎙️ AI 旁白配音</b><i>按所选语言看图自动写口播稿并配音(免费 TTS)。CogVideoX 本身不出人声,靠这个补;选「无人声」则不配</i></span>
+        </label>
 
         <label class="toggle">
           <input type="checkbox" v-model="sceneFrame" />

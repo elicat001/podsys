@@ -43,3 +43,9 @@ httpx>=0.27
 # 对象存储(MinIO/S3)客户端:仅 POD_STORAGE_BACKEND=s3 时真正使用,storage.py 内**惰性 import**
 # (默认 local 模式不 import,保持离线启动轻量)。换阿里云 OSS/腾讯 COS 也用它(S3 兼容)。
 boto3>=1.34
+# 图生视频「旁白配音」(services/voiceover.py,均惰性 import):
+#   edge-tts = 免费 TTS(白嫖微软 Edge 神经语音,免 key、支持葡/英/中/西等 75 种语言,需联网)。
+#   imageio-ffmpeg = 自带 ffmpeg 二进制(把配音叠回视频,无需系统装 ffmpeg)。
+# CogVideoX 只产音效不产语音 → 旁白靠这两个生成后叠加;无网/失败则保留原视频(best-effort 不阻断)。
+edge-tts>=6.1
+imageio-ffmpeg>=0.5

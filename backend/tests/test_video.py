@@ -271,3 +271,37 @@ def test_ai_generate_scene_frame_with_gptimage(client, auth_headers, monkeypatch
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
     assert called["edit"] == 1            # 场景首帧确实调了 gpt-image edit
+
+
+# ---------- 旁白配音(voiceover)----------
+def test_voiceover_language_mapping():
+    from app.services import voiceover
+    assert voiceover.supported_language("葡萄牙语") and voiceover.supported_language("中文")
+    assert not voiceover.supported_language("无对白") and not voiceover.supported_language("火星语")
+    assert voiceover.voice_for("葡萄牙语").startswith("pt-BR")
+    assert voiceover.voice_for("无对白") is None
+
+
+def test_voiceover_graceful_no_key(png):
+    # 无 openai key(conftest 清空)→ 写稿返回空 → add_voiceover 原样返回视频、无旁白,不报错也不引入重依赖
+    from PIL import Image
+
+    from app.services import voiceover
+    vid = b"FAKE_MP4_BYTES" * 20
+    img = Image.open(png())
+    out, script = voiceover.add_voiceover(vid, img, "镜头脚本", "葡萄牙语", 10)
+    assert out == vid and script == "", "无 key 应原样返回视频、无旁白"
+    # 不支持的语言(无对白)→ 直接跳过
+    out2, script2 = voiceover.add_voiceover(vid, img, "x", "无对白", 10)
+    assert out2 == vid and script2 == ""
+
+
+def test_ai_generate_voiceover_offline_skips(client, auth_headers, png):
+    # 选了配音但离线(provider=local → GIF):配音步骤因 ext!=mp4 跳过,仍出兜底 GIF、作业 done
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "达人带货", "voiceover": "true", "aspect": "portrait"},
+                    files={"file": ("x.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert job["result"]["video_url"].endswith(".gif")   # 本地兜底,配音跳过,作业不受影响

@@ -104,6 +104,9 @@ class Settings(BaseSettings):
     video_size: str = ""                   # 留空=按画幅取高分辨率(ASPECT_SIZE);填则强制(如 3840x2160 上 4K)
     video_timeout: float = 1500.0          # 轮询总超时(秒);视频远比图片慢,给 25min(4K/排队时真要这么久)
     video_poll_interval: float = 5.0
+    # 图生视频「旁白配音」总开关:看图写目标语言口播稿(网关视觉模型)→ edge-tts 免费配音 → ffmpeg 叠回。
+    # CogVideoX 只产音效不产语音,故旁白靠这条管线补。false=全局关(运维兜底);best-effort,失败保留原视频。
+    voiceover_enabled: bool = True
 
     @property
     def upscale_realesrgan_path(self) -> Path:

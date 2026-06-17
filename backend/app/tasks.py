@@ -449,6 +449,18 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     # 提示词工程:镜头脚本 + 类目动作 + 地区风格(随语言)+ 语言 + 一致性/防拉伸 + 负向
     prompt = compose_prompt(p.get("prompt", ""), language=lang, category=cat)
     out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"))
+    # 旁白配音(best-effort):选了配音 + 真 mp4(非本地兜底 GIF)才做。看图写目标语言口播稿 → edge-tts → 叠回。
+    # 失败/无网/无 key 一律保留原视频,绝不阻断视频作业(CogVideoX 只产音效不产语音,语音靠这条补)。
+    if p.get("voiceover") and out.get("ext") == "mp4":
+        try:
+            from .services.voiceover import add_voiceover
+            new_bytes, script = add_voiceover(out["bytes"], raw[0], p.get("prompt", ""),
+                                              lang, int(p.get("seconds") or settings.video_seconds))
+            out["bytes"] = new_bytes
+            if script:
+                out.setdefault("meta", {})["voiceover"] = script[:200]
+        except Exception:  # noqa: BLE001 — 配音绝不阻断视频作业
+            pass
     ext = out.get("ext", "mp4")
     name = f"video.{ext}"
     storage.output_path(job_id, name).write_bytes(out["bytes"])
@@ -457,7 +469,7 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     if job.owner_id is not None:  # 入库(用首帧做查重源,size 用视频字节)→ 删任务时可进回收站,不再成幽灵
         save_as_asset(db, job.owner_id, imgs[0], f"图生视频 {cat}", url, source="generated",
                       size_bytes=len(out["bytes"]))
-    return {"video_url": url, "ext": ext,
+    return {"video_url": url, "ext": ext, "voiceover": meta.get("voiceover", ""),
             "cover": meta.get("cover", ""), "engine": meta.get("engine", ""),
             "degraded": bool(meta.get("degraded"))}
 
