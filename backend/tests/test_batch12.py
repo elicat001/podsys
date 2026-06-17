@@ -44,16 +44,16 @@ def test_upscale_actually_enlarges(client, auth_headers):
 
 
 def test_upscale_target_resolution(client, auth_headers):
-    # 目标分辨率「2K」:256px 长边 → 长边 2048(scale=8)
+    # 精确输出:目标分辨率 = 输出长边(所见即所得,可放大可缩小)
     r = client.post("/api/image-tools/upscale", headers=auth_headers,
                     data={"target": "2k"}, files={"file": ("x.png", _png(size=(256, 256)), "image/png")})
     assert r.status_code == 200, r.text
-    assert r.json()["width"] == 2048 and r.json()["height"] == 2048, "2K 应放大到长边 2048"
-    # 已 ≥ 目标 → 不缩小:2000px 选「1K」仍是 2000
+    assert r.json()["width"] == 2048 and r.json()["height"] == 2048, "256px 选 2K → 放大到长边 2048"
+    # 比目标大 → 精确缩到目标(此前的 bug:被「不缩小」卡成原图,各档看起来都一样)
     r2 = client.post("/api/image-tools/upscale", headers=auth_headers,
                      data={"target": "1k"}, files={"file": ("x.png", _png(size=(2000, 2000)), "image/png")})
     assert r2.status_code == 200, r2.text
-    assert r2.json()["width"] == 2000, "已大于目标 → 不缩小"
+    assert r2.json()["width"] == 1024, "2000px 选 1K → 精确缩到长边 1024"
 
 
 # ---------- 侵权库扩充 + 关键词命中 ----------

@@ -34,12 +34,13 @@ _RES_TARGETS = {"1k": 1024, "2k": 2048, "4k": 4096}
 
 
 def _resolve_scale(size: tuple[int, int], target: str, scale: float) -> float:
-    """目标分辨率(1k/2k/4k=长边像素)→ 放大倍数;已 ≥ 目标则不缩小(取 1.0)。
-    target=none/未知 → 回退旧的「放大倍数」(封顶 4x)。"""
+    """目标分辨率(1k/2k/4k=长边像素)→ **精确缩放倍数**:把长边精确缩放到目标(可放大可缩小)。
+    所见即所得:选 1K→长边1024、2K→2048、4K→4096(不论原图比目标大或小)。
+    target=none/未知 → 回退旧的「放大倍数」(只放大,封顶 4x)。"""
     t = (target or "none").lower()
     if t in _RES_TARGETS:
         long_edge = max(size) or 1
-        return max(1.0, _RES_TARGETS[t] / long_edge)   # 目标 ≤4096,天然封顶;不缩小
+        return _RES_TARGETS[t] / long_edge
     return max(1.0, min(scale, 4.0))
 
 
@@ -81,13 +82,16 @@ async def upscale(
     src = _read_image(raw, db, user, "process")
     scale = _resolve_scale(src.size, target, scale)
 
-    if settings.upscale_provider == "realesrgan":  # AI 提质 ~几秒 → Celery 后台作业,前端轮询
+    # 放大/提质(scale≥1)走 AI 超分(后台);缩小(scale<1,目标比原图小)无需超分,直接同步 Lanczos 缩
+    if settings.upscale_provider == "realesrgan" and scale >= 1.0:
         return JSONResponse(submit_celery(run_tool, db, user, kind="upscale", tool_id="upscale",
                                           op="process", raw=raw, params={"scale": scale}))
 
-    # pillow(Lanczos):快,同步
+    # pillow(Lanczos)或缩小:快,同步
     try:
-        out = get_upscale_provider().upscale(src.convert("RGB"), scale=scale)
+        from ..ai.upscale import PillowUpscaleProvider
+        prov = PillowUpscaleProvider() if scale < 1.0 else get_upscale_provider()
+        out = prov.upscale(src.convert("RGB"), scale=scale)
     except Exception as exc:  # noqa: BLE001
         refund(db, user, "process")
         raise HTTPException(status_code=500, detail="提质失败") from exc
