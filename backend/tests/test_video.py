@@ -304,6 +304,20 @@ def test_subtitle_render_no_crash():
     assert out == b"" or out[:8] == b"\x89PNG\r\n\x1a\n", "应为空或合法 PNG"
 
 
+def test_subtitle_segments_timed():
+    # 字幕分段:按短语切、按字数比例分配时间窗、顺序不重叠、覆盖整段时长(跟着语音逐段显示)
+    from app.services import voiceover
+    segs = voiceover._segments("这款大容量保温杯，颜值在线、握感舒适，随时喝水超方便,喜欢就下单", 10.0, "中文")
+    assert 2 <= len(segs) <= 8, "应拆成多段(非整段一次性显示)"
+    assert segs[0][0] == 0.0, "首段从 0 开始"
+    assert all(s < e for s, e, _ in segs), "每段起 < 止"
+    assert all(segs[i][1] <= segs[i + 1][0] + 0.01 for i in range(len(segs) - 1)), "时间窗顺序不重叠"
+    assert segs[-1][1] >= 10.0, "末段覆盖到结尾"
+    # 拉丁语按词分段
+    segs2 = voiceover._segments("This is a really nice cup. Buy it right now please today friend.", 8.0, "英语")
+    assert len(segs2) >= 2 and all(t for _, _, t in segs2)
+
+
 def test_ai_generate_subtitle_offline_skips(client, auth_headers, png):
     # 选了字幕但离线(provider=local → GIF):配音/字幕因 ext!=mp4 跳过,仍出兜底 GIF、作业 done
     r = client.post("/api/video/ai-generate", headers=auth_headers,
