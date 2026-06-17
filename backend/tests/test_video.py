@@ -208,17 +208,16 @@ def test_aspect_size_by_resolution():
 
 
 def test_compose_prompt_pro_layers():
-    # 专业化拼装:镜头脚本 + 类目动作(马克杯)+ 巴西风格(葡语)+ 语言 + 防拉伸 + 负向
+    # 专业化拼装:镜头脚本(动作全交给它,不再按类目追加)+ 巴西风格(葡语)+ 语言 + 防拉伸 + 负向
     from app.ai.video import compose_prompt
-    out = compose_prompt("素人开箱,手持拍摄", language="葡萄牙语", category="马克杯")
+    out = compose_prompt("素人开箱,手持拍摄", language="葡萄牙语")
     assert "素人开箱,手持拍摄" in out
-    assert "马克杯" in out and "旋转" in out          # 类目专属动作被追加
     assert "巴西" in out                             # 葡语 → 巴西本地风格
     assert "葡萄牙语" in out                          # 语言指令
     assert "拉伸" in out                             # 防拉伸/一致性
     assert "避免" in out                             # 负向词被追加
     # 地区风格跟着语言智能变:英语 → 欧美(不是巴西)
-    out2 = compose_prompt("镜头推近", language="英语", category="通用")
+    out2 = compose_prompt("镜头推近", language="英语")
     assert "巴西" not in out2 and "欧美" in out2 and "英语" in out2
     # 「无对白」→ 不加地区风格、不加配音句
     out3 = compose_prompt("镜头推近", language="无对白")
@@ -226,11 +225,10 @@ def test_compose_prompt_pro_layers():
 
 
 def test_compose_prompt_has_physics_constraints():
-    # 物理连贯约束:无论什么品类(含未知/通用)都通用追加,治"瓶盖凭空而启"这类违背物理的画面。
-    # 关键是"通用",不是给某个品类写死 —— 用多个品类都断言它在。
+    # 物理连贯约束:不分内容通用追加,治"瓶盖凭空而启"这类违背物理的画面(不给某个场景写死)。
     from app.ai.video import compose_prompt
-    for cat in ("通用", "马克杯", "手机壳", "不存在的品类"):
-        out = compose_prompt("展示商品", language="无对白", category=cat)
+    for motion in ("展示商品", "拿起转动", "模特上身穿着"):
+        out = compose_prompt(motion, language="无对白")
         assert "物理" in out                       # 正/负向都强调遵循真实物理
         assert "自行开合" in out                    # 负向:部件无人触碰不得自行开合
         assert "凭空" in out and "瞬移" in out       # 负向:物体不得凭空出现/瞬移

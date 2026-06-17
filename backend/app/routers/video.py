@@ -70,7 +70,7 @@ def ai_generate(
     file2: UploadFile | None = File(None),
     prompt: str = Form(""),          # 视频描述/镜头脚本(由前端「视频类型」填入、可自定义编辑)
     language: str = Form("葡萄牙语"),  # 配音/对白语言(默认葡语)
-    category: str = Form("通用"),     # 商品类目:决定专属动作序列 + 场景首帧的场景
+    category: str = Form("通用"),     # 商品类目(前端已不暴露,默认通用):仅用于场景首帧的场景 + 入库标题
     scene_frame: bool = Form(False),  # 两步:先 gpt-image 生成场景首帧再生视频(缓解硬切;无 key 自动跳过)
     aspect: str = Form("portrait"),
     resolution: str = Form("1080p"),

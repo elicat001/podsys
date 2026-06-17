@@ -446,8 +446,8 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             imgs[0] = fit_to_aspect(framed, tw, th)
         except Exception:  # noqa: BLE001
             pass
-    # 提示词工程:镜头脚本 + 类目动作 + 地区风格(随语言)+ 语言 + 一致性/防拉伸 + 负向
-    prompt = compose_prompt(p.get("prompt", ""), language=lang, category=cat)
+    # 提示词工程:镜头脚本 + 地区风格(随语言)+ 语言 + 一致性/防拉伸 + 负向(动作交给用户脚本,不按类目追加)
+    prompt = compose_prompt(p.get("prompt", ""), language=lang)
     # 人声(默认)= 用 CogVideoX 自带音频(with_audio=true);旁白设置开 = 无声生成(with_audio=false)再叠 AI 旁白。二者互斥。
     native_sound = bool(p.get("native_sound", True))
     out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"),
