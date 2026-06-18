@@ -314,8 +314,14 @@ ssh pod-kejing 'bash /www/wwwroot/podsys/deploy.sh'   # 没配别名就 ssh root
 **到临时 dist.new、成功才原子替换**现网 `dist`(构建失败现网不动=零停机)→ `systemctl restart
 podsys.service` → 健康检查 `/` 与 `/api` 均 200。幂等可重跑,断了重跑即可。
 
-**注意 / 坑**:
-- 前端只改源码也要**重新构建**才生效(走 `deploy.sh`);后端改了由 `deploy.sh` 的 restart 生效。
+**🟢 发版不断任务(蓝绿 worker + 优雅排空,已上线)**:早期 `deploy.sh` 直接 `systemctl restart podsys-worker`,而单元 `TimeoutStopSec` 是 systemd 默认 90s → 长任务(图生视频可达 25min)会被 SIGKILL 半路杀死、Job 卡 `running`、运营白扣点。现已改造为**零打断**:
+  - **模板单元 `podsys-worker@blue/@green`**(`scripts/setup-bluegreen-worker.sh` 一次性装):`TimeoutStopSec=1800`(>最长任务)+ `KillMode=mixed` → stop 时只对 celery 主进程发 SIGTERM,**停止接新任务、把手头任务跑完再退,绝不强杀**。
+  - **`deploy.sh` 蓝绿切换**:先起"另一个颜色"(新代码)接管新任务 → 再 `stop --no-block` 旧颜色(后台优雅排空)。当前活跃色记在 `$REPO/.worker-color`。模板没装则**回退**老单实例 restart(老单元也加了 graceful drop-in,同样不强杀)。
+  - **纯前端发版跳过重启**:`deploy.sh` 比对 `BEFORE..AFTER` 的改动文件,若**全部**在 `frontend-vue/` 下 → 只原子替换 dist、**不重启后端/worker**(运营任务零打断)。
+  - **幂等护栏**:`run_job_in_worker` 开头 `if job.status in (done/error): return` —— 防回收器退点后旧消息又被 broker 重投导致重复出图/重复退点(配合既有 `task_acks_late`)。
+  - **卡死兜底**:`services/jobs.py:reap_stuck_jobs`(40min 阈值,>视频上限)已在 `/api/jobs` 列表惰性自愈——任何 worker 意外死亡(OOM/崩溃)都把僵尸 Job 判 error + 退点,运营不会"扣了点没结果"。
+  - **残留**:API(`podsys.service`)仍是 graceful restart,有 ~1-2s socket 空窗(在途请求会排空,但新连接短暂被拒)。要 API 也零停机需上 nginx upstream + 双 uvicorn 实例(动 nginx,暂未做)。
+- 前端只改源码也要**重新构建**才生效(走 `deploy.sh`);后端改了由 `deploy.sh` 的 restart 生效(蓝绿,不断任务)。
 - `www` 的 home(`/www/wwwroot`)属 root,**npm 没法在那写缓存** → `deploy.sh` 用 `HOME=/tmp/wwwbuild`(脚本会自建)。
 - **`frontend-vue/src/data/` 是源码不是运行时数据**:根 `.gitignore` 的 `data/` 规则会误伤它,已加例外
   `!frontend-vue/src/data/`。**以后在前端新建 `data/` 类目录注意别被 gitignore 吞掉**(`git status --ignored` 自检)。

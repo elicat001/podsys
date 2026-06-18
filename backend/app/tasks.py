@@ -43,13 +43,19 @@ def run_job_in_worker(job_id: str, work: Work, *, refund_op: str | None = None,
     """通用作业执行骨架:置 running → 跑 work → 记 done/error + finished_at;失败按 refund_n 笔退 refund_op。
 
     用任务自己的 DB session(worker 进程,不存在请求 session)。work 抛错时:回滚半提交 →
-    重读 job 标记 error → 退点 → 提交。幂等友好(task_acks_late 重投时会从 pending/running 重跑)。
+    重读 job 标记 error → 退点 → 提交。幂等:task_acks_late 重投只对 pending/running 重跑,
+    终态(done/error)直接跳过(防回收器退点后又被重投导致重复出图/重复退点)。
     """
     db = SessionLocal()
     try:
         job = db.get(Job, job_id)
         if job is None:
             log.warning("作业 %s 不存在,跳过", job_id)
+            return
+        # 幂等护栏:已是终态(done/error)直接跳过。覆盖「回收器已判失败+退点后,旧消息又被 broker 重投」
+        # 的竞态——否则会重复出图 + 重复退点(done 覆盖 error / 二次 refund)。重投只对 pending/running 重跑。
+        if job.status in ("done", "error"):
+            log.info("作业 %s 已是终态 %s,跳过重复执行(重投/竞态)", job_id, job.status)
             return
         job.status = "running"
         job.started_at = _now()

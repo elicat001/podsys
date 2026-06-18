@@ -186,6 +186,39 @@ def test_reaper_marks_stale_running_error_and_refunds(client, auth_headers):
     assert after == before + 2, f"vectorize(process=2)应退回:before={before} after={after}"
 
 
+def test_worker_skips_terminal_job_idempotent(client, auth_headers):
+    """幂等护栏:已 error(如被回收器判失败+退点)的作业被 broker 重投时,worker 跳过——
+    不重复执行 work、不把 error 覆盖成 done、不二次退点。"""
+    from datetime import datetime, timezone
+    from app import tasks
+    from app.db import SessionLocal
+    from app.models_db import Job
+    me = client.get("/api/auth/me", headers=auth_headers).json()
+    uid, before = me["user_id"], me["credits"]
+    s = SessionLocal()
+    try:
+        s.add(Job(id="terminaljob01", kind="vectorize", tool_id="vectorize", status="error",
+                  params={}, result={}, error="作业超时或中断,已自动结束(可重试)", owner_id=uid,
+                  created_at=datetime.now(timezone.utc), finished_at=datetime.now(timezone.utc)))
+        s.commit()
+    finally:
+        s.close()
+
+    called = {"n": 0}
+
+    def _work(job_id, job, db):
+        called["n"] += 1
+        return {"image_url": "/x.png"}
+
+    tasks.run_job_in_worker("terminaljob01", _work, refund_op="process")  # 模拟 broker 重投
+
+    assert called["n"] == 0, "终态作业不应再执行 work"
+    job = client.get("/api/jobs/terminaljob01", headers=auth_headers).json()
+    assert job["status"] == "error", job   # 未被覆盖成 done
+    after = client.get("/api/auth/me", headers=auth_headers).json()["credits"]
+    assert after == before, f"不应二次退点:before={before} after={after}"
+
+
 def test_delete_job_trashes_asset(client, auth_headers, png, monkeypatch):
     """删除任务 → 作业行删除(再查 404)+ 关联素材进回收站。"""
     _enable_ai(monkeypatch)

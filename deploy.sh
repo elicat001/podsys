@@ -21,7 +21,9 @@ FE="$REPO/frontend-vue"
 VENV="$BE/.venv"
 BUILD_HOME=/tmp/wwwbuild        # www 真实 home 属 root,npm/pip 没法写;给它一个可写的 scratch HOME
 SVC=podsys.service
-WORKER=podsys-worker.service    # Celery worker(可能不存在=未配置异步,跳过其重启)
+WORKER=podsys-worker.service    # 老的单实例 worker(回退用;装了蓝绿模板后会被停用)
+WORKER_TPL=podsys-worker@       # 蓝绿:模板单元 podsys-worker@blue / @green(scripts/setup-bluegreen-worker.sh 装)
+COLOR_FILE="$REPO/.worker-color"  # 记录当前活跃颜色(blue/green),发版时切到另一个
 RUNAS=www                       # 后端服务的运行用户;用它构建,保证产物属主一致
 PORT=10000
 
@@ -30,9 +32,20 @@ mkdir -p "$BUILD_HOME"; chown "$RUNAS:$RUNAS" "$BUILD_HOME"
 
 echo "==> [1/6] 拉取最新代码(ff-only)"
 cd "$REPO"
+BEFORE=$(sudo -u "$RUNAS" git rev-parse HEAD 2>/dev/null || echo "")
 sudo -u "$RUNAS" git pull --ff-only origin main
 HEAD=$(sudo -u "$RUNAS" git rev-parse --short HEAD)
+AFTER=$(sudo -u "$RUNAS" git rev-parse HEAD)
 echo "    HEAD=$HEAD"
+# 是否动了"后端"?纯前端改动已由 dist 原子替换生效,无需重启后端/worker → 运营任务零打断。
+# 保守默认 1(重启);仅当本次有新提交且改动**全部**落在 frontend-vue/ 下时,才置 0 跳过重启。
+BACKEND_TOUCHED=1
+if [ -n "$BEFORE" ] && [ "$BEFORE" != "$AFTER" ]; then
+  CHANGED=$(sudo -u "$RUNAS" git diff --name-only "$BEFORE" "$AFTER")
+  if [ -n "$CHANGED" ] && ! echo "$CHANGED" | grep -qvE '^frontend-vue/'; then
+    BACKEND_TOUCHED=0
+  fi
+fi
 
 echo "==> [2/6] 安装后端依赖(pip,只补缺的;celery/redis 等)"
 # 已满足的会跳过,首次会装上 celery/redis。HOME 指向可写 scratch 让 pip 能写缓存。
@@ -68,14 +81,36 @@ mv dist.new dist
 chown -R "$RUNAS:$RUNAS" dist
 rm -rf dist.old
 
-echo "==> [6/6] 重启后端(+ 异步 worker)+ 健康检查"
-systemctl restart "$SVC"
-# Celery worker:配置了才重启(异步工具要它才出结果;没配就跳过,AI 工具走优雅降级 502+退点)
-if systemctl list-unit-files "$WORKER" --no-legend 2>/dev/null | grep -q "$WORKER"; then
-  systemctl restart "$WORKER"
-  echo "    worker=$(systemctl is-active "$WORKER")"
+echo "==> [6/6] 生效 + 健康检查(前端已原子替换;后端按需重启,worker 蓝绿不断任务)"
+# 蓝绿切换 worker:先起"另一个颜色"(加载新代码)接管新任务,再优雅排空旧颜色(--no-block 不阻塞发版)。
+# 旧 worker 收 SIGTERM 后停止接新任务、把手头任务跑完再退(TimeoutStopSec=30min),全程不强杀=任务不断。
+# 模板未装(未迁移的机器)→ 回退老单实例 restart;配合 graceful drop-in 也不强杀,只是会等排空。
+restart_worker() {
+  if systemctl list-unit-files "${WORKER_TPL}.service" --no-legend 2>/dev/null | grep -q "${WORKER_TPL}"; then
+    local cur new old
+    cur=$(cat "$COLOR_FILE" 2>/dev/null || echo "")
+    if [ "$cur" = "blue" ]; then new=green; old=blue; elif [ "$cur" = "green" ]; then new=blue; old=green; else new=blue; old=""; fi
+    systemctl stop "${WORKER_TPL}${new}.service" 2>/dev/null || true   # 正常瞬时;若同色上次仍在排空则等其完成(安全)
+    systemctl enable "${WORKER_TPL}${new}.service" >/dev/null 2>&1 || true
+    systemctl start "${WORKER_TPL}${new}.service"
+    if [ -n "$old" ] && [ "$old" != "$new" ]; then
+      systemctl disable "${WORKER_TPL}${old}.service" >/dev/null 2>&1 || true
+      systemctl stop --no-block "${WORKER_TPL}${old}.service" 2>/dev/null || true   # 后台排空,不阻塞发版
+    fi
+    echo "$new" > "$COLOR_FILE"
+    echo "    worker 蓝绿:新=$new($(systemctl is-active "${WORKER_TPL}${new}.service"))${old:+,旧=$old 后台排空手头任务}"
+  elif systemctl list-unit-files "$WORKER" --no-legend 2>/dev/null | grep -q "$WORKER"; then
+    systemctl restart "$WORKER"
+    echo "    worker(单实例,优雅排空后重启)=$(systemctl is-active "$WORKER")"
+  else
+    echo "    (未配置 worker,跳过——异步工具走优雅降级)"
+  fi
+}
+if [ "$BACKEND_TOUCHED" = "0" ]; then
+  echo "    本次仅前端改动 → dist 已替换生效,跳过后端/worker 重启(运营任务零打断)"
 else
-  echo "    (未配置 $WORKER,跳过——异步工具将走优雅降级)"
+  systemctl restart "$SVC"   # API:uvicorn 收 SIGTERM 排空在途请求(残留 ~1-2s socket 空窗,见 CLAUDE.md)
+  restart_worker
 fi
 for i in $(seq 1 30); do
   [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$PORT/api/templates")" = "200" ] && break
