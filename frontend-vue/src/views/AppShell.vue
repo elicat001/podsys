@@ -79,6 +79,10 @@ function logout() {
       </aside>
 
       <main class="content">
+        <!-- 上架模块暂未开放:整段为预览界面,统一加提示(覆盖店铺/商品/模板三页) -->
+        <div v-if="activeModule === 'publish'" class="wip-banner">
+          🚧 「上架」模块开发中 —— 当前为预览界面,店铺绑定、商品上架、模板等功能暂未开放,数据与操作暂不生效,敬请期待。
+        </div>
         <router-view />
       </main>
     </div>
@@ -222,5 +226,15 @@ function logout() {
   overflow-y: auto;
   padding: 24px 28px;
   min-width: 0;
+}
+.wip-banner {
+  margin-bottom: 18px;
+  padding: 12px 16px;
+  border: 1px solid rgba(255, 184, 0, 0.42);
+  border-radius: 10px;
+  background: rgba(255, 184, 0, 0.1);
+  color: var(--fg);
+  font-size: 13.5px;
+  line-height: 1.55;
 }
 </style>

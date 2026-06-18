@@ -198,6 +198,23 @@ def test_smart_describe_ok_charges_title(client, auth_headers, monkeypatch):
     assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 1
 
 
+def test_smart_describe_passes_selling_points(client, auth_headers, monkeypatch):
+    # 产品卖点经端点透传给 smart_describe(AI 围绕卖点写脚本)
+    from app.services import video_describe
+    seen = {}
+
+    def _fake(*a, **k):
+        seen.update(k)
+        return "【0-2秒】围绕卖点展示商品。"
+    monkeypatch.setattr(video_describe, "smart_describe", _fake)
+    r = client.post("/api/video/smart-describe", headers=auth_headers,
+                    data={"video_type": "达人带货", "seconds": "5", "category": "水杯",
+                          "selling_points": "大容量保温·12小时持热·防漏"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    assert r.status_code == 200, r.text
+    assert seen.get("selling_points") == "大容量保温·12小时持热·防漏"
+
+
 def test_aspect_size_by_resolution():
     # 画幅 × 分辨率 → 尺寸(短边=分辨率档,长边按比例)
     from app.ai.video import aspect_size

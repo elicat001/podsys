@@ -47,6 +47,7 @@ const TYPES = [
 ]
 const selType = ref('')
 const prompt = ref('')
+const sellingPoints = ref('')   // 产品卖点(选填):喂给「智能识别」;也会追加进所选类型的模板脚本
 
 const ASPECTS = [
   { id: 'portrait', label: '9:16', hint: '竖屏·带货' },
@@ -84,15 +85,22 @@ function clearSlot(slot) {
   else { img2.value = null; img2Url.value = '' }
 }
 
+// 填模板脚本:取该时长的 t5/t10;若填了产品卖点,追加一段「核心卖点」让画面/旁白都围绕它(custom 留空给用户自写)
+function applyTemplate(t) {
+  let body = seconds.value === 5 ? t.t5 : t.t10
+  const sp = sellingPoints.value.trim()
+  if (body && sp) body += `\n\n【核心卖点(请在画面与动作中重点体现)】${sp}`
+  prompt.value = body
+}
 function pickDuration(s) {
   seconds.value = s
   const t = TYPES.find((x) => x.id === selType.value)   // 已选类型 → 重填该时长脚本(custom 保留用户内容)
-  if (t && t.id !== 'custom' && selType.value !== 'smart') prompt.value = s === 5 ? t.t5 : t.t10
+  if (t && t.id !== 'custom' && selType.value !== 'smart') applyTemplate(t)
 }
 function pickType(t) {
   if (!seconds.value) return ElMessage.warning('请先选择视频时长')
   selType.value = t.id
-  prompt.value = seconds.value === 5 ? t.t5 : t.t10
+  applyTemplate(t)
 }
 
 async function smartDetect() {
@@ -106,11 +114,14 @@ async function smartDetect() {
     fd.append('video_type', typeName.value)
     fd.append('seconds', seconds.value)
     fd.append('language', language.value)
+    fd.append('selling_points', sellingPoints.value)
     const data = (await api.post('/video/smart-describe', fd)).data
     prompt.value = data.description
     selType.value = 'smart'
     if (auth.refreshBalance) auth.refreshBalance()
-    ElMessage.success('✨ 已根据你的图片生成视频描述,可继续微调')
+    const tip = sellingPoints.value.trim() ? '✨ 已围绕你的产品卖点 + 图片生成视频描述,可继续微调'
+                                           : '✨ 已根据你的图片生成视频描述,可继续微调'
+    ElMessage.success(tip)
   } catch (e) {
     ElMessage.error((e.response && e.response.data && e.response.data.detail) || e.message || '智能识别失败')
   } finally {
@@ -193,10 +204,14 @@ onMounted(async () => {
             </button>
           </div>
 
+          <div class="clabel mt">产品卖点 <span class="opt">选填 · 智能识别会围绕它写脚本</span></div>
+          <textarea v-model="sellingPoints" class="inp sp-ta" maxlength="500"
+            placeholder="如:大容量保温杯 · 12 小时持热 · 防漏防烫 · 食品级内胆…(逗号或换行分隔)"></textarea>
+
           <div class="clabel mt">视频类型</div>
           <button class="smart" :class="{ on: selType === 'smart' }" :disabled="!seconds || smartLoading" @click="smartDetect">
             <span class="si">✨</span>
-            <span class="st"><b>{{ smartLoading ? '识别中…' : '智能识别 · 扣 1 点' }}</b><i>看图自动写贴合的镜头脚本</i></span>
+            <span class="st"><b>{{ smartLoading ? '识别中…' : '智能识别 · 扣 1 点' }}</b><i>看图 + 围绕产品卖点写镜头脚本</i></span>
           </button>
           <div class="types" :class="{ locked: !seconds }">
             <button v-for="t in TYPES" :key="t.id" class="type" :class="{ on: selType === t.id }" :disabled="!seconds" @click="pickType(t)">
@@ -316,6 +331,7 @@ onMounted(async () => {
 .inp { width: 100%; background: var(--bg2); border: 1px solid var(--line2); border-radius: 10px; padding: 9px 10px; color: var(--fg); font: inherit; box-sizing: border-box; resize: vertical; }
 .inp:focus { border-color: var(--brand); outline: none; }
 .desc-ta { min-height: 122px; line-height: 1.5; font-size: 13px; }
+.sp-ta { min-height: 52px; line-height: 1.45; font-size: 12.5px; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { border: 1px solid var(--line2); background: var(--bg2); color: var(--mut); border-radius: 11px; padding: 4px 10px; font-size: 12.5px; cursor: pointer; }

@@ -44,17 +44,19 @@ def smart_describe_endpoint(
     seconds: int = Form(10),
     language: str = Form("葡萄牙语"),
     category: str = Form("通用"),
+    selling_points: str = Form(""),   # 卖家手填的产品卖点;AI 围绕它写脚本(选填)
     user: User = Depends(charge_for("title")),
     db: Session = Depends(get_db),
 ):
-    """智能识别:看商品图 → 自动生成贴合该商品的镜头脚本(填进「视频描述」)。同步,扣 title=1,失败退点。
+    """智能识别:看商品图 + 产品卖点 → 自动生成贴合该商品的镜头脚本(填进「视频描述」)。同步,扣 title=1,失败退点。
     复用作图的网关视觉模型(POD_OPENAI_API_KEY);无 key/失败 → 502 + 退点。"""
     img = read_image_or_refund(file.file.read(), db, user, "title")
     if seconds not in DURATIONS:
         seconds = 10
     try:
         from ..services.video_describe import smart_describe
-        text = smart_describe(img, video_type=video_type, seconds=seconds, language=language, category=category)
+        text = smart_describe(img, video_type=video_type, seconds=seconds, language=language,
+                              category=category, selling_points=selling_points[:500])
     except Exception as exc:  # noqa: BLE001
         refund(db, user, "title")
         raise HTTPException(status_code=502, detail="智能识别失败(作图 AI 服务未配置或调用失败)") from exc

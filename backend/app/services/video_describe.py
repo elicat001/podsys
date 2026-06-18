@@ -14,8 +14,10 @@ from ..config import settings
 
 
 def smart_describe(image: Image.Image, video_type: str = "开箱分享", seconds: int = 10,
-                   language: str = "葡萄牙语", category: str = "通用") -> str:
-    """视觉识别商品 → 生成 seconds 秒的「video_type」风格分镜脚本(只返回中文脚本正文)。"""
+                   language: str = "葡萄牙语", category: str = "通用",
+                   selling_points: str = "") -> str:
+    """视觉识别商品 → 生成 seconds 秒的「video_type」风格分镜脚本(只返回中文脚本正文)。
+    selling_points:卖家手填的产品卖点(可空);非空时脚本必须围绕这些卖点把功能视觉化。"""
     if not settings.openai_api_key:
         raise RuntimeError("未配置 AI key(智能识别需要作图的网关 key)")
 
@@ -24,9 +26,16 @@ def smart_describe(image: Image.Image, video_type: str = "开箱分享", seconds
     buf = io.BytesIO(); im.save(buf, format="JPEG", quality=85)
     data_url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
+    sp = (selling_points or "").strip()[:500]
+    sp_line = (
+        f"⓪ 【最高优先级 · 卖家提供的产品卖点】{sp}\n"
+        "   整段脚本必须紧紧围绕这些卖点来设计画面与展示动作,把每条卖点【视觉化】——用镜头特写、人物动作、"
+        "使用场景去体现它(而不是单纯堆砌形容词或念出来);若某条卖点与图中商品明显冲突,以图为准、忽略该条;\n"
+    ) if sp else ""
     prompt = (
         "你是 TikTok 跨境电商短视频的分镜脚本专家。请仔细观察这张商品图,为它写一段视频「镜头脚本」。\n"
-        f"硬性要求:\n"
+        "硬性要求:\n"
+        + sp_line +
         f"① 视频时长 {seconds} 秒,严格按 {seconds} 秒的节奏分时间轴(如【0-2秒】【2-4秒】…),动作连续、有趣、真实、能抓人;\n"
         f"② 风格为「{video_type}」;商品类目「{category}」,要紧扣图中这件【具体商品】的外观/品类/卖点来设计画面与动作;\n"
         "③ 描述镜头语言(推拉摇移/特写)、人物行为、产品展示动作,而不是堆砌形容词;\n"
