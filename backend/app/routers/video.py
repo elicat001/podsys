@@ -66,6 +66,49 @@ def smart_describe_endpoint(
     return {"description": text[:2000]}
 
 
+@router.post("/wizard/brief")
+def wizard_brief(
+    file: UploadFile = File(...),
+    selling_points: str = Form(""),
+    language: str = Form("葡萄牙语"),
+    user: User = Depends(charge_for("title")),
+    db: Session = Depends(get_db),
+):
+    """智能向导 Step1:看商品图 → 结构化商品简报(产品名称/目标受众/核心卖点)。同步,扣 title=1,失败退点。"""
+    img = read_image_or_refund(file.file.read(), db, user, "title")
+    try:
+        from ..services.video_wizard import describe_product
+        brief = describe_product(img, selling_points=selling_points[:500], language=language)
+    except Exception as exc:  # noqa: BLE001
+        refund(db, user, "title")
+        raise HTTPException(status_code=502, detail="商品信息识别失败(作图 AI 服务未配置或调用失败)") from exc
+    return brief
+
+
+@router.post("/wizard/proposals")
+def wizard_proposals(
+    name: str = Form(""),
+    audience: str = Form(""),
+    selling_points: str = Form(""),
+    seconds: int = Form(10),
+    language: str = Form("葡萄牙语"),
+    category: str = Form("通用"),
+    user: User = Depends(charge_for("title")),
+    db: Session = Depends(get_db),
+):
+    """智能向导 Step2:据商品简报 → 3 个不同方向的视频方案。同步,扣 title=1,失败退点。「换一批」=再调一次。"""
+    if seconds not in DURATIONS:
+        seconds = 10
+    try:
+        from ..services.video_wizard import generate_proposals
+        proposals = generate_proposals(name[:200], audience[:300], selling_points[:600],
+                                       seconds=seconds, language=language, category=category, n=3)
+    except Exception as exc:  # noqa: BLE001
+        refund(db, user, "title")
+        raise HTTPException(status_code=502, detail="方案生成失败(作图 AI 服务未配置或调用失败)") from exc
+    return {"proposals": proposals}
+
+
 @router.post("/ai-generate")
 def ai_generate(
     file: UploadFile = File(...),

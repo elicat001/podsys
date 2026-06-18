@@ -5,6 +5,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client.js'
 import { useAuth } from '../stores/auth.js'
+import VideoWizardDialog from '../components/VideoWizardDialog.vue'
 
 const auth = useAuth()
 const img1 = ref(null); const img1Url = ref('')
@@ -22,7 +23,7 @@ const submitting = ref(false)
 const submitted = ref(false)
 const aiReady = ref(true)
 const smartReady = ref(false)
-const smartLoading = ref(false)
+const wizardOpen = ref(false)   // 智能方案向导弹窗
 
 const DURATIONS = [{ id: 5, label: '5 秒', hint: '快' }, { id: 10, label: '10 秒', hint: '完整' }]
 
@@ -69,7 +70,6 @@ const LANGS = [
 ]
 
 const isFrames2 = computed(() => !!img2.value)
-const typeName = computed(() => (TYPES.find((t) => t.id === selType.value)?.name) || '开箱分享')
 
 function pick(e, slot) {
   const f = e.target.files && e.target.files[0]
@@ -103,30 +103,15 @@ function pickType(t) {
   applyTemplate(t)
 }
 
-async function smartDetect() {
+function openWizard() {
   if (!img1.value) return ElMessage.warning('请先上传商品图片')
   if (!seconds.value) return ElMessage.warning('请先选择视频时长')
-  if (!smartReady.value) return ElMessage.warning('未配置作图 AI key,「智能识别」暂不可用')
-  smartLoading.value = true
-  try {
-    const fd = new FormData()
-    fd.append('file', img1.value)
-    fd.append('video_type', typeName.value)
-    fd.append('seconds', seconds.value)
-    fd.append('language', language.value)
-    fd.append('selling_points', sellingPoints.value)
-    const data = (await api.post('/video/smart-describe', fd)).data
-    prompt.value = data.description
-    selType.value = 'smart'
-    if (auth.refreshBalance) auth.refreshBalance()
-    const tip = sellingPoints.value.trim() ? '✨ 已围绕你的产品卖点 + 图片生成视频描述,可继续微调'
-                                           : '✨ 已根据你的图片生成视频描述,可继续微调'
-    ElMessage.success(tip)
-  } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.detail) || e.message || '智能识别失败')
-  } finally {
-    smartLoading.value = false
-  }
+  if (!smartReady.value) return ElMessage.warning('未配置作图 AI key,「智能方案」暂不可用')
+  wizardOpen.value = true
+}
+function onWizardApply({ storyboard }) {
+  prompt.value = storyboard
+  selType.value = 'smart'
 }
 
 async function run() {
@@ -209,9 +194,9 @@ onMounted(async () => {
             placeholder="如:大容量保温杯 · 12 小时持热 · 防漏防烫 · 食品级内胆…(逗号或换行分隔)"></textarea>
 
           <div class="clabel mt">视频类型</div>
-          <button class="smart" :class="{ on: selType === 'smart' }" :disabled="!seconds || smartLoading" @click="smartDetect">
+          <button class="smart" :class="{ on: selType === 'smart' }" :disabled="!seconds" @click="openWizard">
             <span class="si">✨</span>
-            <span class="st"><b>{{ smartLoading ? '识别中…' : '智能识别 · 扣 1 点' }}</b><i>看图 + 围绕产品卖点写镜头脚本</i></span>
+            <span class="st"><b>智能方案向导</b><i>AI 看图填商品信息 → 出 3 个方案选用(每步扣 1 点)</i></span>
           </button>
           <div class="types" :class="{ locked: !seconds }">
             <button v-for="t in TYPES" :key="t.id" class="type" :class="{ on: selType === t.id }" :disabled="!seconds" @click="pickType(t)">
@@ -278,6 +263,15 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <VideoWizardDialog
+      v-model="wizardOpen"
+      :image="img1"
+      :seconds="seconds"
+      :language="language"
+      :selling-points="sellingPoints"
+      @apply="onWizardApply"
+    />
   </div>
 </template>
 

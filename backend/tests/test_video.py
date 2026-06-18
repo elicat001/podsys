@@ -215,6 +215,62 @@ def test_smart_describe_passes_selling_points(client, auth_headers, monkeypatch)
     assert seen.get("selling_points") == "大容量保温·12小时持热·防漏"
 
 
+def test_wizard_brief_ok_charges_title(client, auth_headers, monkeypatch):
+    # Step1:mock 视觉模型 → 结构化简报;扣 title=1
+    from app.services import video_wizard
+    monkeypatch.setattr(video_wizard, "describe_product",
+                        lambda *a, **k: {"name": "田园风抱枕套", "audience": "家居人群",
+                                         "selling_points": "亚麻透气、隐形拉链易拆洗"})
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/wizard/brief", headers=auth_headers,
+                    data={"language": "英语", "selling_points": "亚麻"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "田园风抱枕套" and "拉链" in r.json()["selling_points"]
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 1
+
+
+def test_wizard_brief_no_key_502_refunds(client, auth_headers):
+    # 无 openai key(conftest 清空)→ 502 + 退点
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/wizard/brief", headers=auth_headers,
+                    files={"file": ("x.png", _png(), "image/png")})
+    assert r.status_code == 502
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0
+
+
+def test_wizard_proposals_ok_charges_title(client, auth_headers, monkeypatch):
+    # Step2:mock → 3 个方案;扣 title=1
+    from app.services import video_wizard
+    monkeypatch.setattr(video_wizard, "generate_proposals",
+                        lambda *a, **k: [{"title": f"方案{i}", "angle": "x", "model": "m",
+                                          "environment": "e", "storyboard": "【0-2秒】展示。"} for i in range(3)])
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/wizard/proposals", headers=auth_headers,
+                    data={"name": "抱枕套", "audience": "家居", "selling_points": "亚麻",
+                          "seconds": "5", "language": "英语"})
+    assert r.status_code == 200, r.text
+    assert len(r.json()["proposals"]) == 3 and r.json()["proposals"][0]["storyboard"]
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 1
+
+
+def test_wizard_proposals_no_key_502_refunds(client, auth_headers):
+    # 真实 generate_proposals 无 key → 抛错 → 502 + 退点
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/wizard/proposals", headers=auth_headers,
+                    data={"name": "x", "audience": "y", "selling_points": "z", "seconds": "5"})
+    assert r.status_code == 502
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0
+
+
+def test_wizard_parse_json_salvage():
+    # JSON 容错:剥 ``` 围栏 + 数组被裹进对象都能救回
+    from app.services.video_wizard import _loads_json
+    assert _loads_json('```json\n{"name":"杯子"}\n```')["name"] == "杯子"
+    arr = _loads_json('前缀垃圾 [{"title":"A"},{"title":"B"}] 后缀', expect_list=True)
+    assert isinstance(arr, list) and arr[0]["title"] == "A"
+
+
 def test_aspect_size_by_resolution():
     # 画幅 × 分辨率 → 尺寸(短边=分辨率档,长边按比例)
     from app.ai.video import aspect_size
