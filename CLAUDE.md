@@ -237,6 +237,11 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 - **401 自动登出**:`api/client.js` 收到 401 → 清 token、回登录页。
 - **坑**:`pod_token` 指向的用户在当前库不存在(换库 / 清库 / token 过期)→ 后端 401「用户不存在」→ 前端自动登出回登录页。重新登录即可;若反复异常,排查是不是连错了库(见上「数据库锚定」)。
 
+### el-dialog 弹窗:v-model 只绑「同组件内的单一 ref/store」,别跨组件来回传(过场会卡死)
+- 全项目 el-dialog 都把 `v-model` 绑在**本组件自己的 ref / pinia store**上(`ToolDialog`=`dlg.visible`、`MockupDialog`=`dlg.visible`、`Collect/CollectedList/MySpace/TaskList/Templates` 各自的 `showXxx` 本地 ref)——**单一真相源、关得干净**。
+- **踩过的坑**:`VideoWizardDialog`(子组件弹窗)最初用 `v-model="wizardOpen"`(父) ↔ 子 `computed/ref` ↔ `emit('update:modelValue')` 的**跨组件来回绑定**,关闭时这趟来回会在 el-dialog 的 leave 过场中途触发额外 re-render,**把过场打断、`dialog-fade-*` class 残留、overlay 停在 `display:block` 关不掉**(`el-dialog__headerbtn`/overlay/ESC 全都关不掉,且无报错)。**注意:`ToolDialog` 等单 ref 绑定的弹窗完全正常,这是该来回绑定独有的问题。**
+- **正确做法**:① 弹窗状态就放在**用它的那个组件**里、`v-model` 直接绑本地 ref(首选,和其它弹窗一致);② 若确实是「父控制开关的子组件弹窗」,**别用 el-dialog 的来回 v-model**,改用 `teleport + v-if` 自定义模态(`VideoWizardDialog` 现在就是这么做的:`v-if="localOpen"`,关=`localOpen=false`,过场无关、必关得掉)。
+
 ### docs/plans 不是完整记录
 - `docs/plans/` 只覆盖到 **batch2~batch10**。**batch11(`effects.py` 真实离线引擎)、batch12(深度审计整改:产物入库 / 真超分 / 工具去重 / 扩侵权库)只在 git 历史里**。
 - 想了解某功能的来龙去脉,**先 `git log --oneline` 查提交**,别只信 docs。
