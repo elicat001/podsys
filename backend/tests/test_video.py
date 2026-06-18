@@ -329,7 +329,7 @@ def test_ai_generate_subtitle_offline_skips(client, auth_headers, png):
 
 
 def test_video_native_sound_and_voiceover_gate(client, auth_headers, monkeypatch, png):
-    # 人声(默认)→ with_audio=True 且不叠旁白;关人声+开旁白 → with_audio=False 且叠旁白(互斥语义)
+    # 默认无声 → with_audio=False 不叠旁白;视频音效开 → with_audio=True 不叠旁白;旁白开 → with_audio=False 叠旁白
     from app.ai import video as video_mod
     from app.services import voiceover as vo_mod
 
@@ -347,21 +347,22 @@ def test_video_native_sound_and_voiceover_gate(client, auth_headers, monkeypatch
     monkeypatch.setattr(video_mod, "get_video_provider", lambda: _FakeProvider())
     monkeypatch.setattr(vo_mod, "add_voiceover", _fake_add_voiceover)
 
-    # 默认:人声开 → with_audio=True、不叠旁白
-    r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "带货", "aspect": "portrait", "seconds": "5"},
-                    files={"file": ("x.png", png(), "image/png")})
-    assert r.status_code == 200, r.text
-    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
-    assert job["status"] == "done", job
+    def _gen(**extra):
+        data = {"prompt": "带货", "aspect": "portrait", "seconds": "5", **extra}
+        r = client.post("/api/video/ai-generate", headers=auth_headers, data=data,
+                        files={"file": ("x.png", png(), "image/png")})
+        assert r.status_code == 200, r.text
+        job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+        assert job["status"] == "done", job
+
+    # 默认(都不传)→ 无声、不叠旁白
+    _gen()
+    assert calls["with_audio"][-1] is False and calls["voiceover"] == 0
+
+    # 视频音效开 → with_audio=True、仍不叠旁白
+    _gen(native_sound="true")
     assert calls["with_audio"][-1] is True and calls["voiceover"] == 0
 
-    # 关人声 + 开旁白 → with_audio=False、叠旁白一次
-    r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "带货", "aspect": "portrait", "seconds": "5",
-                          "native_sound": "false", "voiceover": "true", "language": "英语"},
-                    files={"file": ("x.png", png(), "image/png")})
-    assert r.status_code == 200, r.text
-    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
-    assert job["status"] == "done", job
+    # 旁白开(音效关)→ with_audio=False、叠旁白一次
+    _gen(native_sound="false", voiceover="true", language="英语")
     assert calls["with_audio"][-1] is False and calls["voiceover"] == 1

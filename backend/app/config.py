@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     video_quality: str = "quality"         # quality(质量优先) | speed
     video_fps: int = 30                    # 30 | 60
     video_seconds: int = 10                # 5 | 10(老大要 8~10s,取 10)
-    video_with_audio: bool = True          # 有声(主打巴西/葡语市场,需要 AI 配音/音效)
+    video_with_audio: bool = False         # 默认无声(CogVideoX 自带音频=AI 音效乱音,非真人);真人解说走「旁白」
     video_size: str = ""                   # 留空=按画幅取高分辨率(ASPECT_SIZE);填则强制(如 3840x2160 上 4K)
     video_timeout: float = 1500.0          # 轮询总超时(秒);视频远比图片慢,给 25min(4K/排队时真要这么久)
     video_poll_interval: float = 5.0

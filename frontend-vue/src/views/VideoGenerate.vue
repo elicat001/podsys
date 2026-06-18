@@ -14,11 +14,10 @@ const aspect = ref('portrait')
 const resolution = ref('1080p')
 const language = ref('葡萄牙语')
 const sceneFrame = ref(true)   // 场景首帧:默认开、不再暴露开关(始终随请求发 true)
-const nativeSound = ref(true)  // 人声:用视频自带音频(with_audio),默认开;与旁白互斥
-const voiceover = ref(false)   // 旁白设置:默认关;开启后无声生成 + 叠 AI 旁白,再选语言/字幕
+const nativeSound = ref(false) // 视频音效:用视频自带 AI 音效(with_audio),默认关;非真人、与旁白互斥
+const voiceover = ref(false)   // 旁白设置:默认关;开启后无声生成 + 真人 AI 配音,再选语言/字幕
 const subtitle = ref(true)     // 字幕开关:仅旁白开启时生效
-// 互斥:开人声 → 自动关旁白(旁白开关在人声开时禁用,只能先关人声再开旁白)
-function onNativeToggle() { if (nativeSound.value) voiceover.value = false }
+// 互斥:视频音效与旁白只能开一个(各自在对方开启时禁用);默认都关=无声
 const submitting = ref(false)
 const submitted = ref(false)
 const aiReady = ref(true)
@@ -162,7 +161,7 @@ onMounted(async () => {
       <h2>🎬 图生视频</h2>
       <router-link to="/app/video/cases" class="muted lnk">案例库 →</router-link>
     </div>
-    <p class="muted sub">上传商品图 → 选时长与视频类型,一键生成 TikTok 风格电商短视频(默认葡语·巴西,语言/地区可切换)。</p>
+    <p class="muted sub">上传商品图 → 选时长与视频类型,一键生成 TikTok 风格电商短视频(默认无声;可开「旁白」加真人配音解说,葡/英/西/中)。</p>
     <div v-if="!aiReady" class="warn">⚠ 未配置 AI 视频服务(智谱 key),生成结果会是<strong>本地降级 GIF</strong>。配好 key 后即真视频。</div>
 
     <div class="layout">
@@ -230,16 +229,16 @@ onMounted(async () => {
             </div>
           </div>
         </div>
-        <label class="toggle">
-          <input type="checkbox" v-model="nativeSound" @change="onNativeToggle" />
+        <label class="toggle" :class="{ disabled: voiceover }">
+          <input type="checkbox" v-model="nativeSound" :disabled="voiceover" />
           <span class="tg-box" />
-          <span class="tg-text"><b>🔊 人声</b><i>用视频自带音频(默认开);需关掉才能开启 AI 旁白</i></span>
+          <span class="tg-text"><b>🎵 视频音效</b><i>{{ voiceover ? '旁白开启时不可用' : '视频自带 AI 音效(非真人说话),默认关;与旁白互斥' }}</i></span>
         </label>
 
         <label class="toggle" :class="{ disabled: nativeSound }">
           <input type="checkbox" v-model="voiceover" :disabled="nativeSound" />
           <span class="tg-box" />
-          <span class="tg-text"><b>🎙️ 旁白设置</b><i>{{ nativeSound ? '先关掉「人声」才能开启' : '无声生成 + AI 配音,下方选语言' }}</i></span>
+          <span class="tg-text"><b>🎙️ 旁白设置</b><i>{{ nativeSound ? '视频音效开启时不可用' : '默认无声;开启=无声生成 + 真人 AI 配音,下方选语言' }}</i></span>
         </label>
 
         <div v-if="voiceover && !nativeSound" class="vo-panel">

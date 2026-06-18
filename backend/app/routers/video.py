@@ -75,7 +75,7 @@ def ai_generate(
     aspect: str = Form("portrait"),
     resolution: str = Form("1080p"),
     seconds: int = Form(10),          # 视频时长(秒):5 / 10
-    native_sound: bool = Form(True),  # 人声:用 CogVideoX 自带音频(with_audio);默认开。与旁白互斥
+    native_sound: bool = Form(False), # 视频音效:用 CogVideoX 自带音频(with_audio=AI 音效,非真人);默认关。与旁白互斥
     voiceover: bool = Form(False),    # 旁白设置:无声生成 + 叠 AI 旁白(看图写目标语言口播稿);默认关
     subtitle: bool = Form(True),      # 字幕:旁白开时把口播稿按所选语言烧进画面
     user: User = Depends(charge_for("video")),

@@ -448,8 +448,8 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             pass
     # 提示词工程:镜头脚本 + 地区风格(随语言)+ 语言 + 一致性/防拉伸 + 负向(动作交给用户脚本,不按类目追加)
     prompt = compose_prompt(p.get("prompt", ""), language=lang)
-    # 人声(默认)= 用 CogVideoX 自带音频(with_audio=true);旁白设置开 = 无声生成(with_audio=false)再叠 AI 旁白。二者互斥。
-    native_sound = bool(p.get("native_sound", True))
+    # 视频音效(默认关)= CogVideoX 自带音频(with_audio=true,AI 音效非真人);默认无声;旁白开 = 无声再叠真人 AI 旁白。三者:默认无声 / 音效 / 旁白互斥。
+    native_sound = bool(p.get("native_sound", False))
     out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"),
                                               with_audio=native_sound)
     # 旁白配音(best-effort):仅「旁白设置」开 + 真 mp4(非本地兜底 GIF)才做。看图写目标语言口播稿 → edge-tts → 叠回。
