@@ -420,24 +420,6 @@ def _work_sync(job_id: str, job: Job, db: Session) -> dict:
     return out
 
 
-def _poster_from_mp4(job_id: str, video_path) -> str:
-    """从本地 mp4 抽第一帧存 cover.jpg,返回其 /files URL(任务中心当缩略图)。失败 → ''(上层回退)。
-    重依赖(imageio_ffmpeg)惰性 import;限 2 线程防吃满共享 CPU。"""
-    try:
-        import subprocess
-
-        import imageio_ffmpeg
-        ff = imageio_ffmpeg.get_ffmpeg_exe()
-        out_path = storage.output_path(job_id, "cover.jpg")
-        r = subprocess.run([ff, "-y", "-i", str(video_path), "-frames:v", "1", "-q:v", "3",
-                            "-threads", "2", "-loglevel", "error", str(out_path)], capture_output=True)
-        if r.returncode == 0 and out_path.exists() and out_path.stat().st_size > 256:
-            return storage.output_url(job_id, "cover.jpg")
-    except Exception as exc:  # noqa: BLE001 — 抽帧失败不影响视频交付
-        log.warning("封面抽帧失败 %s: %s", job_id, exc)
-    return ""
-
-
 def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     """AI 图生视频(智谱 CogVideoX-3 或本地兜底 GIF)。读 1~2 张输入图(2 张=首尾帧)→ provider → 存产物。
     输入图:第 1 张在 upload_path(job_id);可选第 2 张(尾帧)在 upload_path(job_id_mask)。"""
@@ -518,13 +500,16 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     storage.output_path(job_id, name).write_bytes(out["bytes"])
     url = storage.output_url(job_id, name)
     meta = out.get("meta", {})
-    # 封面/缩略图:mp4 从【本地成片】抽首帧存 cover.jpg(稳定 /files URL、无水印)。
-    # 不用 CogVideoX 返回的 cover_image_url —— 那是带水印的外链签名 URL(会过期、且有水印),不适合当成品缩略。
-    cover = meta.get("cover", "")
-    if ext == "mp4":
-        local_cover = _poster_from_mp4(job_id, storage.output_path(job_id, name))
-        if local_cover:
-            cover = local_cover
+    # 封面/缩略图 = 用户上传的【商品图(第一张)】:干净、稳定、所见即所得(卡片显示用户当初传的那张)。
+    # 不用 CogVideoX 的 cover_image_url(带水印 + 签名外链会过期),也不用视频抽帧(有贴边/模糊)。
+    cover = ""
+    try:
+        thumb = raw[0].convert("RGB")
+        thumb.thumbnail((640, 640))
+        thumb.save(storage.output_path(job_id, "cover.jpg"), format="JPEG", quality=85)
+        cover = storage.output_url(job_id, "cover.jpg")
+    except Exception:  # noqa: BLE001 — 缩略图失败不影响视频交付
+        cover = meta.get("cover", "")
     if job.owner_id is not None:  # 入库(用首帧做查重源,size 用视频字节)→ 删任务时可进回收站,不再成幽灵
         save_as_asset(db, job.owner_id, imgs[0], f"图生视频 {cat}", url, source="generated",
                       size_bytes=len(out["bytes"]))

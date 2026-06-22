@@ -25,6 +25,17 @@ const loading = ref(false)
 const brief = ref({ name: '', audience: '', selling_points: '' })
 const proposals = ref([])
 
+// 声音设置(向导内自洽,不再依赖主页):默认「真人旁白 + 市场语言 + 字幕」,智能方案直接出有声完整带货视频
+const SOUND_MODES = [
+  { id: 'voiceover', label: '🎙️ 真人旁白', hint: '看图写口播稿,真人 AI 配音(推荐)' },
+  { id: 'native', label: '🎵 视频音效', hint: '视频自带 AI 音效(非人声)' },
+  { id: 'silent', label: '🔇 无声', hint: '纯画面无声音' },
+]
+const VO_LANGS = ['葡萄牙语', '英语', '西班牙语', '中文']
+const soundMode = ref('voiceover')
+const voLang = ref(props.language)
+const subtitle = ref(true)
+
 function refresh() { if (auth.refreshBalance) auth.refreshBalance() }
 function close() { localOpen.value = false }
 
@@ -34,6 +45,9 @@ watch(() => props.modelValue, (v) => {
   if (!v) return
   step.value = 1
   proposals.value = []
+  soundMode.value = 'voiceover'           // 默认真人旁白
+  voLang.value = props.language || '葡萄牙语'
+  subtitle.value = true
   brief.value = { name: '', audience: '', selling_points: props.sellingPoints || '' }
   runBrief()
 })
@@ -88,10 +102,13 @@ async function goStep2() {
 }
 
 function choose(p) {
-  // 采用方案 = 填脚本 + 直接触发生成(双分镜 15s 时方案含 shot1/shot2)。
-  // generate:true 让父组件填好脚本后立即开始生成视频(不再单独存「视频脚本」记录)。
-  emit('apply', { storyboard: p.storyboard, shot1: p.shot1 || '', shot2: p.shot2 || '',
-                  title: p.title, generate: true })
+  // 采用方案 = 填脚本 + 带【向导内选的声音设置】直接生成(双分镜 15s 时方案含 shot1/shot2)。
+  // 向导自洽:声音(无声/音效/旁白+语言+字幕)在这里选,不再依赖主页 → 消除割裂。
+  emit('apply', {
+    storyboard: p.storyboard, shot1: p.shot1 || '', shot2: p.shot2 || '', title: p.title,
+    generate: true,
+    sound: { mode: soundMode.value, language: voLang.value, subtitle: subtitle.value },
+  })
   close()
 }
 </script>
@@ -134,7 +151,20 @@ function choose(p) {
 
     <!-- ===== Step 2:视频方案 ===== -->
     <div v-else v-loading="loading" class="pane">
-      <p class="tip">挑一个方向(可「换一批」重出),选中后分镜脚本会填进「视频描述」。</p>
+      <p class="tip">挑一个方向(可「换一批」重出),选中即按下方声音设置<b>一键生成视频</b>。</p>
+      <!-- 声音设置(向导内自洽,默认真人旁白 + 市场语言)-->
+      <div class="sound-bar">
+        <span class="sb-label">声音</span>
+        <button v-for="m in SOUND_MODES" :key="m.id" class="sb-btn" :class="{ on: soundMode === m.id }"
+                :title="m.hint" @click="soundMode = m.id">{{ m.label }}</button>
+        <template v-if="soundMode === 'voiceover'">
+          <span class="sb-label">语言</span>
+          <select v-model="voLang" class="sb-sel">
+            <option v-for="l in VO_LANGS" :key="l" :value="l">{{ l }}</option>
+          </select>
+          <label class="sb-chk"><input type="checkbox" v-model="subtitle" /> 字幕</label>
+        </template>
+      </div>
       <div v-if="proposals.length" class="cards">
         <div v-for="(p, i) in proposals" :key="i" class="pcard">
           <div class="pt">{{ p.title }}</div>
@@ -142,7 +172,7 @@ function choose(p) {
           <div v-if="p.model" class="prow"><b>模特</b>{{ p.model }}</div>
           <div v-if="p.environment" class="prow"><b>环境</b>{{ p.environment }}</div>
           <div class="psb">{{ p.storyboard }}</div>
-          <button class="choose" @click="choose(p)">选择此方案</button>
+          <button class="choose" @click="choose(p)">✅ 用此方案生成视频</button>
         </div>
       </div>
       <p v-else-if="!loading" class="tip">暂无方案,点「换一批」重试。</p>
@@ -188,6 +218,13 @@ function choose(p) {
 .inp { width: 100%; background: var(--bg2); border: 1px solid var(--line2); border-radius: 9px; padding: 9px 10px; color: var(--fg); font: inherit; box-sizing: border-box; resize: vertical; }
 .inp:focus { border-color: var(--brand); outline: none; }
 .ta { min-height: 96px; line-height: 1.5; font-size: 13px; }
+.sound-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 9px 11px; margin-bottom: 12px; border: 1px solid var(--line2); border-radius: 10px; background: var(--bg2); }
+.sb-label { font-size: 12.5px; color: var(--mut); font-weight: 600; }
+.sb-btn { border: 1px solid var(--line2); background: var(--panel); color: var(--mut); border-radius: 9px; padding: 5px 11px; font-size: 12.5px; cursor: pointer; }
+.sb-btn:hover { border-color: var(--brand); color: var(--fg); }
+.sb-btn.on { border-color: var(--brand); color: var(--fg); background: var(--panel2); }
+.sb-sel { background: var(--panel); border: 1px solid var(--line2); color: var(--fg); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 12.5px; }
+.sb-chk { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--fg); cursor: pointer; }
 .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .pcard { display: flex; flex-direction: column; border: 1px solid var(--line2); border-radius: 11px; padding: 13px; background: var(--bg2); }
 .pt { font-size: 14px; font-weight: 700; color: var(--fg); }

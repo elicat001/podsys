@@ -116,7 +116,7 @@ function openWizard() {
   if (!smartReady.value) return ElMessage.warning('未配置作图 AI key,「智能方案」暂不可用')
   wizardOpen.value = true
 }
-function onWizardApply({ storyboard, shot1, shot2, generate }) {
+function onWizardApply({ storyboard, shot1, shot2, generate, sound }) {
   if (seconds.value === 15) {          // 双分镜:把两段分镜脚本分别填进 分镜①/分镜②
     prompt.value = shot1 || storyboard || ''
     prompt2.value = shot2 || ''
@@ -124,13 +124,22 @@ function onWizardApply({ storyboard, shot1, shot2, generate }) {
     prompt.value = storyboard
   }
   selType.value = 'smart'
-  // 采用方案 = 直接开始生成视频(方案 A:一步到位出片,不再只存脚本)
+  // 把向导里选的声音设置同步到主页(UI 也随之更新),让"采用即生成"用的是向导的选择,而非主页旧值 → 消除割裂
+  if (sound) {
+    nativeSound.value = sound.mode === 'native'
+    voiceover.value = sound.mode === 'voiceover'
+    if (sound.mode === 'voiceover') {
+      language.value = sound.language || language.value
+      subtitle.value = sound.subtitle !== false
+    }
+  }
+  // 采用方案 = 带完整配置(脚本 + 声音)直接生成视频(一站式,不再只存脚本)
   if (generate) run()
 }
 
 async function run() {
   if (!img1.value) return ElMessage.warning('请先上传商品图片')
-  if (!seconds.value && !twoShot.value) return ElMessage.warning('请先选择视频时长')
+  if (!seconds.value) return ElMessage.warning('请先选择视频时长')
   submitting.value = true
   try {
     const fd = new FormData()
