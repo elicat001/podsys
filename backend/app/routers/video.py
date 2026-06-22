@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import io
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from PIL import Image
@@ -16,7 +15,6 @@ from ..db import get_db
 from ..models_db import User
 from ..services import video as video_svc
 from ..services.billing import InsufficientCredits, charge, charge_for, refund
-from ..services.jobs import create_job
 from ..services.library import save_as_asset
 from ..tasks import run_tool
 from ..web_utils import read_image_or_refund, submit_celery
@@ -111,40 +109,6 @@ def wizard_proposals(
         refund(db, user, "title")
         raise HTTPException(status_code=502, detail="方案生成失败(作图 AI 服务未配置或调用失败)") from exc
     return {"proposals": proposals}
-
-
-@router.post("/wizard/save")
-def wizard_save(
-    title: str = Form(""),
-    storyboard: str = Form(""),
-    shot1: str = Form(""),      # 双分镜:分镜① 脚本(5s)
-    shot2: str = Form(""),      # 双分镜:分镜② 脚本(10s)
-    seconds: int = Form(10),
-    user: User = Depends(current_user),
-    db: Session = Depends(get_db),
-):
-    """把智能向导采用的方案存为一条「视频脚本」记录(免费、不扣点),进「我的空间 → 视频」可回看。
-
-    解决「智能向导扣了点却在我的空间无任何痕迹」:采用方案时落一条 done 任务(信息类结果),
-    用户能回看自己生成/采用的脚本。脚本生成本身的扣点发生在 wizard/proposals,这里只做留痕、不再收费。
-    """
-    two_shot = seconds == 15
-    result = {
-        "title": (title.strip()[:80] or "视频脚本"),
-        "storyboard": storyboard[:4000],
-        "shot1": shot1[:2000],
-        "shot2": shot2[:2000],
-        "two_shot": two_shot,
-    }
-    job = create_job(db, "video_script", owner_id=user.id, tool_id="videoscript",
-                     params={"seconds": seconds, "two_shot": two_shot})
-    now = datetime.now(UTC)
-    job.status = "done"
-    job.started_at = now
-    job.finished_at = now
-    job.result = result
-    db.commit()
-    return {"job_id": job.id, "status": "done"}
 
 
 @router.post("/ai-generate")

@@ -432,26 +432,6 @@ def test_wizard_proposals_no_key_502_refunds(client, auth_headers):
     assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0
 
 
-def test_wizard_save_creates_free_record(client, auth_headers):
-    # 采用方案 → 落一条免费「视频脚本」任务(进我的空间→视频可回看);不扣点
-    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
-    r = client.post("/api/video/wizard/save", headers=auth_headers,
-                    data={"title": "温馨家居氛围", "shot1": "【0-5秒】产品特写",
-                          "shot2": "【0-10秒】达人使用并讲解", "seconds": "15"})
-    assert r.status_code == 200, r.text
-    jid = r.json()["job_id"]
-    assert r.json()["status"] == "done"
-    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0  # 免费,不扣点
-    jobs = client.get("/api/jobs", headers=auth_headers).json()
-    job = next((j for j in jobs if j["id"] == jid), None)
-    assert job and job["kind"] == "video_script" and job["status"] == "done"
-    assert job["tool_id"] == "videoscript"   # → 我的空间归「视频」模块
-    assert job["result"]["shot1"] == "【0-5秒】产品特写" and job["result"]["two_shot"] is True
-
-
-def test_wizard_save_requires_auth(client):
-    r = client.post("/api/video/wizard/save", data={"title": "x"})
-    assert r.status_code == 401
 
 
 def test_wizard_parse_json_salvage():

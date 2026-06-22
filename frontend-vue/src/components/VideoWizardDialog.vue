@@ -87,20 +87,11 @@ async function goStep2() {
   if (!proposals.value.length) await runProposals()
 }
 
-async function choose(p) {
-  // 双分镜(15s)时方案含 shot1/shot2;父组件据当前时长决定填单段描述还是分镜①/②
-  emit('apply', { storyboard: p.storyboard, shot1: p.shot1 || '', shot2: p.shot2 || '', title: p.title })
-  // 落一条「视频脚本」记录到「我的空间 → 视频」(免费),解决向导扣了点却无痕迹的问题
-  try {
-    const fd = new FormData()
-    fd.append('title', p.title || '')
-    fd.append('storyboard', p.storyboard || '')
-    fd.append('shot1', p.shot1 || '')
-    fd.append('shot2', p.shot2 || '')
-    fd.append('seconds', props.seconds || 10)
-    await api.post('/video/wizard/save', fd)
-  } catch (e) { /* 留痕失败不阻断采用 */ }
-  ElMessage.success(`已采用方案「${p.title}」,已存入「我的空间 → 视频」,可在视频描述里继续微调`)
+function choose(p) {
+  // 采用方案 = 填脚本 + 直接触发生成(双分镜 15s 时方案含 shot1/shot2)。
+  // generate:true 让父组件填好脚本后立即开始生成视频(不再单独存「视频脚本」记录)。
+  emit('apply', { storyboard: p.storyboard, shot1: p.shot1 || '', shot2: p.shot2 || '',
+                  title: p.title, generate: true })
   close()
 }
 </script>

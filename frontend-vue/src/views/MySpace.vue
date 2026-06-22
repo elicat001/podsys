@@ -142,6 +142,40 @@ const previewTool = computed(() => ({
   result: resultType(previewJob.value?.result, previewJob.value?._tool?.result || 'image'),
 }))
 
+// ── 参数弹窗(视频卡片「参数」按钮:画幅/清晰度/时长/声音/脚本等)──
+const showParams = ref(false)
+const paramsJob = ref(null)
+const ASPECT_LABEL = { portrait: '9:16 竖屏', portrait34: '3:4 竖屏', square: '1:1 方形', landscape43: '4:3 横屏', landscape: '16:9 宽屏' }
+const RES_LABEL = { '720p': '720P', '1080p': '1080P', '4k': '4K' }
+function openParams(job) { paramsJob.value = job; showParams.value = true }
+// 参数键值行(视频:画幅/清晰度/时长/声音/语言/旁白稿/引擎;其它工具:展示标量参数)
+const paramRows = computed(() => {
+  const job = paramsJob.value; if (!job) return []
+  const p = job.params || {}; const r = job.result || {}; const rows = []
+  if (job.kind === 'aivideo') {
+    rows.push(['时长', p.two_shot ? '15 秒(双分镜:分镜① 5s + 分镜② 10s)' : `${p.seconds || '-'} 秒`])
+    rows.push(['画幅', ASPECT_LABEL[p.aspect] || p.aspect || '-'])
+    rows.push(['清晰度', RES_LABEL[p.resolution] || p.resolution || '-'])
+    rows.push(['声音', p.native_sound ? '视频音效(AI 原生)' : (p.voiceover ? `真人旁白${p.subtitle ? ' + 字幕' : ''}` : '无声')])
+    if (p.voiceover && p.language) rows.push(['旁白语言', p.language])
+    if (r.voiceover) rows.push(['旁白稿', r.voiceover])
+    if (r.engine) rows.push(['引擎', r.engine])
+  } else {
+    for (const [k, v] of Object.entries(p)) {
+      if (v === '' || v == null || typeof v === 'object') continue
+      rows.push([k, String(v)])
+    }
+  }
+  return rows
+})
+// 脚本(仅视频):双分镜分镜①/② 或单段描述
+const paramScripts = computed(() => {
+  const job = paramsJob.value; if (!job || job.kind !== 'aivideo') return []
+  const p = job.params || {}
+  if (p.two_shot) return [['分镜① · 0–5s', p.prompt || '(空)'], ['分镜② · 5–15s', p.prompt2 || '(空)']]
+  return p.prompt ? [['视频描述', p.prompt]] : []
+})
+
 async function delJob(job) {
   try {
     await ElMessageBox.confirm('删除该任务?产出的素材会移入回收站(可恢复)。', '确认删除', { type: 'warning' })
@@ -398,6 +432,7 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
                       <button v-if="job.status === 'done' && job.result" class="chip preview" @click="openPreview(job)">👁 预览</button>
                       <button v-if="job.result && job.result.title" class="chip copy" @click="copyText(job.result.title, '标题')">📋 复制</button>
                       <a v-for="([name, url]) in jobDownloads(job.result)" :key="name" class="chip dl" :href="url" target="_blank" download>⬇ {{ name }}</a>
+                      <button v-if="job.params && Object.keys(job.params).length" class="chip param" @click="openParams(job)">⚙ 参数</button>
                       <button class="chip del" @click="delJob(job)">🗑 删除</button>
                     </div>
                   </div>
@@ -601,6 +636,27 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
       </div>
       <template #footer>
         <el-button type="primary" @click="showPreview = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 参数弹窗:该任务的生成参数(视频:画幅/清晰度/时长/声音/脚本等)-->
+    <el-dialog v-model="showParams" title="生成参数" width="560px" align-center append-to-body>
+      <div v-if="paramsJob" class="params-body">
+        <table class="kv">
+          <tr v-for="([k, v]) in paramRows" :key="k">
+            <td class="kv-k muted">{{ k }}</td>
+            <td class="kv-v">{{ v }}</td>
+          </tr>
+        </table>
+        <div v-for="([label, text]) in paramScripts" :key="label" class="script-blk">
+          <div class="script-h">{{ label }}
+            <button class="chip copy" @click="copyText(text, '脚本')">📋 复制</button>
+          </div>
+          <pre class="script-pre">{{ text }}</pre>
+        </div>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="showParams = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>
@@ -1079,6 +1135,20 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
   cursor: pointer;
   color: var(--err);
 }
+.param {
+  border: none;
+  cursor: pointer;
+  color: var(--brand2);
+}
+/* 参数弹窗 */
+.params-body { font-size: 14px; }
+.params-body .kv { width: 100%; border-collapse: collapse; }
+.params-body .kv-k { width: 110px; padding: 7px 8px; vertical-align: top; white-space: nowrap; }
+.params-body .kv-v { padding: 7px 8px; line-height: 1.5; }
+.script-blk { margin-top: 12px; }
+.script-h { font-size: 12.5px; font-weight: 600; color: var(--brand2); margin-bottom: 5px; display: flex; align-items: center; gap: 8px; }
+.script-h .copy { font-weight: normal; color: var(--fg); }
+.script-pre { white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 13px; line-height: 1.55; margin: 0; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; padding: 9px 11px; }
 .more {
   text-align: center;
   margin: 20px 0;
