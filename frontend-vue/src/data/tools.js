@@ -159,6 +159,13 @@ export const TOOLS = [
       { key: 'text', type: 'text', label: '叠加文字(可选)', default: '' },
     ],
   },
+  // 智能向导「采用方案」时落的脚本记录(无独立运行页,仅用于「我的空间 → 视频」回看)
+  {
+    id: 'videoscript', name: '视频脚本', icon: '📝', cat: '视频', ep: 'video/wizard/save',
+    async: false, result: 'info', cost: 0,
+    desc: '智能向导采用的镜头脚本(可回看)',
+    inputs: [],
+  },
 ]
 
 export const TOOL_BY_ID = Object.fromEntries(TOOLS.map((t) => [t.id, t]))

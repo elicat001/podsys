@@ -31,8 +31,12 @@ ASPECT_RATIOS: dict[str, tuple[int, int]] = {
 # 分辨率档 → 短边像素(长边按比例算)。flat price,4K 也不额外收费,只是更慢、文件更大。
 RESOLUTION_SHORT: dict[str, int] = {"720p": 720, "1080p": 1080, "4k": 2160}
 
-# 视频时长(秒)。CogVideoX-3 支持 5 / 10 秒。前端先选时长再选视频类型(脚本随时长变)。
-DURATIONS: list[int] = [5, 10]
+# 视频时长(秒)。前端先选时长再选视频类型(脚本随时长变)。
+#   5 / 10 = CogVideoX-3 单段直接支持;15 = 「双分镜」复合时长(单段最长 10s,故拆 5s+10s 两段并行生成再拼接)。
+DURATIONS: list[int] = [5, 10, 15]          # 用户可选时长(15=双分镜复合时长)
+SEGMENT_DURATIONS: list[int] = [5, 10]      # 模型单段真正支持的时长(provider 只会收到这两个,绝不会收到 15)
+TWO_SHOT_DURATION: int = 15                 # 选它 → 触发双分镜(two_shot)
+TWO_SHOT_PLAN: list[int] = [5, 10]          # 双分镜两段时长:分镜①=5s + 分镜②=10s = 15s
 
 # 视频配音/对白语言(主打巴西=葡萄牙语)。「无对白」=不加语言指令。
 LANGUAGES: list[str] = ["葡萄牙语", "英语", "西班牙语", "中文", "无对白"]

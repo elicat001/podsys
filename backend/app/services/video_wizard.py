@@ -82,9 +82,30 @@ def describe_product(image: Image.Image, selling_points: str = "", language: str
 
 def generate_proposals(name: str, audience: str, selling_points: str, *, seconds: int = 10,
                        language: str = "葡萄牙语", category: str = "通用", n: int = 3) -> list[dict]:
-    """Step 2:据简报 → n 个不同方向的视频方案。每个 {title, angle, model, environment, storyboard}。"""
+    """Step 2:据简报 → n 个不同方向的视频方案。每个 {title, angle, model, environment, storyboard}。
+
+    seconds=15 → **双分镜**:每个方案额外含 shot1(分镜①·约 5s)+ shot2(分镜②·约 10s),
+    storyboard 为两段合并展示。下游(前端)在 15s 时把 shot1/shot2 分别填进 分镜①/分镜② 脚本。"""
+    two_shot = seconds == 15
+    if two_shot:
+        time_rule = (
+            "本视频为【双分镜 · 共 15 秒】= 分镜①(0-5 秒,约 5 秒)+ 分镜②(5-15 秒,约 10 秒)。"
+            "两个分镜镜头/景别/节奏要明显不同、但内容连贯递进(如 分镜①产品特写氛围 → 分镜②人物使用并点出卖点)。"
+        )
+        shot_fields = (
+            '"shot1":"分镜①脚本(约 5 秒,自成一体,按【0-x秒】分时间轴,以商品为画面主体)",'
+            '"shot2":"分镜②脚本(约 10 秒,自成一体,按【0-x秒】分时间轴,承接分镜①但镜头/景别不同)",'
+            '"storyboard":"把分镜①与分镜②合并后的完整脚本(仅供预览;实际以 shot1/shot2 为准)"'
+        )
+    else:
+        time_rule = f"视频时长 {seconds} 秒。"
+        shot_fields = (
+            f'"storyboard":"完整分镜脚本,严格按 {seconds} 秒分时间轴(如【0-3秒】【3-7秒】…),自成一体地融入上面的模特与环境,'
+            "描述镜头语言(推拉摇移/特写)+人物动作+产品展示,紧扣核心卖点)\""
+        )
     prompt = (
-        f"你是 TikTok 跨境电商短视频策划。根据下面的商品简报,设计 {n} 个【方向彼此明显不同】的 {seconds} 秒带货视频方案。\n"
+        f"你是 TikTok 跨境电商短视频策划。根据下面的商品简报,设计 {n} 个【方向彼此明显不同】的带货视频方案。\n"
+        f"{time_rule}\n"
         f"产品:{name or '(见卖点)'}\n目标受众:{audience or '(自行判断)'}\n核心卖点:{selling_points or '(自行提炼)'}\n"
         f"投放市场/语言:{language};商品类目:{category}\n"
         f"只输出一个 JSON 数组(禁止任何解释、标题、markdown 代码块),含 {n} 个对象,每个对象字段固定为:\n"
@@ -92,9 +113,10 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
         '"angle":"一句话创意方向",'
         '"model":"出镜模特设定(年龄/外貌/气质/穿着,贴合目标受众与投放市场;若无人出镜写 无模特)",'
         '"environment":"拍摄环境/场景(贴合卖点与市场风格)",'
-        f'"storyboard":"完整分镜脚本,严格按 {seconds} 秒分时间轴(如【0-3秒】【3-7秒】…),自成一体地融入上面的模特与环境,'
-        "描述镜头语言(推拉摇移/特写)+人物动作+产品展示,紧扣核心卖点;动作要贴合 AI 视频能力边界——"
-        '优先简单稳妥的展示类动作,弱化开盖/拆封/穿脱/倾倒等复杂物理变化,手与物体全程接触、符合重力)"}\n'
+        + shot_fields +
+        "}\n"
+        "分镜动作要贴合 AI 视频能力边界:优先简单稳妥的展示类动作,弱化开盖/拆封/穿脱/倾倒等复杂物理变化,"
+        "手与物体全程接触、符合重力。\n"
         f"硬性:{n} 个方案方向要拉开差距(如 情感氛围 / 卖点测评 / 场景搭配 等不同切入);全部字段用中文。"
     )
     data = _loads_json(_chat([{"role": "user", "content": prompt}]), expect_list=True)
@@ -106,13 +128,23 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
     for p in data[:n]:
         if not isinstance(p, dict):
             continue
-        out.append({
+        item = {
             "title": str(p.get("title") or p.get("标题") or "方案").strip()[:40],
             "angle": str(p.get("angle") or p.get("方向") or "").strip()[:100],
             "model": str(p.get("model") or p.get("模特") or "").strip()[:300],
             "environment": str(p.get("environment") or p.get("环境") or p.get("场景") or "").strip()[:300],
             "storyboard": str(p.get("storyboard") or p.get("分镜") or p.get("脚本") or "").strip()[:2000],
-        })
+        }
+        if two_shot:
+            s1 = str(p.get("shot1") or p.get("分镜1") or p.get("分镜①") or "").strip()[:1500]
+            s2 = str(p.get("shot2") or p.get("分镜2") or p.get("分镜②") or "").strip()[:1500]
+            # 兜底:模型没拆两段 → 用合并 storyboard 兜底,保证双分镜两段都非空(时长达标、必出两段)
+            s1 = s1 or item["storyboard"]
+            s2 = s2 or item["storyboard"]
+            item["shot1"], item["shot2"] = s1, s2
+            if not item["storyboard"]:
+                item["storyboard"] = f"【分镜①·0-5秒】{s1}\n\n【分镜②·5-15秒】{s2}"
+        out.append(item)
     if not out:
         raise RuntimeError("方案解析为空")
     return out

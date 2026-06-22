@@ -25,7 +25,11 @@ const aiReady = ref(true)
 const smartReady = ref(false)
 const wizardOpen = ref(false)   // 智能方案向导弹窗
 
-const DURATIONS = [{ id: 5, label: '5 秒', hint: '快' }, { id: 10, label: '10 秒', hint: '完整' }]
+const DURATIONS = [
+  { id: 5, label: '5 秒', hint: '快' },
+  { id: 10, label: '10 秒', hint: '完整' },
+  { id: 15, label: '15 秒', hint: '双分镜·翻倍' },
+]
 
 // 每类型都有 5s / 10s 两套「镜头脚本」(分时间轴);选时长后填对应的那套。类目动作/地区风格/负向词后端追加。
 const TYPES = [
@@ -48,7 +52,8 @@ const TYPES = [
 ]
 const selType = ref('')
 const prompt = ref('')
-const sellingPoints = ref('')   // 产品卖点(选填):喂给「智能识别」;也会追加进所选类型的模板脚本
+const prompt2 = ref('')         // 分镜② 脚本(仅 15s 双分镜;留空则复用分镜①)
+const isTwoShot = computed(() => seconds.value === 15)   // 选 15s = 双分镜(5s+10s 拼接,价格翻倍)
 
 const ASPECTS = [
   { id: 'portrait', label: '9:16', hint: '竖屏·带货' },
@@ -87,10 +92,12 @@ function clearSlot(slot) {
 
 // 填模板脚本:取该时长的 t5/t10;若填了产品卖点,追加一段「核心卖点」让画面/旁白都围绕它(custom 留空给用户自写)
 function applyTemplate(t) {
-  let body = seconds.value === 5 ? t.t5 : t.t10
-  const sp = sellingPoints.value.trim()
-  if (body && sp) body += `\n\n【核心卖点(请在画面与动作中重点体现)】${sp}`
-  prompt.value = body
+  if (seconds.value === 15) {          // 双分镜:分镜①=该类型 5s 脚本、分镜②=10s 脚本
+    prompt.value = t.t5
+    prompt2.value = t.t10
+  } else {
+    prompt.value = seconds.value === 5 ? t.t5 : t.t10
+  }
 }
 function pickDuration(s) {
   seconds.value = s
@@ -109,20 +116,26 @@ function openWizard() {
   if (!smartReady.value) return ElMessage.warning('未配置作图 AI key,「智能方案」暂不可用')
   wizardOpen.value = true
 }
-function onWizardApply({ storyboard }) {
-  prompt.value = storyboard
+function onWizardApply({ storyboard, shot1, shot2 }) {
+  if (seconds.value === 15) {          // 双分镜:把两段分镜脚本分别填进 分镜①/分镜②
+    prompt.value = shot1 || storyboard || ''
+    prompt2.value = shot2 || ''
+  } else {
+    prompt.value = storyboard
+  }
   selType.value = 'smart'
 }
 
 async function run() {
   if (!img1.value) return ElMessage.warning('请先上传商品图片')
-  if (!seconds.value) return ElMessage.warning('请先选择视频时长')
+  if (!seconds.value && !twoShot.value) return ElMessage.warning('请先选择视频时长')
   submitting.value = true
   try {
     const fd = new FormData()
     fd.append('file', img1.value)
     if (img2.value) fd.append('file2', img2.value)
     fd.append('prompt', prompt.value)
+    if (isTwoShot.value) fd.append('prompt2', prompt2.value)   // 双分镜由 seconds=15 触发,后端自行判定 two_shot
     fd.append('language', language.value)
     fd.append('scene_frame', sceneFrame.value ? 'true' : 'false')
     fd.append('native_sound', nativeSound.value ? 'true' : 'false')
@@ -189,10 +202,6 @@ onMounted(async () => {
             </button>
           </div>
 
-          <div class="clabel mt">产品卖点 <span class="opt">选填 · 智能识别会围绕它写脚本</span></div>
-          <textarea v-model="sellingPoints" class="inp sp-ta" maxlength="500"
-            placeholder="如:大容量保温杯 · 12 小时持热 · 防漏防烫 · 食品级内胆…(逗号或换行分隔)"></textarea>
-
           <div class="clabel mt">视频类型</div>
           <button class="smart" :class="{ on: selType === 'smart' }" :disabled="!seconds" @click="openWizard">
             <span class="si">✨</span>
@@ -211,10 +220,17 @@ onMounted(async () => {
       <!-- 右:描述 + 配置 + 生成 -->
       <div class="card col">
         <div class="field">
-          <span class="flabel">视频描述 <span class="opt">选类型/智能识别后自动填入,可自由修改</span></span>
+          <span class="flabel">{{ isTwoShot ? '分镜① 脚本 · 0–5 秒' : '视频描述' }} <span class="opt">选类型/智能识别后自动填入,可自由修改</span></span>
           <textarea v-model="prompt" class="inp desc-ta" maxlength="2000"
             placeholder="先选时长和视频类型,这里会填入镜头脚本;也可点「✨智能识别」让 AI 看图写,或自己改写"></textarea>
         </div>
+        <div v-if="isTwoShot" class="field">
+          <span class="flabel">分镜② 脚本 · 5–15 秒 <span class="opt">第二个镜头;留空则复用分镜①</span></span>
+          <textarea v-model="prompt2" class="inp desc-ta" maxlength="2000"
+            placeholder="写第二个镜头,如:达人出镜手持产品讲解卖点、展示使用效果与氛围…"></textarea>
+        </div>
+        <div v-if="isTwoShot" class="two-shot-note">🎞️ 双分镜:5 秒(分镜①)+ 10 秒(分镜②)两段并行生成后拼接为 15 秒,算力翻倍 → <b>扣 6 点</b></div>
+
         <div class="row">
           <div class="field">
             <span class="flabel">画幅 <span class="opt">不拉伸</span></span>
@@ -256,7 +272,7 @@ onMounted(async () => {
         </div>
 
         <button class="btn-primary run" :disabled="submitting || !img1 || !seconds" @click="run">
-          {{ submitting ? '提交中…' : '生成视频 · 扣 3 点' }}
+          {{ submitting ? '提交中…' : (isTwoShot ? '生成双分镜视频(15 秒)· 扣 6 点' : '生成视频 · 扣 3 点') }}
         </button>
         <div v-if="submitted" class="submitted">
           ✅ 已提交,后台生成中。去 <router-link to="/app/space?sub=video" class="lnk">任务中心 → 视频</router-link> 查看进度与结果
@@ -269,7 +285,6 @@ onMounted(async () => {
       :image="img1"
       :seconds="seconds"
       :language="language"
-      :selling-points="sellingPoints"
       @apply="onWizardApply"
     />
   </div>
@@ -343,6 +358,8 @@ onMounted(async () => {
 .tg-text i { font-size: 11.5px; color: var(--mut); font-style: normal; line-height: 1.35; }
 .toggle.disabled { cursor: not-allowed; opacity: .55; }
 .vo-panel { display: flex; flex-direction: column; gap: 12px; padding: 12px; border: 1px dashed var(--line2); border-radius: 11px; background: rgba(64,158,255,.05); }
+.two-shot-note { font-size: 12px; line-height: 1.5; color: var(--mut); background: rgba(64,158,255,.08); border: 1px solid rgba(64,158,255,.25); border-radius: 9px; padding: 8px 11px; }
+.two-shot-note b { color: var(--brand2); }
 
 .run { width: 100%; margin-top: 2px; padding: 12px; font-size: 15px; }
 .run:disabled { opacity: .5; cursor: not-allowed; }

@@ -65,6 +65,8 @@ export function jobThumb(result) {
   if (result.print_url) return result.print_url
   if (Array.isArray(result.images) && result.images[0]) return result.images[0]
   if (result.svg_url) return result.svg_url
+  if (result.cover) return result.cover  // 视频:智谱返回的封面图当缩略(否则视频卡片看着像空的)
+  if (result.video_url && /\.gif($|\?)/i.test(result.video_url)) return result.video_url  // 本地兜底 GIF 可直接当缩略
   if (result.files) return result.files.png || result.files.jpg || ''
   return ''
 }

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from PIL import Image
@@ -14,7 +15,8 @@ from ..config import settings
 from ..db import get_db
 from ..models_db import User
 from ..services import video as video_svc
-from ..services.billing import charge_for, refund
+from ..services.billing import InsufficientCredits, charge, charge_for, refund
+from ..services.jobs import create_job
 from ..services.library import save_as_asset
 from ..tasks import run_tool
 from ..web_utils import read_image_or_refund, submit_celery
@@ -31,6 +33,8 @@ def options(user: User = Depends(current_user)):
         "languages": LANGUAGES,
         "categories": CATEGORIES,
         "durations": DURATIONS,
+        # 双分镜 15s:5s 分镜 + 10s 分镜 两段并行生成后拼接(单段模型只支持 5/10s)。
+        "two_shot": {"plan": [5, 10], "total": 15},
         # smart_ready=true 表示配了作图网关 key,可用「智能识别」(看图自动写脚本)。
         "smart_ready": bool(settings.openai_api_key),
         "ai_ready": settings.video_provider != "local" and bool(settings.video_api_key),
@@ -109,17 +113,52 @@ def wizard_proposals(
     return {"proposals": proposals}
 
 
+@router.post("/wizard/save")
+def wizard_save(
+    title: str = Form(""),
+    storyboard: str = Form(""),
+    shot1: str = Form(""),      # 双分镜:分镜① 脚本(5s)
+    shot2: str = Form(""),      # 双分镜:分镜② 脚本(10s)
+    seconds: int = Form(10),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """把智能向导采用的方案存为一条「视频脚本」记录(免费、不扣点),进「我的空间 → 视频」可回看。
+
+    解决「智能向导扣了点却在我的空间无任何痕迹」:采用方案时落一条 done 任务(信息类结果),
+    用户能回看自己生成/采用的脚本。脚本生成本身的扣点发生在 wizard/proposals,这里只做留痕、不再收费。
+    """
+    two_shot = seconds == 15
+    result = {
+        "title": (title.strip()[:80] or "视频脚本"),
+        "storyboard": storyboard[:4000],
+        "shot1": shot1[:2000],
+        "shot2": shot2[:2000],
+        "two_shot": two_shot,
+    }
+    job = create_job(db, "video_script", owner_id=user.id, tool_id="videoscript",
+                     params={"seconds": seconds, "two_shot": two_shot})
+    now = datetime.now(UTC)
+    job.status = "done"
+    job.started_at = now
+    job.finished_at = now
+    job.result = result
+    db.commit()
+    return {"job_id": job.id, "status": "done"}
+
+
 @router.post("/ai-generate")
 def ai_generate(
     file: UploadFile = File(...),
     file2: UploadFile | None = File(None),
-    prompt: str = Form(""),          # 视频描述/镜头脚本(由前端「视频类型」填入、可自定义编辑)
+    prompt: str = Form(""),          # 视频描述/镜头脚本(由前端「视频类型」填入、可自定义编辑);双分镜时=分镜① 脚本
+    prompt2: str = Form(""),         # 分镜② 脚本(仅 seconds=15 双分镜;留空则复用 prompt)
     language: str = Form("葡萄牙语"),  # 配音/对白语言(默认葡语)
     category: str = Form("通用"),     # 商品类目(前端已不暴露,默认通用):仅用于场景首帧的场景 + 入库标题
     scene_frame: bool = Form(False),  # 两步:先 gpt-image 生成场景首帧再生视频(缓解硬切;无 key 自动跳过)
     aspect: str = Form("portrait"),
     resolution: str = Form("1080p"),
-    seconds: int = Form(10),          # 视频时长(秒):5 / 10
+    seconds: int = Form(10),          # 视频时长(秒):5 / 10 / 15(15=双分镜=5s+10s 两段,价格翻倍)
     native_sound: bool = Form(False), # 视频音效:用 CogVideoX 自带音频(with_audio=AI 音效,非真人);默认关。与旁白互斥
     voiceover: bool = Form(False),    # 旁白设置:无声生成 + 叠 AI 旁白(看图写目标语言口播稿);默认关
     subtitle: bool = Form(True),      # 字幕:旁白开时把口播稿按所选语言烧进画面
@@ -147,10 +186,23 @@ def ai_generate(
         category = "通用"
     if seconds not in DURATIONS:
         seconds = 10
+    two_shot = seconds == 15          # 15s = 双分镜:拆 5s(分镜①)+10s(分镜②)两段并行生成后拼接
+    # 计费:双分镜 = 两段算力(5s+10s),价格翻倍。charge_for 依赖已扣 1 笔 video;再扣 1 笔 = 共 2 笔。
+    # 第二笔余额不足 → 退回第一笔 + 402。n = 退点笔数(翻倍时=2),贯穿所有退点路径:
+    #   入队失败 / 配额超(submit_celery 的 n)、worker 失败(TOOL_WORKS n_field="n")、卡死回收(reap 读 params["n"])。
+    n = 1
+    if two_shot:
+        try:
+            charge(db, user, "video")
+        except InsufficientCredits as exc:
+            refund(db, user, "video")
+            raise HTTPException(status_code=402, detail=str(exc)) from exc
+        n = 2
     return submit_celery(
         run_tool, db, user, kind="aivideo", tool_id="videogen", op="video",
-        raw=img1, mask_raw=img2,
-        params={"prompt": prompt[:2000], "language": language[:20],
+        raw=img1, mask_raw=img2, n=n,
+        params={"prompt": prompt[:2000], "prompt2": prompt2[:2000], "two_shot": two_shot, "n": n,
+                "language": language[:20],
                 "category": category, "scene_frame": bool(scene_frame), "subtitle": bool(subtitle),
                 "native_sound": bool(native_sound), "voiceover": bool(voiceover),
                 "aspect": aspect, "resolution": resolution, "seconds": seconds, "frames2": bool(img2)},

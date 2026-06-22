@@ -18,13 +18,19 @@ from ..config import settings
 
 log = logging.getLogger(__name__)
 
-# 语言 → (edge-tts 嗓音, 语速估计, 语言名, 字数单位)。语速用于按视频时长估稿长度,让配音尽量贴合时长。
+# 语言 → (候选嗓音列表, 语速估计, 语言名, 字数单位)。语速用于按视频时长估稿长度,让配音尽量贴合时长。
 # 中文按「字/秒」,其余按「单词/秒」(实测 pt-BR ~2.6 词/s、zh ~4.6 字/s @rate+6%)。无对白不配音。
-_VOICE: dict[str, tuple[str, float, str, str]] = {
-    "葡萄牙语": ("pt-BR-FranciscaNeural", 2.6, "巴西葡萄牙语", "个单词"),
-    "英语": ("en-US-AvaNeural", 2.6, "英语", "个单词"),
-    "西班牙语": ("es-MX-DaliaNeural", 2.6, "拉美西班牙语", "个单词"),
-    "中文": ("zh-CN-XiaoxiaoNeural", 4.6, "中文", "个字"),
+# 每语言给一组男/女混合的候选嗓音(都是 edge-tts 真实可用 voice),合成时随机挑一个
+# → 旁白不再「永远同一个人声」(此前每语言写死一个嗓音,被反馈千篇一律)。
+_VOICE: dict[str, tuple[list[str], float, str, str]] = {
+    "葡萄牙语": (["pt-BR-FranciscaNeural", "pt-BR-AntonioNeural", "pt-BR-BrendaNeural",
+                "pt-BR-FabioNeural", "pt-BR-GiovannaNeural"], 2.6, "巴西葡萄牙语", "个单词"),
+    "英语": (["en-US-AvaNeural", "en-US-AndrewNeural", "en-US-EmmaNeural",
+            "en-US-BrianNeural", "en-US-JennyNeural"], 2.6, "英语", "个单词"),
+    "西班牙语": (["es-MX-DaliaNeural", "es-MX-JorgeNeural", "es-ES-ElviraNeural",
+                "es-ES-AlvaroNeural"], 2.6, "拉美西班牙语", "个单词"),
+    "中文": (["zh-CN-XiaoxiaoNeural", "zh-CN-YunxiNeural", "zh-CN-YunyangNeural",
+            "zh-CN-XiaoyiNeural", "zh-CN-YunjianNeural"], 4.6, "中文", "个字"),
 }
 _RATE = "+6%"   # edge-tts 语速微调(实测 +6% 节奏自然又贴时长)
 
@@ -34,9 +40,17 @@ def supported_language(language: str) -> bool:
     return language in _VOICE
 
 
-def voice_for(language: str) -> str | None:
+def pick_voice(language: str) -> str | None:
+    """从该语言的候选嗓音里随机挑一个(让旁白不再永远同一个人声)。无对白/未知 → None。"""
+    import random
     spec = _VOICE.get(language)
-    return spec[0] if spec else None
+    return random.choice(spec[0]) if spec else None
+
+
+def voice_for(language: str) -> str | None:
+    """代表嗓音(候选首个);仅用于展示/兼容。实际合成在 synthesize 里随机挑(见 pick_voice)。"""
+    spec = _VOICE.get(language)
+    return spec[0][0] if spec else None
 
 
 def write_script(image: Image.Image, description: str, language: str, seconds: int) -> str:
@@ -44,7 +58,7 @@ def write_script(image: Image.Image, description: str, language: str, seconds: i
     spec = _VOICE.get(language)
     if not spec or not settings.openai_api_key:
         return ""
-    _voice, cps, lang_name, unit = spec
+    _voices, cps, lang_name, unit = spec
     n = max(8, int(seconds * cps))
     try:
         from openai import OpenAI
@@ -75,11 +89,11 @@ def write_script(image: Image.Image, description: str, language: str, seconds: i
 
 
 def synthesize(text: str, language: str) -> bytes:
-    """edge-tts 免费 TTS(微软 Edge 神经语音)→ mp3 bytes。无网 / 失败 → b''。"""
-    spec = _VOICE.get(language)
-    if not spec or not text.strip():
+    """edge-tts 免费 TTS(微软 Edge 神经语音)→ mp3 bytes。无网 / 失败 → b''。
+    嗓音从该语言候选里随机挑(pick_voice)→ 旁白不再永远同一个人声。"""
+    voice = pick_voice(language)
+    if not voice or not text.strip():
         return b""
-    voice = spec[0]
     try:
         import asyncio
         import os

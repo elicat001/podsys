@@ -108,6 +108,174 @@ def test_ai_generate_requires_auth(client):
     assert r.status_code == 401
 
 
+# ---------- 双分镜 15s(5s 分镜 + 10s 分镜 → 拼接)----------
+def test_concat_videos_single_and_empty_passthrough():
+    # 单段/空段不拼接,直接返回(避免无谓重编码)
+    from app.services.video_concat import concat_videos
+    assert concat_videos([b"abc"], "mp4") == b"abc"
+    assert concat_videos([], "mp4") == b""
+    assert concat_videos([b"", b"only"], "gif") == b"only"
+
+
+def test_concat_gif_stitches_all_frames():
+    # gif 拼接(纯 Pillow,离线):两段帧数相加、仍是合法可读的动画 GIF
+    from PIL import Image
+
+    from app.services import video as vsvc
+    from app.services.video_concat import concat_videos
+    a = vsvc.make_showcase([Image.open(_png((200, 40, 40)))], style="kenburns",
+                           aspect="portrait", fps=12, seconds=5)
+    b = vsvc.make_showcase([Image.open(_png((40, 200, 40)))], style="kenburns",
+                           aspect="portrait", fps=12, seconds=10)
+    merged = concat_videos([a["bytes"], b["bytes"]], "gif")
+    assert merged[:6] in (b"GIF87a", b"GIF89a")
+    gif = Image.open(io.BytesIO(merged))
+    assert gif.is_animated and gif.n_frames == a["frames"] + b["frames"]
+
+
+def test_ai_generate_two_shot_concats_offline(client, auth_headers):
+    # 选 15s = 双分镜:本地兜底两段 GIF(5s+10s)并行生成 → 拼接成一段更长 GIF;作业 done、价格翻倍扣 6。
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "分镜①:产品特写推近", "prompt2": "分镜②:达人出镜使用",
+                          "seconds": "15", "aspect": "portrait"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    res = job["result"]
+    assert res["ext"] == "gif" and res["video_url"].endswith(".gif")
+    assert res["two_shot"] is True
+    got = client.get(res["video_url"])
+    assert got.status_code == 200 and got.content[:6] in (b"GIF87a", b"GIF89a")
+    # 拼接后帧数应明显多于单段上限(5s≈60 帧 + 10s≈120 帧封顶 = 180 > 单段 120)
+    from PIL import Image
+    assert Image.open(io.BytesIO(got.content)).n_frames > 120
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 6  # 翻倍
+
+
+def test_two_shot_generates_two_segments_and_total_seconds(client, auth_headers, monkeypatch, png):
+    # 双分镜:provider 被调两次(5s + 10s 两段并行),旁白按 15s 总时长写稿
+    from app.ai import video as video_mod
+    from app.services import voiceover as vo_mod
+
+    calls = {"seconds": [], "vo_seconds": []}
+
+    class _FakeProvider:
+        def image_to_video(self, images, prompt, size=None, seconds=None, with_audio=None):
+            calls["seconds"].append(seconds)
+            return {"bytes": b"FAKEMP4" * 16, "ext": "mp4", "meta": {"engine": "fake"}}
+
+    monkeypatch.setattr(video_mod, "get_video_provider", lambda: _FakeProvider())
+    monkeypatch.setattr("app.services.video_concat.concat_mp4", lambda segs, keep_audio=False: b"".join(segs))
+
+    def _fake_vo(video_bytes, image, description, language, seconds, subtitle=False):
+        calls["vo_seconds"].append(seconds)
+        return video_bytes, "稿"
+    monkeypatch.setattr(vo_mod, "add_voiceover", _fake_vo)
+
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15",
+                          "voiceover": "true", "language": "英语", "aspect": "portrait"},
+                    files={"file": ("x.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert sorted(calls["seconds"]) == [5, 10]   # 两段:5s 分镜 + 10s 分镜
+    assert calls["vo_seconds"] == [15]           # 旁白按拼接后的 15s 总时长写稿
+
+
+def test_two_shot_native_sound_keeps_audio_in_concat(client, auth_headers, monkeypatch, png):
+    # 双分镜 + 视频音效 → 拼接须保留原生音轨(concat_mp4 收到 keep_audio=True);默认/旁白则 False
+    from app.ai import video as video_mod
+
+    seen = {}
+
+    class _FakeProvider:
+        def image_to_video(self, images, prompt, size=None, seconds=None, with_audio=None):
+            return {"bytes": b"FAKEMP4" * 8, "ext": "mp4", "meta": {"engine": "fake"}}
+
+    monkeypatch.setattr(video_mod, "get_video_provider", lambda: _FakeProvider())
+    monkeypatch.setattr("app.services.video_concat.concat_mp4",
+                        lambda segs, keep_audio=False: seen.update(keep_audio=keep_audio) or b"".join(segs))
+
+    def _run(extra):
+        r = client.post("/api/video/ai-generate", headers=auth_headers,
+                        data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15",
+                              "aspect": "portrait", **extra},
+                        files={"file": ("x.png", png(), "image/png")})
+        assert r.status_code == 200, r.text
+        job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+        assert job["status"] == "done", job
+
+    _run({"native_sound": "true"})
+    assert seen["keep_audio"] is True          # 视频音效 → 保留音轨
+    _run({"voiceover": "true", "language": "英语"})
+    assert seen["keep_audio"] is False         # 旁白 → 拼接丢音轨(后叠旁白)
+
+
+def test_two_shot_15s_failure_refunds_doubled(client, auth_headers, monkeypatch, png):
+    # 双分镜失败(provider 抛错)→ 整作业 error + 退回翻倍的 6 点(扣 6 退 6,净 0)
+    from app.ai import video as video_mod
+
+    def _boom():
+        class _P:
+            def image_to_video(self, *a, **k):
+                raise RuntimeError("provider down")
+        return _P()
+    monkeypatch.setattr(video_mod, "get_video_provider", _boom)
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15", "aspect": "portrait"},
+                    files={"file": ("x.png", png(), "image/png")})
+    assert r.status_code == 200, r.text   # 入队成功(eager 下同步跑→error)
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "error", job
+    # 扣了 6(翻倍)、退了 6(refund_n=2)→ 余额回到原点
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0
+
+
+def test_two_shot_15s_insufficient_credits_402_refunds_first(client, auth_headers, monkeypatch, png):
+    # 余额只够 1 笔 video(3 点)时选 15s:第二笔扣点失败 → 402 + 退回第一笔(净不扣)
+    from app.services import billing
+    real_charge = billing.charge
+    state = {"calls": 0}
+
+    def _charge_once(db, user, op):
+        if op == "video":
+            state["calls"] += 1
+            if state["calls"] == 2:      # 第二笔(翻倍那笔)模拟余额不足
+                raise billing.InsufficientCredits("video", 3, 0)
+        return real_charge(db, user, op)
+    monkeypatch.setattr(billing, "charge", _charge_once)
+    # 注意:charge_for 依赖在 services.billing 里用的是模块内 charge;routers.video 也 import 了 charge
+    from app.routers import video as video_router
+    monkeypatch.setattr(video_router, "charge", _charge_once)
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "x", "seconds": "15", "aspect": "portrait"},
+                    files={"file": ("x.png", png(), "image/png")})
+    assert r.status_code == 402, r.text
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0  # 净不扣
+
+
+def test_wizard_proposals_two_shot_returns_shots(monkeypatch):
+    # 双分镜(seconds=15)生成方案:每个方案含 shot1(5s)+ shot2(10s),storyboard 为合并展示
+    from app.services import video_wizard
+    fake = ('[{"title":"特写氛围","angle":"a","model":"无模特","environment":"居家",'
+            '"shot1":"【0-5秒】产品特写","shot2":"【0-10秒】达人使用并讲解卖点",'
+            '"storyboard":"合并脚本"}]')
+    monkeypatch.setattr(video_wizard, "_chat", lambda msgs: fake)
+    out = video_wizard.generate_proposals("杯子", "家居", "保温", seconds=15, n=1)
+    assert out[0]["shot1"] == "【0-5秒】产品特写"
+    assert out[0]["shot2"] == "【0-10秒】达人使用并讲解卖点"
+    # 单段(10s)不产 shot1/shot2
+    monkeypatch.setattr(video_wizard, "_chat",
+                        lambda msgs: '[{"title":"t","storyboard":"【0-10秒】展示"}]')
+    out10 = video_wizard.generate_proposals("杯子", "家居", "保温", seconds=10, n=1)
+    assert "shot1" not in out10[0]
+
+
 def test_video_delete_goes_to_trash(client, auth_headers):
     """回归:图生视频应入库为素材;删任务 → 素材进回收站(此前视频没入库 → 删了成幽灵、不进回收站)。"""
     r = client.post("/api/video/ai-generate", headers=auth_headers,
@@ -170,7 +338,8 @@ def test_video_options_ai_ready_false_offline(client, auth_headers):
     assert "1080p" in body["resolutions"] and "4k" in body["resolutions"]
     assert "葡萄牙语" in body["languages"]
     assert "通用" in body["categories"] and "马克杯" in body["categories"]
-    assert 5 in body["durations"] and 10 in body["durations"]
+    assert 5 in body["durations"] and 10 in body["durations"] and 15 in body["durations"]  # 15=双分镜
+    assert body["two_shot"]["plan"] == [5, 10] and body["two_shot"]["total"] == 15  # 双分镜 15s
     assert body["smart_ready"] is False   # 无 openai key → 智能识别不可用
 
 
@@ -263,6 +432,28 @@ def test_wizard_proposals_no_key_502_refunds(client, auth_headers):
     assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0
 
 
+def test_wizard_save_creates_free_record(client, auth_headers):
+    # 采用方案 → 落一条免费「视频脚本」任务(进我的空间→视频可回看);不扣点
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/wizard/save", headers=auth_headers,
+                    data={"title": "温馨家居氛围", "shot1": "【0-5秒】产品特写",
+                          "shot2": "【0-10秒】达人使用并讲解", "seconds": "15"})
+    assert r.status_code == 200, r.text
+    jid = r.json()["job_id"]
+    assert r.json()["status"] == "done"
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0  # 免费,不扣点
+    jobs = client.get("/api/jobs", headers=auth_headers).json()
+    job = next((j for j in jobs if j["id"] == jid), None)
+    assert job and job["kind"] == "video_script" and job["status"] == "done"
+    assert job["tool_id"] == "videoscript"   # → 我的空间归「视频」模块
+    assert job["result"]["shot1"] == "【0-5秒】产品特写" and job["result"]["two_shot"] is True
+
+
+def test_wizard_save_requires_auth(client):
+    r = client.post("/api/video/wizard/save", data={"title": "x"})
+    assert r.status_code == 401
+
+
 def test_wizard_parse_json_salvage():
     # JSON 容错:剥 ``` 围栏 + 数组被裹进对象都能救回
     from app.services.video_wizard import _loads_json
@@ -351,6 +542,18 @@ def test_voiceover_language_mapping():
     assert not voiceover.supported_language("无对白") and not voiceover.supported_language("火星语")
     assert voiceover.voice_for("葡萄牙语").startswith("pt-BR")
     assert voiceover.voice_for("无对白") is None
+
+
+def test_voiceover_voice_pool_randomizes():
+    # 修复「旁白永远同一个人声」:每语言有多个候选嗓音(男女混合),pick_voice 随机挑一个
+    from app.services import voiceover
+    for lang, prefix in [("葡萄牙语", "pt-"), ("英语", "en-"), ("中文", "zh-CN-"), ("西班牙语", "es-")]:
+        voices = voiceover._VOICE[lang][0]
+        assert len(voices) >= 2, f"{lang} 应有多个候选嗓音(不再写死一个)"
+        assert all(v.startswith(prefix) for v in voices)
+    picks = {voiceover.pick_voice("中文") for _ in range(40)}
+    assert len(picks) > 1, "pick_voice 应能随机取到多个不同嗓音"
+    assert voiceover.pick_voice("无对白") is None
 
 
 def test_voiceover_graceful_no_key(png):

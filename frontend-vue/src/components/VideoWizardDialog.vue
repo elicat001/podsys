@@ -9,7 +9,7 @@ import { useAuth } from '../stores/auth.js'
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   image: { type: Object, default: null },        // File(商品图,必需)
-  seconds: { type: Number, default: null },       // 时长 5/10
+  seconds: { type: Number, default: null },       // 时长 5/10/15(15=双分镜,方案带 shot1/shot2)
   language: { type: String, default: '葡萄牙语' }, // 投放市场语言(沿用页面选择)
   sellingPoints: { type: String, default: '' },   // 页面已填的产品卖点(带入初值)
 })
@@ -87,9 +87,20 @@ async function goStep2() {
   if (!proposals.value.length) await runProposals()
 }
 
-function choose(p) {
-  emit('apply', { storyboard: p.storyboard, title: p.title })
-  ElMessage.success(`已采用方案「${p.title}」,可在视频描述里继续微调`)
+async function choose(p) {
+  // 双分镜(15s)时方案含 shot1/shot2;父组件据当前时长决定填单段描述还是分镜①/②
+  emit('apply', { storyboard: p.storyboard, shot1: p.shot1 || '', shot2: p.shot2 || '', title: p.title })
+  // 落一条「视频脚本」记录到「我的空间 → 视频」(免费),解决向导扣了点却无痕迹的问题
+  try {
+    const fd = new FormData()
+    fd.append('title', p.title || '')
+    fd.append('storyboard', p.storyboard || '')
+    fd.append('shot1', p.shot1 || '')
+    fd.append('shot2', p.shot2 || '')
+    fd.append('seconds', props.seconds || 10)
+    await api.post('/video/wizard/save', fd)
+  } catch (e) { /* 留痕失败不阻断采用 */ }
+  ElMessage.success(`已采用方案「${p.title}」,已存入「我的空间 → 视频」,可在视频描述里继续微调`)
   close()
 }
 </script>
@@ -109,7 +120,7 @@ function choose(p) {
       <span class="arrow">→</span>
       <span class="sp" :class="{ on: step === 2 }">2 选择视频方案</span>
       <span class="flex" />
-      <span class="lang-note">市场语言:{{ language }} · 时长:{{ seconds || '?' }}s</span>
+      <span class="lang-note">市场语言:{{ language }} · 时长:{{ seconds || '?' }}s{{ seconds === 15 ? '(双分镜)' : '' }}</span>
     </div>
 
     <!-- ===== Step 1:商品信息 ===== -->

@@ -420,6 +420,24 @@ def _work_sync(job_id: str, job: Job, db: Session) -> dict:
     return out
 
 
+def _poster_from_mp4(job_id: str, video_path) -> str:
+    """从本地 mp4 抽第一帧存 cover.jpg,返回其 /files URL(任务中心当缩略图)。失败 → ''(上层回退)。
+    重依赖(imageio_ffmpeg)惰性 import;限 2 线程防吃满共享 CPU。"""
+    try:
+        import subprocess
+
+        import imageio_ffmpeg
+        ff = imageio_ffmpeg.get_ffmpeg_exe()
+        out_path = storage.output_path(job_id, "cover.jpg")
+        r = subprocess.run([ff, "-y", "-i", str(video_path), "-frames:v", "1", "-q:v", "3",
+                            "-threads", "2", "-loglevel", "error", str(out_path)], capture_output=True)
+        if r.returncode == 0 and out_path.exists() and out_path.stat().st_size > 256:
+            return storage.output_url(job_id, "cover.jpg")
+    except Exception as exc:  # noqa: BLE001 — 抽帧失败不影响视频交付
+        log.warning("封面抽帧失败 %s: %s", job_id, exc)
+    return ""
+
+
 def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     """AI 图生视频(智谱 CogVideoX-3 或本地兜底 GIF)。读 1~2 张输入图(2 张=首尾帧)→ provider → 存产物。
     输入图:第 1 张在 upload_path(job_id);可选第 2 张(尾帧)在 upload_path(job_id_mask)。"""
@@ -452,19 +470,43 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             imgs[0] = fit_to_aspect(framed, tw, th)
         except Exception:  # noqa: BLE001
             pass
-    # 提示词工程:镜头脚本 + 地区风格(随语言)+ 语言 + 一致性/防拉伸 + 负向(动作交给用户脚本,不按类目追加)
-    prompt = compose_prompt(p.get("prompt", ""), language=lang)
     # 视频音效(默认关)= CogVideoX 自带音频(with_audio=true,AI 音效非真人);默认无声;旁白开 = 无声再叠真人 AI 旁白。三者:默认无声 / 音效 / 旁白互斥。
     native_sound = bool(p.get("native_sound", False))
-    out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"),
-                                              with_audio=native_sound)
+    # 提示词工程:镜头脚本 + 地区风格(随语言)+ 语言 + 一致性/防拉伸 + 负向(动作交给用户脚本,不按类目追加)
+    if p.get("two_shot"):
+        # 双分镜 15s:单段模型最多 10s,故拆「分镜1=5s + 分镜2=10s」两段【并行】生成,再首尾拼接=15s。
+        # 两段都以商品图为首帧、各自脚本不同 → 形成两个镜头的硬切(分镜),拼接点正好落在分镜边界。
+        from .services.video_concat import concat_videos
+        prov = get_video_provider()
+        plan = [
+            (compose_prompt(p.get("prompt", ""), language=lang), 5),                 # 分镜1
+            (compose_prompt(p.get("prompt2") or p.get("prompt", ""), language=lang), 10),  # 分镜2
+        ]
+
+        def _seg(item: tuple[str, int]) -> dict:
+            sp, sec = item
+            return prov.image_to_video(imgs, sp, size=size, seconds=sec, with_audio=native_sound)
+
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            segs = list(ex.map(_seg, plan))   # 保序 [5s 段, 10s 段];任一段抛错 → 整作业 error + 退点
+        ext0 = segs[0].get("ext", "mp4")
+        # 选了「视频音效」(native_sound)→ 两段带原生音轨,拼接保留;默认无声/旁白则拼接丢音轨(旁白后叠)
+        merged = concat_videos([s["bytes"] for s in segs], ext0, keep_audio=native_sound)
+        out = {"bytes": merged, "ext": ext0,
+               "meta": {**segs[-1].get("meta", {}), "two_shot": True, "shots": 2, "shot_seconds": [5, 10]}}
+        total_seconds = 15
+    else:
+        prompt = compose_prompt(p.get("prompt", ""), language=lang)
+        out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"),
+                                                  with_audio=native_sound)
+        total_seconds = int(p.get("seconds") or settings.video_seconds)
     # 旁白配音(best-effort):仅「旁白设置」开 + 真 mp4(非本地兜底 GIF)才做。看图写目标语言口播稿 → edge-tts → 叠回。
     # 失败/无网/无 key 一律保留原视频,绝不阻断视频作业(CogVideoX 只产音效不产语音,语音靠这条补)。
     if p.get("voiceover") and out.get("ext") == "mp4":
         try:
             from .services.voiceover import add_voiceover
             new_bytes, script = add_voiceover(out["bytes"], raw[0], p.get("prompt", ""),
-                                              lang, int(p.get("seconds") or settings.video_seconds),
+                                              lang, total_seconds,
                                               subtitle=bool(p.get("subtitle", True)))
             out["bytes"] = new_bytes
             if script:
@@ -476,11 +518,19 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     storage.output_path(job_id, name).write_bytes(out["bytes"])
     url = storage.output_url(job_id, name)
     meta = out.get("meta", {})
+    # 封面/缩略图:mp4 从【本地成片】抽首帧存 cover.jpg(稳定 /files URL、无水印)。
+    # 不用 CogVideoX 返回的 cover_image_url —— 那是带水印的外链签名 URL(会过期、且有水印),不适合当成品缩略。
+    cover = meta.get("cover", "")
+    if ext == "mp4":
+        local_cover = _poster_from_mp4(job_id, storage.output_path(job_id, name))
+        if local_cover:
+            cover = local_cover
     if job.owner_id is not None:  # 入库(用首帧做查重源,size 用视频字节)→ 删任务时可进回收站,不再成幽灵
         save_as_asset(db, job.owner_id, imgs[0], f"图生视频 {cat}", url, source="generated",
                       size_bytes=len(out["bytes"]))
     return {"video_url": url, "ext": ext, "voiceover": meta.get("voiceover", ""),
-            "cover": meta.get("cover", ""), "engine": meta.get("engine", ""),
+            "cover": cover, "engine": meta.get("engine", ""),
+            "two_shot": bool(meta.get("two_shot")),
             "degraded": bool(meta.get("degraded"))}
 
 
@@ -503,8 +553,8 @@ TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
     "ipguard": (_work_ipguard, "process", None),
     # 采集同步(免费,不扣点 → op=None)
     "collect_sync": (_work_sync, None, None),
-    # AI 图生视频(智谱 CogVideoX-3 / 本地兜底)
-    "aivideo": (_work_aivideo, "video", None),
+    # AI 图生视频(智谱 CogVideoX-3 / 本地兜底)。退点笔数=params["n"](单段=1;双分镜 15s=2,价格翻倍)
+    "aivideo": (_work_aivideo, "video", "n"),
 }
 
 
