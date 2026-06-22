@@ -37,3 +37,7 @@ data/
 # 例外:Vue 前端的 src/data 是源码(导航/工具定义),不是运行时数据,必须入库
 !frontend-vue/src/data/
 *.db
+
+# 背景音乐床:音频文件不入库(体积+授权逐曲确认),只保留 README
+backend/assets/music/*
+!backend/assets/music/README.md

@@ -556,6 +556,16 @@ def test_video_edit_beat_plan():
     assert p2[-1][1] == 3.9 and all(e - s >= 0.6 for s, e, _ in p2)
 
 
+def test_video_edit_pick_music(tmp_path):
+    # 音乐床选曲:空目录/不存在 → None;有音频文件 → 挑到;非音频忽略
+    from app.services.video_edit import pick_music
+    assert pick_music(str(tmp_path)) is None
+    assert pick_music(str(tmp_path / "nope")) is None
+    (tmp_path / "a.mp3").write_bytes(b"x")
+    (tmp_path / "note.txt").write_bytes(b"x")
+    assert pick_music(str(tmp_path)).endswith("a.mp3")
+
+
 def test_aspect_size_by_resolution():
     # 画幅 × 分辨率 → 尺寸(短边=分辨率档,长边按比例)
     from app.ai.video import aspect_size

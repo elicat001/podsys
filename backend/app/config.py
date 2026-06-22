@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     # 后期「节奏快切」(services/video_edit.punch_up):按 beat 切段、交替全景/推近,加短视频节奏感。
     # 不改时长/音轨/商品像素(一致性零风险);experimental,默认关,验证调好再开。
     video_punchup: bool = False
+    # 背景音乐床(services/video_edit.add_music_bed):从 backend/assets/music/ 随机挑 CC0 bgm 垫在旁白之下。
+    # 默认关;开了但目录没放曲子 → 自动跳过(no-op)。音乐文件不入 git,运维投放到服务器。
+    video_music: bool = False
     # 图生视频「旁白配音」总开关:看图写目标语言口播稿(网关视觉模型)→ edge-tts 免费配音 → ffmpeg 叠回。
     # CogVideoX 只产音效不产语音,故旁白靠这条管线补。false=全局关(运维兜底);best-effort,失败保留原视频。
     voiceover_enabled: bool = True
