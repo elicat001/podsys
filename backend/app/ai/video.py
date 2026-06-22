@@ -194,9 +194,11 @@ def _parse_size(s: str) -> tuple[int, int]:
 
 
 def _encode_data_uri(im: Image.Image) -> str:
+    # 用 JPEG(而非 PNG)编码:体积小 5~10×,上传快得多 → 大幅降低发图时的网络写超时(WriteTimeout)。
+    # 商品图首帧 q90 质量足够;已 convert RGB(去 alpha,JPEG 不支持透明)。
     buf = io.BytesIO()
-    im.convert("RGB").save(buf, format="PNG")
-    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    im.convert("RGB").save(buf, format="JPEG", quality=90)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
 class LocalGifProvider:
@@ -252,17 +254,41 @@ class ZhipuCogVideoProvider:
             body["duration"] = dur
         headers = {"Authorization": "Bearer " + settings.video_api_key, "Content-Type": "application/json"}
 
-        with httpx.Client(timeout=httpx.Timeout(60.0)) as c:
-            r = c.post(self.base + "/videos/generations", headers=headers, json=body)
-            r.raise_for_status()
-            task_id = (r.json() or {}).get("id")
-            if not task_id:
-                raise RuntimeError(f"智谱未返回任务 id: {r.text[:200]}")
+        # 健壮性:双分镜可达 17min、轮询上百次,任意一次偶发网络抖动都不能整单失败。
+        # httpx.TransportError 覆盖 WriteTimeout/ConnectTimeout/ReadError 等传输层抖动;5xx 也当可重试。
+        # 建任务/下载成片 → 重试 3 次;轮询 → 容忍连续抖动(累计超阈值才放弃)。
+        with httpx.Client(timeout=httpx.Timeout(120.0)) as c:
+            task_id = ""
+            for attempt in range(3):
+                try:
+                    r = c.post(self.base + "/videos/generations", headers=headers, json=body)
+                    r.raise_for_status()
+                    task_id = (r.json() or {}).get("id") or ""
+                    if not task_id:
+                        raise RuntimeError(f"智谱未返回任务 id: {r.text[:200]}")
+                    break
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code < 500 or attempt == 2:
+                        raise          # 4xx(鉴权/参数)不重试;重试用尽抛出
+                    time.sleep(2 * (attempt + 1))
+                except httpx.TransportError:
+                    if attempt == 2:
+                        raise
+                    time.sleep(2 * (attempt + 1))
+
             deadline = time.monotonic() + float(settings.video_timeout)
+            poll_fails = 0
             while time.monotonic() < deadline:
                 time.sleep(float(settings.video_poll_interval))
-                rr = c.get(self.base + "/async-result/" + task_id, headers=headers)
-                rr.raise_for_status()
+                try:
+                    rr = c.get(self.base + "/async-result/" + task_id, headers=headers)
+                    rr.raise_for_status()
+                except (httpx.TransportError, httpx.HTTPStatusError):
+                    poll_fails += 1
+                    if poll_fails > 20:    # 连续 ~100s 轮询都失败才放弃(容忍偶发抖动)
+                        raise
+                    continue
+                poll_fails = 0
                 d = rr.json() or {}
                 st = str(d.get("task_status", "")).upper()
                 if st == "SUCCESS":
@@ -270,7 +296,14 @@ class ZhipuCogVideoProvider:
                     url = (vids[0].get("url") if vids else "") or ""
                     if not url:
                         raise RuntimeError("任务成功但无视频 URL")
-                    data = c.get(url, timeout=httpx.Timeout(120.0)).content
+                    for attempt in range(3):       # 下载成片重试
+                        try:
+                            data = c.get(url, timeout=httpx.Timeout(180.0)).content
+                            break
+                        except httpx.TransportError:
+                            if attempt == 2:
+                                raise
+                            time.sleep(3 * (attempt + 1))
                     return {"bytes": data, "url": url, "ext": "mp4",
                             "meta": {"engine": "cogvideox-3", "task_id": task_id,
                                      "cover": (vids[0].get("cover_image_url") or ""), "size": size}}

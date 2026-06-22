@@ -442,6 +442,56 @@ def test_wizard_parse_json_salvage():
     assert isinstance(arr, list) and arr[0]["title"] == "A"
 
 
+def test_zhipu_provider_retries_transient_writetimeout(monkeypatch):
+    # 网络健壮性:建任务 POST 第一次 WriteTimeout → 自动重试成功;轮询 SUCCESS → 下载成片(不整单失败)
+    import httpx
+    from PIL import Image
+
+    from app.ai import video as vmod
+    from app.config import settings
+    monkeypatch.setattr(settings, "video_api_key", "k")
+    calls = {"post": 0, "dl": 0}
+
+    class _Resp:
+        def __init__(self, j=None, content=b""):
+            self._j = j; self.content = content; self.status_code = 200; self.text = ""
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._j
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, **k):
+            calls["post"] += 1
+            if calls["post"] == 1:
+                raise httpx.WriteTimeout("write timed out")   # 首次抖动
+            return _Resp(j={"id": "task1"})
+
+        def get(self, url, **k):
+            if "async-result" in url:
+                return _Resp(j={"task_status": "SUCCESS",
+                                "video_result": [{"url": "http://x/v.mp4", "cover_image_url": "c"}]})
+            calls["dl"] += 1
+            return _Resp(content=b"MP4BYTES")
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+    monkeypatch.setattr("time.sleep", lambda *a: None)
+    out = vmod.ZhipuCogVideoProvider().image_to_video([Image.new("RGB", (32, 32))], "p", seconds=5)
+    assert out["bytes"] == b"MP4BYTES" and out["ext"] == "mp4"
+    assert calls["post"] == 2 and calls["dl"] == 1   # WriteTimeout 后重试一次成功
+
+
 def test_aspect_size_by_resolution():
     # 画幅 × 分辨率 → 尺寸(短边=分辨率档,长边按比例)
     from app.ai.video import aspect_size
