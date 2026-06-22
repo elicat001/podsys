@@ -104,6 +104,9 @@ class Settings(BaseSettings):
     video_size: str = ""                   # 留空=按画幅取高分辨率(ASPECT_SIZE);填则强制(如 3840x2160 上 4K)
     video_timeout: float = 1500.0          # 轮询总超时(秒);视频远比图片慢,给 25min(4K/排队时真要这么久)
     video_poll_interval: float = 5.0
+    # 后期「节奏快切」(services/video_edit.punch_up):按 beat 切段、交替全景/推近,加短视频节奏感。
+    # 不改时长/音轨/商品像素(一致性零风险);experimental,默认关,验证调好再开。
+    video_punchup: bool = False
     # 图生视频「旁白配音」总开关:看图写目标语言口播稿(网关视觉模型)→ edge-tts 免费配音 → ffmpeg 叠回。
     # CogVideoX 只产音效不产语音,故旁白靠这条管线补。false=全局关(运维兜底);best-effort,失败保留原视频。
     voiceover_enabled: bool = True

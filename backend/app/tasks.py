@@ -482,6 +482,11 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
         out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"),
                                                   with_audio=native_sound)
         total_seconds = int(p.get("seconds") or settings.video_seconds)
+    # 后期节奏快切(opt-in,默认关):按 beat 切段、全景/推近交替,治"呆板"。在旁白/字幕【之前】做 → 不裁字幕。
+    # 不改时长/音轨/商品像素(一致性零风险);失败回退原片。
+    if settings.video_punchup and out.get("ext") == "mp4":
+        from .services.video_edit import punch_up
+        out["bytes"] = punch_up(out["bytes"])
     # 旁白配音(best-effort):仅「旁白设置」开 + 真 mp4(非本地兜底 GIF)才做。看图写目标语言口播稿 → edge-tts → 叠回。
     # 失败/无网/无 key 一律保留原视频,绝不阻断视频作业(CogVideoX 只产音效不产语音,语音靠这条补)。
     if p.get("voiceover") and out.get("ext") == "mp4":

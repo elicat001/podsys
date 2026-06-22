@@ -492,6 +492,70 @@ def test_zhipu_provider_retries_transient_writetimeout(monkeypatch):
     assert calls["post"] == 2 and calls["dl"] == 1   # WriteTimeout 后重试一次成功
 
 
+def test_zhipu_provider_resubmits_on_task_fail(monkeypatch):
+    # 智谱把第1个任务判 FAIL(『网络错误,请稍后重试』)→ 自动重建新任务 → 第2个 SUCCESS(不整单挂)
+    import httpx
+    from PIL import Image
+
+    from app.ai import video as vmod
+    from app.config import settings
+    monkeypatch.setattr(settings, "video_api_key", "k")
+    calls = {"post": 0, "dl": 0}
+
+    class _Resp:
+        def __init__(self, j=None, content=b""):
+            self._j = j; self.content = content; self.status_code = 200; self.text = ""
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._j
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, **k):
+            calls["post"] += 1
+            return _Resp(j={"id": f"task{calls['post']}"})
+
+        def get(self, url, **k):
+            if "async-result" in url:
+                if url.endswith("task1"):
+                    return _Resp(j={"task_status": "FAIL",
+                                    "error": {"code": "1234", "message": "网络错误,请稍后重试"}})
+                return _Resp(j={"task_status": "SUCCESS",
+                                "video_result": [{"url": "http://x/v.mp4", "cover_image_url": "c"}]})
+            calls["dl"] += 1
+            return _Resp(content=b"OKMP4")
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+    monkeypatch.setattr("time.sleep", lambda *a: None)
+    out = vmod.ZhipuCogVideoProvider().image_to_video([Image.new("RGB", (32, 32))], "p", seconds=5)
+    assert out["bytes"] == b"OKMP4"
+    assert calls["post"] == 2 and calls["dl"] == 1   # 任务1 FAIL → 重建任务2 → 成功
+
+
+def test_video_edit_beat_plan():
+    # 后期节奏核:beat 网格切段(全景/推近交替),覆盖全片、无缝、末段碎尾并入
+    from app.services.video_edit import beat_plan
+    plan = beat_plan(8.0, 1.8)
+    assert len(plan) >= 2
+    assert plan[0][0] == 0.0 and plan[-1][1] == 8.0          # 0 开始、覆盖到结尾
+    assert all(plan[i][1] == plan[i + 1][0] for i in range(len(plan) - 1))   # 连续无缝
+    assert [s[2] for s in plan] == [i % 2 == 1 for i in range(len(plan))]    # 全景/推近交替
+    assert beat_plan(0, 1.8) == [] and beat_plan(8, 0) == []  # 边界
+    p2 = beat_plan(3.9, 1.8)                                  # 末段 0.3s<0.6 → 并入上一段
+    assert p2[-1][1] == 3.9 and all(e - s >= 0.6 for s, e, _ in p2)
+
+
 def test_aspect_size_by_resolution():
     # 画幅 × 分辨率 → 尺寸(短边=分辨率档,长边按比例)
     from app.ai.video import aspect_size

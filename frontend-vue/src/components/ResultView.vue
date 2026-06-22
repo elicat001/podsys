@@ -172,15 +172,6 @@ const riskColor = (r) => ({ high: 'var(--err)', review: 'var(--warn)', safe: 'va
         <td class="kv-v">{{ v }}</td>
       </tr>
     </table>
-    <!-- 视频脚本(智能向导采用的方案):分镜①/② 或整段脚本 -->
-    <div v-if="data.shot1 || data.shot2 || data.storyboard" class="script">
-      <template v-if="data.shot1 || data.shot2">
-        <div v-if="data.shot1" class="sb"><b>分镜① · 0–5s</b><pre>{{ data.shot1 }}</pre></div>
-        <div v-if="data.shot2" class="sb"><b>分镜② · 5–15s</b><pre>{{ data.shot2 }}</pre></div>
-      </template>
-      <div v-else class="sb"><pre>{{ data.storyboard }}</pre></div>
-      <button class="chip" @click="copy((data.shot1 || data.shot2) ? [data.shot1, data.shot2].filter(Boolean).join('\n\n') : data.storyboard, '脚本')">📋 复制脚本</button>
-    </div>
     <div v-if="data.title || (data.keywords && data.keywords.length)" class="copy-row">
       <button v-if="data.title" class="chip" @click="copy(data.title, '标题')">📋 复制标题</button>
       <button v-if="data.keywords && data.keywords.length" class="chip"
@@ -281,34 +272,6 @@ const riskColor = (r) => ({ high: 'var(--err)', review: 'var(--warn)', safe: 'va
   margin-top: 12px;
 }
 .copy-row .chip {
-  cursor: pointer;
-}
-.script {
-  margin-top: 12px;
-  text-align: left;
-}
-.script .sb {
-  margin-bottom: 10px;
-}
-.script .sb b {
-  display: block;
-  font-size: 12.5px;
-  color: var(--brand2);
-  margin-bottom: 4px;
-}
-.script pre {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.55;
-  margin: 0;
-  background: var(--panel);
-  border: 1px solid var(--line2);
-  border-radius: 8px;
-  padding: 9px 11px;
-}
-.script .chip {
   cursor: pointer;
 }
 </style>

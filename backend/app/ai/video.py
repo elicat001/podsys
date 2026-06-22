@@ -220,6 +220,10 @@ class LocalGifProvider:
         }
 
 
+class _TaskFailed(Exception):
+    """智谱把任务判 FAIL(应用层失败,常见『网络错误,请稍后重试』)→ 可重新建任务重试,区别于网络层异常。"""
+
+
 class ZhipuCogVideoProvider:
     """智谱 CogVideoX-3 图生视频。建任务→轮询→下载 mp4。1图=首帧,2图=[首,尾]首尾帧。"""
     name = "cogvideox"
@@ -229,6 +233,67 @@ class ZhipuCogVideoProvider:
             raise RuntimeError("POD_VIDEO_API_KEY 未配置(智谱开放平台 key)")
         self.base = (settings.video_base_url or "https://open.bigmodel.cn/api/paas/v4").rstrip("/")
         self.model = settings.video_model or "cogvideox-3"
+
+    def _build_task(self, c, body: dict, headers: dict) -> str:
+        """提交任务 → task_id。网络抖动重试 3 次;4xx(鉴权/参数)不重试。"""
+        import httpx
+        for attempt in range(3):
+            try:
+                r = c.post(self.base + "/videos/generations", headers=headers, json=body)
+                r.raise_for_status()
+                tid = (r.json() or {}).get("id") or ""
+                if not tid:
+                    raise RuntimeError(f"智谱未返回任务 id: {r.text[:200]}")
+                return tid
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code < 500 or attempt == 2:
+                    raise
+                time.sleep(2 * (attempt + 1))
+            except httpx.TransportError:
+                if attempt == 2:
+                    raise
+                time.sleep(2 * (attempt + 1))
+        raise RuntimeError("建任务失败")  # 不会到这(循环里要么 return 要么 raise),兜底
+
+    def _await_result(self, c, task_id: str, headers: dict, size: str) -> dict:
+        """轮询直到 SUCCESS(下载并返回 result)。任务 FAIL → 抛 _TaskFailed(可重建)。
+        轮询偶发网络抖动容忍(连续超阈值才放弃);超时抛 TimeoutError(不重建,已等满)。"""
+        import httpx
+        deadline = time.monotonic() + float(settings.video_timeout)
+        poll_fails = 0
+        while time.monotonic() < deadline:
+            time.sleep(float(settings.video_poll_interval))
+            try:
+                rr = c.get(self.base + "/async-result/" + task_id, headers=headers)
+                rr.raise_for_status()
+            except (httpx.TransportError, httpx.HTTPStatusError):
+                poll_fails += 1
+                if poll_fails > 20:
+                    raise
+                continue
+            poll_fails = 0
+            d = rr.json() or {}
+            st = str(d.get("task_status", "")).upper()
+            if st == "SUCCESS":
+                vids = d.get("video_result") or []
+                url = (vids[0].get("url") if vids else "") or ""
+                if not url:
+                    raise _TaskFailed("任务成功但无视频 URL")
+                for attempt in range(3):       # 下载成片重试
+                    try:
+                        data = c.get(url, timeout=httpx.Timeout(180.0)).content
+                        break
+                    except httpx.TransportError:
+                        if attempt == 2:
+                            raise
+                        time.sleep(3 * (attempt + 1))
+                return {"bytes": data, "url": url, "ext": "mp4",
+                        "meta": {"engine": "cogvideox-3", "task_id": task_id,
+                                 "cover": (vids[0].get("cover_image_url") or ""), "size": size}}
+            if st in ("FAIL", "FAILED", "ERROR"):
+                err = (d.get("error") or {})
+                raise _TaskFailed(str(err.get("message") or err or str(d))[:160])
+        raise TimeoutError("视频生成超时(可调 POD_VIDEO_TIMEOUT)")
 
     def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920",
                        seconds: int | None = None, with_audio: bool | None = None) -> dict:
@@ -254,62 +319,26 @@ class ZhipuCogVideoProvider:
             body["duration"] = dur
         headers = {"Authorization": "Bearer " + settings.video_api_key, "Content-Type": "application/json"}
 
-        # 健壮性:双分镜可达 17min、轮询上百次,任意一次偶发网络抖动都不能整单失败。
-        # httpx.TransportError 覆盖 WriteTimeout/ConnectTimeout/ReadError 等传输层抖动;5xx 也当可重试。
-        # 建任务/下载成片 → 重试 3 次;轮询 → 容忍连续抖动(累计超阈值才放弃)。
-        with httpx.Client(timeout=httpx.Timeout(120.0)) as c:
-            task_id = ""
-            for attempt in range(3):
-                try:
-                    r = c.post(self.base + "/videos/generations", headers=headers, json=body)
-                    r.raise_for_status()
-                    task_id = (r.json() or {}).get("id") or ""
-                    if not task_id:
-                        raise RuntimeError(f"智谱未返回任务 id: {r.text[:200]}")
-                    break
-                except httpx.HTTPStatusError as exc:
-                    if exc.response.status_code < 500 or attempt == 2:
-                        raise          # 4xx(鉴权/参数)不重试;重试用尽抛出
-                    time.sleep(2 * (attempt + 1))
-                except httpx.TransportError:
-                    if attempt == 2:
-                        raise
-                    time.sleep(2 * (attempt + 1))
-
-            deadline = time.monotonic() + float(settings.video_timeout)
-            poll_fails = 0
-            while time.monotonic() < deadline:
-                time.sleep(float(settings.video_poll_interval))
-                try:
-                    rr = c.get(self.base + "/async-result/" + task_id, headers=headers)
-                    rr.raise_for_status()
-                except (httpx.TransportError, httpx.HTTPStatusError):
-                    poll_fails += 1
-                    if poll_fails > 20:    # 连续 ~100s 轮询都失败才放弃(容忍偶发抖动)
-                        raise
-                    continue
-                poll_fails = 0
-                d = rr.json() or {}
-                st = str(d.get("task_status", "")).upper()
-                if st == "SUCCESS":
-                    vids = d.get("video_result") or []
-                    url = (vids[0].get("url") if vids else "") or ""
-                    if not url:
-                        raise RuntimeError("任务成功但无视频 URL")
-                    for attempt in range(3):       # 下载成片重试
-                        try:
-                            data = c.get(url, timeout=httpx.Timeout(180.0)).content
-                            break
-                        except httpx.TransportError:
-                            if attempt == 2:
-                                raise
-                            time.sleep(3 * (attempt + 1))
-                    return {"bytes": data, "url": url, "ext": "mp4",
-                            "meta": {"engine": "cogvideox-3", "task_id": task_id,
-                                     "cover": (vids[0].get("cover_image_url") or ""), "size": size}}
-                if st in ("FAIL", "FAILED", "ERROR"):
-                    raise RuntimeError(f"智谱视频任务失败: {str(d)[:200]}")
-            raise RuntimeError("视频生成超时(可调 POD_VIDEO_TIMEOUT)")
+        # 三层健壮性:① 建任务/轮询/下载 各自重试网络抖动(_build_task/_await_result);
+        # ② 任务级重试——智谱偶发把任务判 FAIL(实测返回『网络错误,请稍后重试』),它让我们稍后重试,
+        #    于是退避后【重新建一个新任务】(重新轮询同一个 FAIL 任务没用);最多 3 个任务。
+        # 双分镜可达 17min、轮询上百次、还可能撞上并发软限流 → 没这层会整单挂。
+        last = "未知"
+        for task_try in range(3):
+            try:
+                with httpx.Client(timeout=httpx.Timeout(120.0)) as c:
+                    task_id = self._build_task(c, body, headers)
+                    return self._await_result(c, task_id, headers, size)
+            except _TaskFailed as exc:
+                last = f"任务FAIL: {exc}"
+            except httpx.TransportError as exc:
+                last = f"网络: {type(exc).__name__}"
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code < 500:
+                    raise                       # 4xx(鉴权/参数)直接抛,不重试
+                last = f"HTTP {exc.response.status_code}"
+            time.sleep(5 * (task_try + 1))      # 智谱让"稍后重试" → 退避后重建任务
+        raise RuntimeError(f"智谱视频任务多次失败(已重试 3 次): {last}")
 
 
 def get_video_provider() -> VideoProvider:
