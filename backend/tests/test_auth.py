@@ -26,6 +26,15 @@ def test_register_duplicate_email_409(client):
     assert r2.status_code == 409
 
 
+def test_register_disabled_returns_403(client, monkeypatch):
+    # 测试阶段暂停注册:register_enabled=False → 403「测试阶段,功能暂不支持」(后端硬堵,不只靠前端)
+    from app.config import settings
+    monkeypatch.setattr(settings, "register_enabled", False)
+    r = client.post("/api/auth/register", json={"email": _email(), "password": "pw123456"})
+    assert r.status_code == 403
+    assert "测试阶段" in r.json()["detail"]
+
+
 def test_login_success(client):
     email = _email()
     client.post("/api/auth/register", json={"email": email, "password": "pw123456"})

@@ -76,6 +76,21 @@ async def _no_cache_html(request, call_next):
     return response
 
 
+@app.middleware("http")
+async def _security_headers(request, call_next):
+    """安全响应头(应用层兜底,与 nginx 双保险)。HSTS 仅在 https(经 nginx 终止 TLS)下加,
+    避免本地 http 开发被锁死。CSP 不在此强加(SPA 内联/第三方较多,易误伤),交由后续按需细化。"""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("X-XSS-Protection", "0")  # 现代浏览器已弃用旧式过滤器,显式关闭避免其引入的漏洞
+    if request.headers.get("x-forwarded-proto") == "https":
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
+
 app.include_router(auth_router.router)
 app.include_router(assets_router.router)
 app.include_router(products_router.router)

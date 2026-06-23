@@ -22,6 +22,9 @@ class Credentials(BaseModel):
 
 @router.post("/register")
 def register(body: Credentials, request: Request, db: Session = Depends(get_db)):
+    # 注册总开关(测试阶段对外关闭):后端硬堵,不只依赖前端隐藏入口
+    if not settings.register_enabled:
+        raise HTTPException(status_code=403, detail="测试阶段,功能暂不支持")
     # 每 IP 注册限流(评审 P0-3:堵 guest 清缓存重刷点)
     ip = request.client.host if request.client else "unknown"
     if not register_limiter.allow(f"reg:{ip}", settings.register_rate_limit,

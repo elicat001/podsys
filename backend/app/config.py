@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # 生产应调低(如 POD_REGISTER_RATE_LIMIT=5)以堵 guest 刷点(评审 P0-3)。
     register_rate_limit: int = 1000
     register_rate_window_sec: int = 3600
+    # 注册总开关。默认开(dev/测试需注册);测试阶段对外置 false(POD_REGISTER_ENABLED=false)→
+    # /api/auth/register 直接 403,前端弹「测试阶段,功能暂不支持」。后端硬堵=不只依赖前端。
+    register_enabled: bool = True
 
     # AI providers — swap implementation without touching call sites
     matting_provider: str = "pillow"        # pillow | rembg | api | gptimage

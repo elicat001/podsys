@@ -12,6 +12,11 @@ const mode = ref('login') // login | register
 const loading = ref(false)
 const form = reactive({ email: '', password: '' })
 
+// 测试阶段:暂停注册。点「注册」只弹提示,不进注册流程(后端 /register 同样 403 兜底)。
+function registerDisabled() {
+  ElMessage.info('测试阶段,功能暂不支持')
+}
+
 async function submit() {
   if (!form.email || !form.password) {
     ElMessage.warning('请填写邮箱和密码')
@@ -19,9 +24,8 @@ async function submit() {
   }
   loading.value = true
   try {
-    if (mode.value === 'login') await auth.login(form.email, form.password)
-    else await auth.register(form.email, form.password)
-    ElMessage.success(mode.value === 'login' ? '登录成功' : '注册成功')
+    await auth.login(form.email, form.password)   // 测试阶段仅登录;注册已暂停
+    ElMessage.success('登录成功')
     router.replace(route.query.redirect || '/app')
   } catch (e) {
     ElMessage.error(e.message || '操作失败')
@@ -61,10 +65,7 @@ async function submit() {
       </el-form>
 
       <div class="switch muted">
-        <template v-if="mode === 'login'">
-          还没有账号?<a class="link" @click="mode = 'register'">免费注册</a>
-        </template>
-        <template v-else> 已有账号?<a class="link" @click="mode = 'login'">去登录</a> </template>
+        还没有账号?<a class="link" @click="registerDisabled">免费注册</a>
       </div>
       <router-link to="/" class="back muted">← 返回首页</router-link>
     </div>
