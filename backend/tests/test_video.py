@@ -543,6 +543,49 @@ def test_zhipu_provider_resubmits_on_task_fail(monkeypatch):
     assert calls["post"] == 2 and calls["dl"] == 1   # 任务1 FAIL → 重建任务2 → 成功
 
 
+def test_zhipu_provider_4xx_surfaces_response_body(monkeypatch):
+    # 智谱 4xx(内容审核/参数/余额)→ 抛错带上【响应体真因】,不再只剩 "400 Bad Request" 无从定位
+    import httpx
+    import pytest
+    from PIL import Image
+
+    from app.ai import video as vmod
+    from app.config import settings
+    monkeypatch.setattr(settings, "video_api_key", "k")
+    body = '{"error":{"code":"1301","message":"系统检测到内容可能包含敏感信息"}}'
+
+    class _Resp400:
+        status_code = 400
+        text = body
+
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError(
+                "400 Bad Request", request=httpx.Request("POST", "http://x"), response=self)
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, **k):
+            return _Resp400()
+
+        def get(self, url, **k):
+            return _Resp400()
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+    monkeypatch.setattr("time.sleep", lambda *a: None)
+    with pytest.raises(RuntimeError) as ei:
+        vmod.ZhipuCogVideoProvider().image_to_video([Image.new("RGB", (32, 32))], "p", seconds=5)
+    msg = str(ei.value)
+    assert "400" in msg and "敏感信息" in msg          # 智谱响应体真因已带出
+
+
 def test_video_edit_beat_plan():
     # 后期节奏核:beat 网格切段(全景/推近交替),覆盖全片、无缝、末段碎尾并入
     from app.services.video_edit import beat_plan

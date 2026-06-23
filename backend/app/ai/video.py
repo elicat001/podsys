@@ -250,8 +250,14 @@ class ZhipuCogVideoProvider:
                     raise RuntimeError(f"智谱未返回任务 id: {r.text[:200]}")
                 return tid
             except httpx.HTTPStatusError as exc:
-                if exc.response.status_code < 500 or attempt == 2:
-                    raise
+                code = exc.response.status_code
+                if code < 500 or attempt == 2:
+                    # 4xx(参数/鉴权/内容审核/余额)或重试用尽:带上智谱的响应体,否则只剩"400 Bad Request"无从定位
+                    try:
+                        detail = exc.response.text[:300]
+                    except Exception:  # noqa: BLE001
+                        detail = ""
+                    raise RuntimeError(f"智谱建任务失败 HTTP {code}: {detail}") from exc
                 time.sleep(2 * (attempt + 1))
             except httpx.TransportError:
                 if attempt == 2:
@@ -339,7 +345,11 @@ class ZhipuCogVideoProvider:
                 last = f"网络: {type(exc).__name__}"
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code < 500:
-                    raise                       # 4xx(鉴权/参数)直接抛,不重试
+                    try:
+                        detail = exc.response.text[:300]
+                    except Exception:  # noqa: BLE001
+                        detail = ""
+                    raise RuntimeError(f"智谱视频 HTTP {exc.response.status_code}: {detail}") from exc
                 last = f"HTTP {exc.response.status_code}"
             time.sleep(5 * (task_try + 1))      # 智谱让"稍后重试" → 退避后重建任务
         raise RuntimeError(f"智谱视频任务多次失败(已重试 3 次): {last}")
