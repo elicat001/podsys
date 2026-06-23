@@ -1,6 +1,8 @@
 <script setup>
-// 图生视频:上传图 + 选时长(5/10s,先选时长才能选类型)+ 智能识别/视频类型(填可改的镜头脚本)
-// + 类目/画幅/分辨率/语言/场景首帧 → 智谱 CogVideoX-3。提交即走。提示词工程/防拉伸/地区风格在后端。
+// 图生视频:上传图 + 选时长(5/10/15s,先选时长才能选类型)+ 智能向导/视频类型(填可改的镜头脚本)
+// + 类目/画幅/分辨率/语言/场景首帧 → 智谱 CogVideoX-3。提交即走。
+// 两条路径:✨智能向导(AI 看图出产品驱动的故事方案,自带 per-shot 场景母帧)/ 视频类型(手动选风格)。
+// 故事/per-shot 母帧能力下沉后台:15s 双分镜手动路径不传场景,后台按类目自动融合(仅有 key 时生效)。
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client.js'
@@ -24,8 +26,6 @@ const submitted = ref(false)
 const aiReady = ref(true)
 const smartReady = ref(false)
 const wizardOpen = ref(false)   // 智能方案向导弹窗
-const stories = ref([])         // 故事模板库(内容策划层,/video/templates):双分镜一键选用,无需 AI key
-const selStory = ref('')        // 当前选中的故事模板 id
 
 const DURATIONS = [
   { id: 5, label: '5 秒', hint: '快' },
@@ -34,29 +34,32 @@ const DURATIONS = [
 ]
 
 // 每类型都有 5s / 10s 两套「镜头脚本」(分时间轴);选时长后填对应的那套。类目动作/地区风格/负向词后端追加。
+// 文案统一往「真人随手发的 TikTok 生活内容」靠:商品作为生活片段里自然出现/使用的道具,真实 UGC 抓拍质感,
+// 弱化广告摄影棚/精修大片感(动态/内容感靠真实生活场景,不靠片内硬运动)。
 const TYPES = [
-  { id: 'unbox', icon: '📦', name: '开箱分享', desc: '素人手持开箱',
-    t5: '5 秒快节奏开箱短视频。【0-1.5秒】素人手持手机对准包装、快速拆开,画面轻微晃动。【1.5-3.5秒】产品露出,镜头推近展示外观与细节。【3.5-5秒】拿起产品、露出惊喜满意表情,快速收尾。',
-    t10: '10 秒真实开箱短视频。【0-2秒】镜头对准未拆封的包装,素人第一视角手持手机、轻微手抖与对焦变化,双手把包装拉近镜头。【2-4秒】快速撕开包装袋或打开纸盒,镜头跟随双手移动、画面轻微晃动。【4-6秒】产品首次完整露出,镜头自然向前推进,缓慢转动展示正面和侧面。【6-8秒】拿起产品观察、触摸材质与细节,镜头短暂停留在重点区域,表情真实好奇满意。【8-10秒】快速展示产品使用状态或最终效果,镜头拉远,露出惊喜满意表情,自然结束。' },
-  { id: 'influencer', icon: '🎤', name: '达人带货', desc: '达人出镜讲卖点',
-    t5: '5 秒达人带货短视频。【0-1.5秒】达人正对镜头、手拿产品自信开场。【1.5-3.5秒】快速展示产品卖点与细节,达人有感染力地讲解。【3.5-5秒】达人种草总结、表情真诚,明快收尾。',
-    t10: '10 秒达人带货短视频。【0-2秒】达人正对镜头出场、手拿产品自信开场,构图稳定。【2-4秒】特写产品外观与核心卖点,达人手指向重点、表情有感染力。【4-6秒】镜头切换展示产品细节与功能,达人边演示边讲解。【6-8秒】展示产品使用或上身效果,达人与产品自然互动。【8-10秒】达人对镜头总结种草、表情真诚有说服力,画面明快收尾。' },
-  { id: 'scene', icon: '🛋️', name: '场景介绍', desc: '真实场景中使用',
-    t5: '5 秒商品场景短视频。【0-1.5秒】产品自然出现在真实生活场景中,镜头轻缓进入。【1.5-3.5秒】人物自然拿起并使用产品。【3.5-5秒】展示使用效果与氛围,镜头轻拉远收尾。',
-    t10: '10 秒商品使用场景短视频。【0-2秒】产品自然摆放在真实生活场景中(桌面/客厅/户外),镜头轻缓进入。【2-4秒】镜头缓缓推近,展示产品在场景中的状态与质感。【4-6秒】人物自然地拿起并开始使用产品,动作流畅真实。【6-8秒】镜头跟随使用过程,突出功能与实际效果。【8-10秒】展示使用后的满意效果与氛围,镜头轻缓拉远,治愈自然收尾。' },
-  { id: 'ad', icon: '🎬', name: '广告大片', desc: '电影级广告质感',
-    t5: '5 秒商业广告短片。【0-1.5秒】产品在干净背景中登场,电影级打光。【1.5-3.5秒】镜头优雅环绕产品,突出材质质感与细节。【3.5-5秒】镜头定格,大片质感收尾。',
-    t10: '10 秒高质感商业广告短片。【0-2秒】产品在干净背景中优雅登场,电影级打光,镜头缓缓推入。【2-4秒】镜头优雅地环绕产品,光影流动,突出材质与质感。【4-6秒】特写产品关键细节,景深变化、画面精致。【6-8秒】产品置于高级氛围场景中呈现,沉稳有张力。【8-10秒】镜头缓缓拉远定格,品牌大片质感收尾。' },
-  { id: 'interactive', icon: '🤝', name: '互动场景', desc: '人物产品真实互动',
-    t5: '5 秒真实互动短视频。【0-1.5秒】人物伸手拿起产品。【1.5-3.5秒】人物试用/使用产品,动作流畅、表情生动。【3.5-5秒】人物满意回应,自然收尾。',
-    t10: '10 秒真实互动短视频。【0-2秒】人物自然进入画面、伸手拿起产品。【2-4秒】人物试用或使用产品,动作流畅、表情生动。【4-6秒】镜头跟随互动过程,捕捉真实表情与反应。【6-8秒】展示产品带来的效果或乐趣,人物自然回应、有代入感。【8-10秒】人物满意收尾,生活化氛围,画面自然结束。' },
+  { id: 'unbox', icon: '📦', name: '开箱时刻', desc: '收到货随手拍',
+    t5: '5 秒真实开箱片段。【0-1.5秒】手机随手拍,双手拆开快递包装,画面轻微晃动、生活气十足。【1.5-3.5秒】商品露出,自然拿到眼前翻看、手指摩挲质感。【3.5-5秒】拿着商品对镜头笑了一下,真实惊喜感收尾,像发给朋友的开箱。',
+    t10: '10 秒真实开箱日常。【0-2秒】桌上放着刚到的快递,手机随手拍、第一视角伸手过去。【2-4秒】拆开包装、商品first露出,画面轻微晃动、对焦自然变化。【4-6秒】把商品拿到眼前翻看,手指摸过图案与材质,真实好奇。【6-8秒】放到身边或穿戴/摆放好,自然融入桌面/房间场景。【8-10秒】对着镜头满意笑一下,随手拍的生活开箱感收尾。' },
+  { id: 'influencer', icon: '🎤', name: '真人种草', desc: '达人口播安利',
+    t5: '5 秒真人种草片段。【0-1.5秒】达人手持商品、对镜头自然开口,像在跟朋友安利。【1.5-3.5秒】顺手展示商品图案与细节,表情有感染力。【3.5-5秒】点头笑着收尾,真诚不浮夸,生活化口播感。',
+    t10: '10 秒真人种草日常。【0-2秒】达人坐在房间里手持商品、对镜头自然开场,像随手开的 vlog。【2-4秒】把商品转到镜头前展示图案/细节,边看边自然讲。【4-6秒】拿着商品比划使用方式,真实生活动作。【6-8秒】商品自然贴近身体/放回生活场景中,达人有代入感地回应。【8-10秒】对镜头真诚点头笑收尾,像发给粉丝的安利。' },
+  { id: 'daily', icon: '🛋️', name: '生活日常', desc: '商品融入真实生活',
+    t5: '5 秒生活日常片段。【0-1.5秒】真实生活场景里(房间/桌边/窗前),人物自然出现,商品已在画面中。【1.5-3.5秒】人物随手拿起/穿着/用着商品,动作松弛自然。【3.5-5秒】对镜头自然笑一下,随手拍的生活感收尾。',
+    t10: '10 秒生活日常 vlog。【0-2秒】温暖自然光的真实生活场景,商品自然出现在该在的地方。【2-4秒】人物入画、随手拿起或穿上商品,生活化动作。【4-6秒】镜头跟随人物在场景里自然移动、使用商品。【6-8秒】商品成为这段生活里的自然道具,人物松弛地做着自己的事。【8-10秒】回头对镜头笑、画面自然收住,像真人随手发的日常。' },
+  { id: 'ootd', icon: '👗', name: '出街穿搭', desc: '镜子前→走上街',
+    t5: '5 秒 OOTD 穿搭片段。【0-1.5秒】镜子前手机自拍,确认今天这身穿搭。【1.5-3.5秒】整理一下衣领、左右看看搭配效果。【3.5-5秒】对镜头比个轻松小表情,出门前的随手自拍感收尾。',
+    t10: '10 秒出街穿搭日常。【0-2秒】卧室全身镜前手机自拍,确认穿搭。【2-4秒】随手整理衣领/转身看背面,真实出门前状态。【4-6秒】走出家门、镜头切到街头人行道,街景虚化。【6-8秒】边走边自然摆动、回头对镜头笑,完整展示上身效果。【8-10秒】街拍随手抓拍的 vibe 收尾,像真人发的 OOTD。' },
+  { id: 'interactive', icon: '🤝', name: '上手互动', desc: '人物与商品自然互动',
+    t5: '5 秒上手互动片段。【0-1.5秒】人物自然伸手拿起商品。【1.5-3.5秒】把玩/试用/穿戴商品,动作流畅、表情生动真实。【3.5-5秒】满意地回应、自然收尾,生活抓拍感。',
+    t10: '10 秒上手互动日常。【0-2秒】人物自然进入画面、伸手拿起商品。【2-4秒】把玩或试用商品,手与商品全程接触、动作真实。【4-6秒】镜头跟随互动过程,捕捉真实表情与反应。【6-8秒】商品在使用中自然展示图案与效果,人物有代入感。【8-10秒】满意笑着收尾,生活化氛围、画面自然结束。' },
   { id: 'custom', icon: '✏️', name: '自定义', desc: '自己写镜头脚本', t5: '', t10: '' },
 ]
 const selType = ref('')
 const prompt = ref('')
 const prompt2 = ref('')         // 分镜② 脚本(仅 15s 双分镜;留空则复用分镜①)
-const scene1 = ref('')          // 分镜①场景母帧(内容策划层):向导产出,空则后端回退共享母帧
-const scene2 = ref('')          // 分镜②场景母帧;两者都有 + 双分镜 → 每镜独立母帧(治同质化)
+// 分镜场景母帧(per-shot):只由智能向导(AI 产品驱动)填;手动视频类型留空 → 后台按类目自动融合(仅有 key 时)
+const scene1 = ref('')
+const scene2 = ref('')
 const isTwoShot = computed(() => seconds.value === 15)   // 选 15s = 双分镜(5s+10s 拼接,价格翻倍)
 
 const ASPECTS = [
@@ -94,10 +97,10 @@ function clearSlot(slot) {
   else { img2.value = null; img2Url.value = '' }
 }
 
-// 填模板脚本:取该时长的 t5/t10;若填了产品卖点,追加一段「核心卖点」让画面/旁白都围绕它(custom 留空给用户自写)
+// 填视频类型脚本:取该时长的 t5/t10(custom 留空给用户自写)。手动类型不带 per-shot 场景:
+// 清空 scene1/scene2 → two_shot 时后台按类目自动融合故事场景(仅有 key 时生效)。
 function applyTemplate(t) {
-  scene1.value = ''; scene2.value = ''   // 类型模板无 per-shot 场景:清掉上次向导/故事留下的母帧场景,避免串味
-  selStory.value = ''                    // 选了「视频类型」→ 取消故事模板高亮(互斥)
+  scene1.value = ''; scene2.value = ''
   if (seconds.value === 15) {          // 双分镜:分镜①=该类型 5s 脚本、分镜②=10s 脚本
     prompt.value = t.t5
     prompt2.value = t.t10
@@ -107,9 +110,6 @@ function applyTemplate(t) {
 }
 function pickDuration(s) {
   seconds.value = s
-  if (s !== 15 && selStory.value) {      // 故事模板仅用于双分镜:切到 5/10s 时清掉,避免残留场景误透传
-    selStory.value = ''; scene1.value = ''; scene2.value = ''
-  }
   const t = TYPES.find((x) => x.id === selType.value)   // 已选类型 → 重填该时长脚本(custom 保留用户内容)
   if (t && t.id !== 'custom' && selType.value !== 'smart') applyTemplate(t)
 }
@@ -119,24 +119,10 @@ function pickType(t) {
   applyTemplate(t)
 }
 
-// 选用故事模板(内容策划层):双分镜一键填两镜动作脚本 + 各自场景母帧 → 商品成为生活故事里的道具。
-// 不需要 AI key:脚本/场景来自静态模板库;开了「场景首帧」+ 有 key 时,每镜各生成独立母帧(真换场景)。
-function pickStory(s) {
-  if (seconds.value !== 15) return ElMessage.warning('故事模板用于「双分镜 15 秒」,请先把时长选到 15 秒')
-  const b = s.beats || []
-  prompt.value = b[0] ? `【0-5秒】${b[0].action}` : ''
-  prompt2.value = b[1] ? `【0-10秒】${b[1].action}` : ''
-  scene1.value = b[0] ? b[0].scene : ''
-  scene2.value = b[1] ? b[1].scene : ''
-  selStory.value = s.id
-  selType.value = ''             // 与「视频类型」互斥
-}
-
 function openWizard() {
   if (!img1.value) return ElMessage.warning('请先上传商品图片')
   if (!seconds.value) return ElMessage.warning('请先选择视频时长')
   if (!smartReady.value) return ElMessage.warning('未配置作图 AI key,「智能方案」暂不可用')
-  selStory.value = ''            // 向导自带场景,取消故事模板高亮
   wizardOpen.value = true
 }
 function onWizardApply({ storyboard, shot1, shot2, scene1: s1, scene2: s2, generate, sound }) {
@@ -174,7 +160,7 @@ async function run() {
     fd.append('prompt', prompt.value)
     if (isTwoShot.value) {                                      // 双分镜由 seconds=15 触发,后端自行判定 two_shot
       fd.append('prompt2', prompt2.value)
-      fd.append('scene1', scene1.value)                        // 每镜独立母帧场景(来自向导);空 → 后端回退共享母帧
+      fd.append('scene1', scene1.value)                        // per-shot 场景:仅向导填;手动类型留空 → 后台自动融合
       fd.append('scene2', scene2.value)
     }
     fd.append('language', language.value)
@@ -202,9 +188,6 @@ onMounted(async () => {
     aiReady.value = !!d.ai_ready
     smartReady.value = !!d.smart_ready
   } catch (e) { /* 静默 */ }
-  try {
-    stories.value = (await api.get('/video/templates')).data.templates || []
-  } catch (e) { /* 静默:故事模板拉取失败不影响主流程 */ }
 })
 </script>
 
@@ -258,15 +241,6 @@ onMounted(async () => {
             </button>
           </div>
           <div v-if="!seconds" class="lock-tip">↑ 请先选择时长</div>
-
-          <template v-if="isTwoShot && stories.length">
-            <div class="clabel mt">📖 故事模板 <span class="opt">双分镜专属:商品融入生活故事,两镜真换场景(治"同个镜头重复")</span></div>
-            <div class="stories">
-              <button v-for="s in stories" :key="s.id" class="story" :class="{ on: selStory === s.id }" @click="pickStory(s)">
-                <b>{{ s.name }}</b><i>{{ s.story }}</i>
-              </button>
-            </div>
-          </template>
         </div>
       </div>
 
@@ -387,13 +361,6 @@ onMounted(async () => {
 .type .tt b { font-size: 12.5px; color: var(--fg); font-weight: 600; }
 .type .tt i { font-size: 11px; color: var(--mut); font-style: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lock-tip { font-size: 12px; color: var(--brand2); margin-top: 8px; text-align: center; }
-
-.stories { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.story { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--line2); border-radius: 10px; background: var(--bg2); cursor: pointer; text-align: left; min-width: 0; }
-.story:hover { border-color: var(--brand); }
-.story.on { border-color: var(--brand); background: var(--panel2); }
-.story b { font-size: 12.5px; color: var(--fg); font-weight: 600; }
-.story i { font-size: 11px; color: var(--mut); font-style: normal; line-height: 1.4; }
 
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .flabel { font-size: 12.5px; color: var(--mut); }

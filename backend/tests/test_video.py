@@ -750,7 +750,7 @@ def test_video_native_sound_and_voiceover_gate(client, auth_headers, monkeypatch
 
 # ---------- 内容策划层:故事模板库 + 每镜独立母帧 ----------
 def test_video_templates_library_structure():
-    from app.services.video_templates import STORY_TEMPLATES, fallback_two_shot, templates_for
+    from app.services.video_templates import STORY_TEMPLATES, default_scenes, templates_for
     # 每个模板结构完整:id/name/story + ≥2 拍,每拍含 scene/action
     for t in STORY_TEMPLATES:
         assert t["id"] and t["name"] and t["story"]
@@ -761,21 +761,9 @@ def test_video_templates_library_structure():
     assert any(t["id"] == "ootd" for t in templates_for("T恤"))
     assert any(t["id"] == "mug_morning" for t in templates_for("马克杯"))
     assert any(t["id"] == "ootd" for t in templates_for("通用"))
-    # 离线兜底故事:两镜场景非空且不同 + 两镜动作非空
-    fb = fallback_two_shot("T恤")
-    assert fb["scene1"] and fb["scene2"] and fb["scene1"] != fb["scene2"]
-    assert fb["shot1"] and fb["shot2"]
-
-
-def test_video_templates_endpoint(client, auth_headers):
-    r = client.get("/api/video/templates?category=T恤", headers=auth_headers)
-    assert r.status_code == 200, r.text
-    tpls = r.json()["templates"]
-    assert tpls and all(t.get("beats") for t in tpls)
-
-
-def test_video_templates_requires_auth(client):
-    assert client.get("/api/video/templates").status_code == 401
+    # 后台默认中性场景(自动融合 / 向导兜底用):两拍非空且不同,适配任意品类
+    s1, s2 = default_scenes("通用")
+    assert s1 and s2 and s1 != s2
 
 
 def test_ai_generate_two_shot_per_shot_mufra(client, auth_headers, monkeypatch, png):
@@ -804,8 +792,35 @@ def test_ai_generate_two_shot_per_shot_mufra(client, auth_headers, monkeypatch, 
     assert any("城市街头走路" in s for s in seen)     # 分镜②母帧用了 scene2
 
 
-def test_ai_generate_two_shot_no_scene_uses_shared_mufra(client, auth_headers, monkeypatch, png):
-    # 双分镜未给 scene1/scene2(+key+场景首帧)→ 回退【共享母帧】:gpt-image edit 只调 1 次(原行为不破坏)
+def test_ai_generate_two_shot_no_scene_auto_fuses_per_shot(client, auth_headers, monkeypatch, png):
+    # 故事能力下沉后台:双分镜未给 scene1/scene2(= 手动「视频类型」路径)+ key + 场景首帧
+    # → 后台自动融合中性两拍场景 → gpt-image edit 调 2 次、两镜场景不同(自动 per-shot 母帧)
+    from PIL import Image as _Img
+
+    from app.ai import openai_image
+    from app.config import settings
+    from app.services.video_templates import default_scenes
+    seen = []
+
+    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto"):
+        seen.append(prompt)
+        return _Img.new("RGB", (64, 96), (10, 20, 30))
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _fake_edit)
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15",
+                          "scene_frame": "true", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert len(seen) == 2                              # 后台自动融合 → 每镜一张母帧
+    d1, d2 = default_scenes("通用")
+    assert any(d1 in s for s in seen) and any(d2 in s for s in seen)  # 用了后台中性两拍场景
+
+
+def test_ai_generate_single_shot_shared_mufra(client, auth_headers, monkeypatch, png):
+    # 单镜(10s)+ key + 场景首帧 → 一张共享母帧:gpt-image edit 只调 1 次(单镜不做 per-shot)
     from PIL import Image as _Img
 
     from app.ai import openai_image
@@ -818,13 +833,13 @@ def test_ai_generate_two_shot_no_scene_uses_shared_mufra(client, auth_headers, m
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
     monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _fake_edit)
     r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15",
+                    data={"prompt": "单镜脚本", "seconds": "10",
                           "scene_frame": "true", "aspect": "portrait"},
                     files={"file": ("a.png", png(), "image/png")})
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
-    assert called["edit"] == 1                        # 没给场景 → 一张共享母帧
+    assert called["edit"] == 1                          # 单镜 → 一张共享母帧
 
 
 def test_wizard_proposals_two_shot_adds_scenes(monkeypatch):
@@ -840,9 +855,11 @@ def test_wizard_proposals_two_shot_adds_scenes(monkeypatch):
 
 
 def test_wizard_proposals_two_shot_scene_fallback(monkeypatch):
-    # 模型没给 scene1/scene2 → 用模板兜底,保证两镜场景非空且不同(per-shot 母帧的前提)
+    # 模型没给 scene1/scene2 → 退到中性通用场景兜底(不再写死 OOTD),保证两镜非空且不同(per-shot 前提)
     from app.services import video_wizard
+    from app.services.video_templates import default_scenes
     monkeypatch.setattr(video_wizard, "_chat",
                         lambda msgs: '[{"title":"t","shot1":"a","shot2":"b","storyboard":"s"}]')
     out = video_wizard.generate_proposals("T恤", "", "", seconds=15, n=1, category="T恤")
     assert out[0]["scene1"] and out[0]["scene2"] and out[0]["scene1"] != out[0]["scene2"]
+    assert (out[0]["scene1"], out[0]["scene2"]) == default_scenes("T恤")   # 中性通用兜底

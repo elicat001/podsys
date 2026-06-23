@@ -88,14 +88,13 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
     storyboard 为两段合并展示。下游(前端)在 15s 时把 shot1/shot2 分别填进 分镜①/分镜② 脚本。"""
     two_shot = seconds == 15
     if two_shot:
-        from .video_templates import template_guidance
         time_rule = (
             "本视频为【双分镜 · 共 15 秒】= 分镜①(0-5 秒)+ 分镜②(5-15 秒),两拍要连成一个【生活小故事/事件】:"
-            "分镜①铺垫(准备/起手,如 镜子前确认穿搭、伸手拿起杯子),分镜②payoff(出门/落座/街头展示)。"
+            "分镜①铺垫(准备/起手),分镜②payoff(出门/落座/展示)。"
             "关键:商品是这段真实生活里【自然出现/穿着的道具】,不是被摆拍展示的主角;"
-            "两拍必须是【两个明显不同的场景/地点】(如 卧室→街头),绝不要两拍都在同一地方做同一件事。\n"
-            "可参考下面这些 POD 内容故事模板的【结构】(照结构、贴合本商品改写,别直接抄文案):\n"
-            f"{template_guidance(category)}"
+            "两拍必须是【两个明显不同的场景/地点】,绝不要两拍都在同一地方做同一件事。\n"
+            "请【完全围绕上面这件具体商品及其卖点/受众/投放市场】原创故事线与两拍场景,"
+            "贴合商品真实使用情境(穿戴类→上身/出街,家居/杯具→居家使用,配件→随身日常…),不要套用任何固定模板套路。"
         )
         shot_fields = (
             '"story":"一句话故事线(如 出门前镜子前确认穿搭→走上街头展示)",'
@@ -151,11 +150,12 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
             s1 = s1 or item["storyboard"]
             s2 = s2 or item["storyboard"]
             item["shot1"], item["shot2"] = s1, s2
-            # 场景母帧(内容策划层):模型给了就用;没给 → 用模板兜底场景,保证两镜场景不同(per-shot 母帧的关键)。
-            from .video_templates import templates_for
-            beats = templates_for(category)[0]["beats"]
-            item["scene1"] = (str(p.get("scene1") or p.get("场景1") or "").strip()[:500] or beats[0]["scene"])
-            item["scene2"] = (str(p.get("scene2") or p.get("场景2") or "").strip()[:500] or beats[1]["scene"])
+            # 场景母帧:优先用模型(产品驱动)产出的;模型漏给 → 退到中性通用场景兜底,保证两镜非空且不同
+            # (per-shot 的前提),但不再写死具体故事(如 OOTD),避免给非服装商品套穿搭场景。
+            from .video_templates import default_scenes
+            d1, d2 = default_scenes(category)
+            item["scene1"] = (str(p.get("scene1") or p.get("场景1") or "").strip()[:500] or d1)
+            item["scene2"] = (str(p.get("scene2") or p.get("场景2") or "").strip()[:500] or d2)
             item["story"] = str(p.get("story") or p.get("故事") or p.get("故事线") or "").strip()[:200]
             if not item["storyboard"]:
                 item["storyboard"] = f"【分镜①·0-5秒】{s1}\n\n【分镜②·5-15秒】{s2}"

@@ -12,6 +12,12 @@
 
 结构可向 3 拍扩展(beats 加一项即可),目前产品是 2-shot。
 纯数据 + 纯函数,离线可测;不依赖网关。
+
+**定位(重要)**:本库是**后台默认能力,不在前端显示**。两个出口:
+- `default_scenes()` —— 中性通用两拍场景,给 tasks._work_aivideo 在「手动视频类型」双分镜路径
+  自动融合 per-shot 母帧(仅有 key 时)+ 给向导模型漏给场景时兜底。
+- `templates_for()` —— 按类目查库(数据资产,留作未来类目感知融合)。
+智能向导**不再**用本库做写死的 few-shot,改为完全围绕上传商品 AI 原创故事/场景。
 """
 from __future__ import annotations
 
@@ -132,28 +138,14 @@ def templates_for(category: str = "通用") -> list[dict]:
     return defaults                          # 未命中任何具体品类 → 默认那批
 
 
-def template_guidance(category: str = "通用", limit: int = 5) -> str:
-    """把适配模板格式化成给 LLM 的 few-shot 参考(让方案生成器照「故事+2拍场景」的结构产出,
-    而不是退回『展示印花/展示版型』)。只作灵感锚点,LLM 仍要贴合具体商品改写。"""
-    rows = []
-    for t in templates_for(category)[:limit]:
-        b = t["beats"]
-        rows.append(
-            f"- 《{t['name']}》故事线:{t['story']}\n"
-            f"    分镜①场景:{b[0]['scene']};动作:{b[0]['action']}\n"
-            f"    分镜②场景:{b[1]['scene']};动作:{b[1]['action']}"
-        )
-    return "\n".join(rows)
+def default_scenes(category: str = "通用") -> tuple[str, str]:
+    """后台默认的两拍【中性】场景母帧(setup:商品在生活场景里 → payoff:有人自然使用),适配任意品类。
+    用途:① 手动「视频类型」路径双分镜的 per-shot 自动融合;② 向导模型漏给场景时的兜底。
+    刻意用通用 generic 模板(而非品类专属如 OOTD),避免给非服装商品套上"穿搭出街"场景。两拍天然不同。"""
+    by_id = {t["id"]: t for t in STORY_TEMPLATES}
+    g = by_id.get("generic")
+    if g and len(g.get("beats", [])) >= 2:
+        return g["beats"][0]["scene"], g["beats"][1]["scene"]
+    return ("这件商品自然出现在它该在的真实生活场景里、暖色自然光",
+            "有人在这个场景里自然地使用/穿着/接触这件商品")
 
-
-def fallback_two_shot(category: str = "通用") -> dict:
-    """无 LLM(无 key)时也能给一条可用的故事:取首个适配模板,产出 scene1/scene2 + shot1/shot2。
-    让「故事模板」即使离线也能直接喂 ai-generate 的 per-shot 母帧。"""
-    t = templates_for(category)[0]
-    b = t["beats"]
-    return {
-        "title": t["name"], "story": t["story"], "model": "", "environment": "",
-        "scene1": b[0]["scene"], "shot1": f"【0-5秒】{b[0]['action']}",
-        "scene2": b[1]["scene"], "shot2": f"【0-10秒】{b[1]['action']}",
-        "storyboard": f"【分镜①·0-5秒】{b[0]['action']}\n\n【分镜②·5-15秒】{b[1]['action']}",
-    }

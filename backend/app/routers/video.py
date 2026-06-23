@@ -39,15 +39,6 @@ def options(user: User = Depends(current_user)):
     }
 
 
-@router.get("/templates")
-def video_templates(category: str = "通用", user: User = Depends(current_user)):
-    """内容策划层:按商品类目返回故事模板(每个含故事线 + 2 拍 scene/action)。免费,仅鉴权。
-    前端可直接展示「故事模板」供一键选用:模板 → 填 prompt/prompt2(动作)+ scene1/scene2(母帧场景)→ ai-generate。
-    每镜独立母帧 = 镜头之间真正换场景(治"同一个镜头重复"),商品成为生活故事里的道具而非展示主角。"""
-    from ..services.video_templates import templates_for
-    return {"templates": templates_for(category)}
-
-
 @router.post("/smart-describe")
 def smart_describe_endpoint(
     file: UploadFile = File(...),

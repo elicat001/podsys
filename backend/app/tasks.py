@@ -450,6 +450,17 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     # A/B 实证:换母帧=换内容(卧室→街头),治"同一个镜头重复"。没给场景 → 回退原行为(共享母帧)。
     scene1 = (p.get("scene1") or "").strip()
     scene2 = (p.get("scene2") or "").strip()
+    # 故事能力下沉后台(自动融合):双分镜 + 有 key 但未显式给场景(= 手动「视频类型」路径)→ 按类目从
+    # 故事模板库自动补两拍场景母帧,让手动路径也自动获得 per-shot(镜头间真换场景)。仅 use_scene(有 key)
+    # 时才补;无 key 不补 → 回退共享/原图首帧(符合"per-shot 仅有 key 可用")。向导路径已带 AI 场景,不进这里。
+    if p.get("two_shot") and use_scene and (not scene1 or not scene2):
+        try:
+            from .services.video_templates import default_scenes
+            d1, d2 = default_scenes(cat)
+            scene1 = scene1 or d1
+            scene2 = scene2 or d2
+        except Exception:  # noqa: BLE001 — 模板兜底失败不阻断,退回共享母帧
+            pass
     per_shot_frames = bool(p.get("two_shot") and use_scene and scene1 and scene2)
 
     def _scene_frame(scene: str):
