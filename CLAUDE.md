@@ -28,7 +28,7 @@
 - 鉴权:JWT(PyJWT)+ pbkdf2 密码哈希;计费:点数(credits)模式
 
 **⚠️ 别低估范围**:核心是上面那条 5 步主线,但项目其实已铺开 **~26 个 router** 的完整能力矩阵(对标灵图 ipoddy 的"采集→作图→上架→制图"):
-采集(collectors/collect_tasks/Chrome 插件规划)、抠图、印花提取、放大/提质、套图(+批量替换)、生产图导出、文生图/图生图/改图、作图工具(裂变/风格转绘/梗图)、去水印、标题提取、侵权检测、转矢量、店铺/商品/上架、我的空间(配额/回收站)、图生视频(智谱 CogVideoX-3,可插拔,有声,无 key 兜底 GIF)、视频案例库、模板。
+采集(collectors/collect_tasks/Chrome 插件规划)、抠图、印花提取、放大/提质、套图(+批量替换)、生产图导出、文生图/图生图/改图、作图工具(裂变/风格转绘/梗图)、去水印、标题提取、侵权检测、转矢量、店铺/商品/上架、我的空间(配额/回收站)、图生视频(智谱 CogVideoX-3,双分镜15s+智能向导+多语言旁白,可插拔,无 key 兜底 GIF;详见 docs/plans 视频管线文档)、视频案例库、模板。
 **广度够、深度浅**:多数功能停在"架构完整 + MVP 实现 / 留接口";AI 类功能无 key 时是占位。改动前先 `git log --oneline` + 翻 `routers/` 了解已有什么,别重复造。
 
 **🟦 AI 厂商未定(重要)**:本文档示例多用 OpenAI/gpt-image,但公司大概率选**国产**视觉/文生图厂商(通义万相 / 豆包即梦 / 百度 / 智谱等)。**要换厂商,只在 `app/ai/` 那层加一个 Provider 实现**(照 `matting.py` 的策略模式),**严禁在 `services/`、`routers/` 里写死某家 API**。
@@ -108,7 +108,7 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 - **禁止用系统 Python**,必须用项目 venv:`backend/.venv/Scripts/python.exe`
 - **禁止擅自启动 uvicorn 跑测试**(测试用 TestClient,见下);需要手动验证再单独启
 - 改动 `main.py` / `db.py` / `models_db.py` / `tests/conftest.py` 要格外小心(集成总线)
-- **任何改动后必须 `pytest -q` 全绿**才算完成(当前基线 **272 passed**)
+- **任何改动后必须 `pytest -q` 全绿**才算完成(当前基线 **328 passed**)
 
 ## 🟡 必守的代码范式(新代码照抄)
 
@@ -193,6 +193,7 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 | `POD_OPENAI_API_KEY` | 空 | 配了才能用 gptimage / 文生图 / 图生图 |
 | `POD_VIDEO_PROVIDER` | `local` | 图生视频引擎:local(本地兜底 GIF,无 key 也出东西=降级) / cogvideox(智谱 CogVideoX-3 真视频)。换厂商只加 `ai/video.py` 的 Provider,业务/前端不动 |
 | `POD_VIDEO_API_KEY` | 空 | 智谱开放平台 key;`POD_VIDEO_PROVIDER=cogvideox` 时必填。其余 `POD_VIDEO_*`(model/quality/fps/seconds/with_audio/size/timeout)见 `.env.example`,均有默认、**不暴露给前端**(扣费与分辨率无关) |
+| `POD_VIDEO_PUNCHUP` / `POD_VIDEO_MUSIC` | `false` | 后期层(节奏快切 / 音乐床)开关,**experimental 默认关**;music 接线已在 `tasks.py` 注释。详见视频管线文档 |
 | `POD_JWT_SECRET` | dev 默认值 | **生产必须改** |
 | `POD_DEV_BILLING` | `true` | 自助充值;**生产必须置 false** |
 | `POD_REGISTER_RATE_LIMIT` | `1000` | 注册限流;**生产应调到 ~5** 防刷点 |
@@ -231,6 +232,17 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
   - 都没分到产品(输入本身就是设计图)→ 退化为 `extract_on_fabric`(整图按边缘色去底)。`method` ∈ garment / product / whole_image / whole_image_fallback。
   - **已知边界(别过拟合)**:深色衣服、枕头等清晰产品都干净;**重褶皱浅色(白)布料的褶皱阴影颜色上和浅色印花分不开,会有残留**——颜色分离的固有难点。**宁留残留也别加"开运算/取最大块/fold-rejection"等启发式**(会损坏印花本身,且过拟合)。要更极致得上真 AI 编辑(edit key)。
 
+### 图生视频(模块速览 + 易踩的坑)
+> **完整架构/取舍/roadmap 见 [`docs/plans/2026-06-23-video-pipeline.md`](docs/plans/2026-06-23-video-pipeline.md)**(视频相关改动**先读它**)。这里只列改代码时必须知道的红线/坑。
+
+- **链路**:商品图 →[可选]智能向导出分镜方案 → 场景母帧(gpt-image 把商品合成进场景做首帧,印花像素级锁定)→ CogVideoX-3 生成 → [双分镜]拼接 → [旁白]edge-tts 配音+字幕 → 缩略图(用上传图)→ 入库。worker 编排在 `tasks.py:_work_aivideo`。
+- **双分镜 15s = 计费翻倍(退点笔数易错!)**:时长 15s 拆 5s+10s 两段并行生成再 `services/video_concat` 拼接,**扣 `video×2`(6 点)**。`TOOL_WORKS["aivideo"]` 用 n_field 退多笔、reaper 读 `params["n"]`、submit_celery 的 n 都必须对齐 ×2。**碰视频计费先确认四条退点路径(worker失败/卡死回收/入队失败/第二笔余额不足)都按 n 退**,别退成 1 笔。
+- **provider 健壮性(`ai/video.py` `ZhipuCogVideoProvider`)**:① 网络层对 `httpx.TransportError`+5xx 重试、发图用 **JPEG**(降 WriteTimeout);② **任务级**——智谱偶发把任务判 FAIL(返回"网络错误,请稍后重试"),**必须重建新任务(最多3个),重轮询同一个 FAIL 任务无用**。改 provider 别破坏这两层。
+- **后期层 parked**:`services/video_edit.py`(`punch_up` 节奏快切 / `add_music_bed` 音乐床)是 experimental,`POD_VIDEO_PUNCHUP`/`POD_VIDEO_MUSIC` **默认关**,music 接线**已在 tasks.py 注释**。基建保留,需要时取消注释+开开关+调参。**别默认开**(先保证生成效果)。
+- **「呆板」是模型范畴取舍,不是 bug**:CogVideoX 为保一致性压低运动 → 成片偏静。**别向模型要更多运动**(高风险动作/物理错误全在那);动态感的解法在**剪辑/后期层 + 逐镜头环境运动提示**。两段衔接当前是**硬切**,xfade 叠化已验证未接生产(衔接优化的现成下一步)。
+- **可插拔**:换视频厂商(可灵/即梦等)**只加 `ai/video.py` 的 Provider**,`services`/`routers`/前端不动。别在业务层写死智谱。
+- **测试**:ffmpeg 路径(拼接/旁白/punch_up)**不做离线单测**(同 concat_mp4),纯函数(beat_plan/pick_music/计费/退点/provider 重试分支)**要测**。conftest 锁 `POD_VIDEO_PROVIDER=local`(出兜底 GIF、不调智谱)。
+
 ### 前端↔后端鉴权(Vue:需登录,无游客自动注册)
 - **`frontend-vue` 需登录才能用**:`Login.vue` 走 `/api/auth/login`(或注册 `/api/auth/register`),token 存 `localStorage('pod_token')`(沿用老 key),`api/client.js` 自动加 `Authorization: Bearer <token>`。
 - **路由守卫**(`router/index.js` `beforeEach`):只有 `meta.public` 的页(落地页 `/`、`/login`)免登录,其余未登录一律重定向 `/login?redirect=...`;已登录访问 `/login` 跳 `/app`。
@@ -243,7 +255,8 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 - **正确做法**:① 弹窗状态就放在**用它的那个组件**里、`v-model` 直接绑本地 ref(首选,和其它弹窗一致);② 若确实是「父控制开关的子组件弹窗」,**别用 el-dialog 的来回 v-model**,改用 `teleport + v-if` 自定义模态(`VideoWizardDialog` 现在就是这么做的:`v-if="localOpen"`,关=`localOpen=false`,过场无关、必关得掉)。
 
 ### docs/plans 不是完整记录
-- `docs/plans/` 只覆盖到 **batch2~batch10**。**batch11(`effects.py` 真实离线引擎)、batch12(深度审计整改:产物入库 / 真超分 / 工具去重 / 扩侵权库)只在 git 历史里**。
+- 历史 batch 计划只覆盖到 **batch2~batch10**(归档,见 `docs/plans/README.md`)。**batch11(`effects.py` 真实离线引擎)、batch12(深度审计整改:产物入库 / 真超分 / 工具去重 / 扩侵权库)、存储 MinIO/S3、双分镜视频等只在 git 历史里**。
+- **例外**:[`docs/plans/2026-06-23-video-pipeline.md`](docs/plans/2026-06-23-video-pipeline.md) 是**活的现状文档**(非归档),视频模块以它为准。
 - 想了解某功能的来龙去脉,**先 `git log --oneline` 查提交**,别只信 docs。
 
 ### Git / 提交规范(照抄历史风格)

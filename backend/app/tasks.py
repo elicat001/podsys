@@ -445,29 +445,49 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     # 两步生成(可选「场景首帧」):先用 gpt-image 把商品放进场景做第一帧 → 缓解首帧→场景的硬切。
     # 无 key / 失败 → 优雅降级,直接用原图首帧(不阻断)。
     lang = p.get("language", "葡萄牙语")
-    if p.get("scene_frame") and settings.openai_api_key:
+    use_scene = bool(p.get("scene_frame") and settings.openai_api_key)
+    # 内容策划层(per-shot 母帧):双分镜给了 scene1/scene2 → 每镜各生成一张【独立场景母帧】。
+    # A/B 实证:换母帧=换内容(卧室→街头),治"同一个镜头重复"。没给场景 → 回退原行为(共享母帧)。
+    scene1 = (p.get("scene1") or "").strip()
+    scene2 = (p.get("scene2") or "").strip()
+    per_shot_frames = bool(p.get("two_shot") and use_scene and scene1 and scene2)
+
+    def _scene_frame(scene: str):
+        """gpt-image 把商品合成进 scene 做母帧并贴合画幅;失败返回 None(调用方降级原图首帧)。"""
         try:
             from .ai.openai_image import OpenAIImageClient
-            framed = OpenAIImageClient().edit(raw[0], scene_frame_prompt(cat, lang), size=gptimage_size(aspect))
-            imgs[0] = fit_to_aspect(framed, tw, th)
-        except Exception:  # noqa: BLE001
-            pass
+            framed = OpenAIImageClient().edit(raw[0], scene_frame_prompt(cat, lang, scene=scene),
+                                              size=gptimage_size(aspect))
+            return fit_to_aspect(framed, tw, th)
+        except Exception:  # noqa: BLE001 — 母帧失败不阻断视频作业
+            return None
+
+    if use_scene and not per_shot_frames:   # 单镜 / 双分镜未给场景:一张共享母帧(类目默认场景),同原行为
+        shared = _scene_frame("")
+        if shared is not None:
+            imgs[0] = shared
     # 视频音效(默认关)= CogVideoX 自带音频(with_audio=true,AI 音效非真人);默认无声;旁白开 = 无声再叠真人 AI 旁白。三者:默认无声 / 音效 / 旁白互斥。
     native_sound = bool(p.get("native_sound", False))
     # 提示词工程:镜头脚本 + 地区风格(随语言)+ 语言 + 一致性/防拉伸 + 负向(动作交给用户脚本,不按类目追加)
     if p.get("two_shot"):
         # 双分镜 15s:单段模型最多 10s,故拆「分镜1=5s + 分镜2=10s」两段【并行】生成,再首尾拼接=15s。
-        # 两段都以商品图为首帧、各自脚本不同 → 形成两个镜头的硬切(分镜),拼接点正好落在分镜边界。
+        # 每镜各自脚本 + 各自场景母帧 → 镜头之间真正换场景(内容感),而非同一画面重复。
         from .services.video_concat import concat_videos
         prov = get_video_provider()
+        if per_shot_frames:                  # 每镜独立母帧(失败的那镜降级回共享 imgs)
+            f1, f2 = _scene_frame(scene1), _scene_frame(scene2)
+            imgs1 = [f1] if f1 is not None else imgs
+            imgs2 = [f2] if f2 is not None else imgs
+        else:
+            imgs1 = imgs2 = imgs
         plan = [
-            (compose_prompt(p.get("prompt", ""), language=lang), 5),                 # 分镜1
-            (compose_prompt(p.get("prompt2") or p.get("prompt", ""), language=lang), 10),  # 分镜2
+            (imgs1, compose_prompt(p.get("prompt", ""), language=lang), 5),                 # 分镜1
+            (imgs2, compose_prompt(p.get("prompt2") or p.get("prompt", ""), language=lang), 10),  # 分镜2
         ]
 
-        def _seg(item: tuple[str, int]) -> dict:
-            sp, sec = item
-            return prov.image_to_video(imgs, sp, size=size, seconds=sec, with_audio=native_sound)
+        def _seg(item: tuple) -> dict:
+            shot_imgs, sp, sec = item
+            return prov.image_to_video(shot_imgs, sp, size=size, seconds=sec, with_audio=native_sound)
 
         with ThreadPoolExecutor(max_workers=2) as ex:
             segs = list(ex.map(_seg, plan))   # 保序 [5s 段, 10s 段];任一段抛错 → 整作业 error + 退点

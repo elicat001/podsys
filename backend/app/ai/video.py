@@ -149,15 +149,19 @@ def gptimage_size(aspect: str = "portrait") -> str:
 _REGION_HINT: dict[str, str] = {"葡萄牙语": "巴西", "英语": "欧美", "西班牙语": "拉美/西语区", "中文": "中国"}
 
 
-def scene_frame_prompt(category: str = "通用", language: str = "葡萄牙语") -> str:
-    """「场景首帧」用的 gpt-image 编辑指令:把商品放进类目对应的场景、保持商品本身不变。地区风格随语言变。"""
-    scene = _SCENE_BY_CAT.get(category, _SCENE_BY_CAT["通用"])
+def scene_frame_prompt(category: str = "通用", language: str = "葡萄牙语", scene: str = "") -> str:
+    """「场景首帧」用的 gpt-image 编辑指令:把商品放进指定场景、保持商品本身不变。地区风格随语言变。
+
+    scene 给了就用它(内容策划层的 per-shot 母帧场景);留空回退类目默认场景(向后兼容旧调用)。
+    刻意强化「手机随手拍的真实生活感」,治成片「太干净像 AI 模特展示」(要的是真人发的 TikTok,不是广告大片)。"""
+    scene = (scene or "").strip() or _SCENE_BY_CAT.get(category, _SCENE_BY_CAT["通用"])
     region = _REGION_HINT.get(language, "")
     region_txt = f"{region}本地" if region else "本地"
     return (
         f"把图中的商品自然地放进「{scene}」中,作为一段 TikTok 短视频的第一帧画面。"
-        "严格保持商品本身的图案、文字、颜色、形状和比例完全不变,只生成商品周围真实生活化的场景与背景,"
-        f"{region_txt}居家风格、温暖自然光、真实 UGC 随手拍质感,不要广告摄影棚感、不要改动商品。"
+        "严格保持商品本身的图案、文字、颜色、形状和比例完全不变,只生成商品周围真实生活化的场景与背景。"
+        f"画面要像{region_txt}年轻人用手机随手拍的真实生活照/TikTok:自然光、略带生活气、构图不必完美对称、"
+        "真实抓拍质感,绝不要广告摄影棚、精修大片或 CG 感;不要改动商品本身。"
     )
 
 

@@ -746,3 +746,103 @@ def test_video_native_sound_and_voiceover_gate(client, auth_headers, monkeypatch
     # 旁白开(音效关)→ with_audio=False、叠旁白一次
     _gen(native_sound="false", voiceover="true", language="英语")
     assert calls["with_audio"][-1] is False and calls["voiceover"] == 1
+
+
+# ---------- 内容策划层:故事模板库 + 每镜独立母帧 ----------
+def test_video_templates_library_structure():
+    from app.services.video_templates import STORY_TEMPLATES, fallback_two_shot, templates_for
+    # 每个模板结构完整:id/name/story + ≥2 拍,每拍含 scene/action
+    for t in STORY_TEMPLATES:
+        assert t["id"] and t["name"] and t["story"]
+        assert len(t["beats"]) >= 2
+        for b in t["beats"][:2]:
+            assert b["scene"] and b["action"]
+    # 命中类目 → 含该类目模板;通用 → 给默认服装故事(ootd)
+    assert any(t["id"] == "ootd" for t in templates_for("T恤"))
+    assert any(t["id"] == "mug_morning" for t in templates_for("马克杯"))
+    assert any(t["id"] == "ootd" for t in templates_for("通用"))
+    # 离线兜底故事:两镜场景非空且不同 + 两镜动作非空
+    fb = fallback_two_shot("T恤")
+    assert fb["scene1"] and fb["scene2"] and fb["scene1"] != fb["scene2"]
+    assert fb["shot1"] and fb["shot2"]
+
+
+def test_video_templates_endpoint(client, auth_headers):
+    r = client.get("/api/video/templates?category=T恤", headers=auth_headers)
+    assert r.status_code == 200, r.text
+    tpls = r.json()["templates"]
+    assert tpls and all(t.get("beats") for t in tpls)
+
+
+def test_video_templates_requires_auth(client):
+    assert client.get("/api/video/templates").status_code == 401
+
+
+def test_ai_generate_two_shot_per_shot_mufra(client, auth_headers, monkeypatch, png):
+    # 双分镜 + scene1/scene2 + 场景首帧 + key → 每镜各生成一张【独立母帧】(gpt-image edit 调 2 次,各含各自场景)
+    from PIL import Image as _Img
+
+    from app.ai import openai_image
+    from app.config import settings
+    seen = []
+
+    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto"):
+        seen.append(prompt)
+        return _Img.new("RGB", (64, 96), (10, 20, 30))
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _fake_edit)
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "分镜1动作", "prompt2": "分镜2动作",
+                          "scene1": "卧室镜子前自拍", "scene2": "城市街头走路",
+                          "seconds": "15", "scene_frame": "true", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert len(seen) == 2                            # 每镜一张母帧(共享母帧只会调 1 次)
+    assert any("卧室镜子前自拍" in s for s in seen)   # 分镜①母帧用了 scene1
+    assert any("城市街头走路" in s for s in seen)     # 分镜②母帧用了 scene2
+
+
+def test_ai_generate_two_shot_no_scene_uses_shared_mufra(client, auth_headers, monkeypatch, png):
+    # 双分镜未给 scene1/scene2(+key+场景首帧)→ 回退【共享母帧】:gpt-image edit 只调 1 次(原行为不破坏)
+    from PIL import Image as _Img
+
+    from app.ai import openai_image
+    from app.config import settings
+    called = {"edit": 0}
+
+    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto"):
+        called["edit"] += 1
+        return _Img.new("RGB", (64, 96), (10, 20, 30))
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _fake_edit)
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15",
+                          "scene_frame": "true", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert called["edit"] == 1                        # 没给场景 → 一张共享母帧
+
+
+def test_wizard_proposals_two_shot_adds_scenes(monkeypatch):
+    # 模型给了 scene1/scene2/story → 透传进方案(喂 per-shot 母帧)
+    from app.services import video_wizard
+    fake = ('[{"title":"出门","story":"出门穿搭","model":"无","environment":"街头",'
+            '"scene1":"卧室镜子前","shot1":"【0-5秒】自拍",'
+            '"scene2":"城市街头","shot2":"【0-10秒】街拍","storyboard":"合并"}]')
+    monkeypatch.setattr(video_wizard, "_chat", lambda msgs: fake)
+    out = video_wizard.generate_proposals("T恤", "年轻人", "潮", seconds=15, n=1, category="T恤")
+    assert out[0]["scene1"] == "卧室镜子前" and out[0]["scene2"] == "城市街头"
+    assert out[0]["story"] == "出门穿搭"
+
+
+def test_wizard_proposals_two_shot_scene_fallback(monkeypatch):
+    # 模型没给 scene1/scene2 → 用模板兜底,保证两镜场景非空且不同(per-shot 母帧的前提)
+    from app.services import video_wizard
+    monkeypatch.setattr(video_wizard, "_chat",
+                        lambda msgs: '[{"title":"t","shot1":"a","shot2":"b","storyboard":"s"}]')
+    out = video_wizard.generate_proposals("T恤", "", "", seconds=15, n=1, category="T恤")
+    assert out[0]["scene1"] and out[0]["scene2"] and out[0]["scene1"] != out[0]["scene2"]

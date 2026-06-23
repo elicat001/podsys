@@ -1,0 +1,127 @@
+# 图生视频管线(现状 + 演进 + 待优化)
+
+> 这是项目里**演进最密集**的模块(~25 次提交)。本文档是它当前的**架构 + 设计取舍 + 已知边界**的真相源。
+> 历史细节散在 git log;本文聚焦"现在是什么样、为什么这样、下一步往哪走"。
+
+## 1. 目标与现状
+
+把**商品图**变成**巴西市场 TikTok 风格带货短视频**。当前状态:
+- 🟢 **主线已上线可用**:商品图 → AI 识图 / 智能分镜 → 智谱 CogVideoX-3 出片 → 拼接 → 旁白+字幕 → 入库。
+- 🟢 **三大难点已攻克**:商品/印花一致性、场景一致性、分镜衔接(基本)。
+- 🟢 **稳定性已加固**:网络层 + 任务级双重重试,治网关偶发失败白扣点。
+- 🟢 **内容策划层已上线(per-shot 母帧)**:双分镜每镜各生成一张独立场景母帧 → 镜头之间真正换场景(卧室→街头),A/B 单变量实验实证(见 §7),治"同一个镜头重复"的同质化。
+- ⏳ **待优化(核心痛点)**:片内运动仍温和(模型范畴取舍);下一跳是内容深化(3-shot 事件弧 / 场景递进库),见 §7。
+
+## 2. 端到端链路
+
+```
+商品图(1~2 张)
+ → [可选] 智能方案向导:看图出商品简报 → 3 个分镜方案(含声音/语言/字幕选择)
+ → 场景首帧优化:gpt-image 把商品合成进场景做"母帧"(印花像素级锁定)
+   · 单镜/双分镜未给场景 → 一张【共享母帧】(类目默认场景);双分镜给了 scene1/scene2 → 【每镜独立母帧】(per-shot,治同质化)
+ → CogVideoX-3 生成:1 段(5/10s)或双分镜 2 段(5s+10s)
+ → 拼接(双分镜:ffmpeg concat)
+ → [旁白模式] edge-tts 配音 + 字幕烧录(atempo 贴合时长)
+ → 缩略图(用上传图)+ 入库素材 + 计费
+```
+
+## 3. 时长与双分镜(15s)
+
+- 用户时长选项:**5 / 10 / 15s**(`DURATIONS`)。模型单段只支持 5/10(`SEGMENT_DURATIONS`)。
+- **15s = 双分镜**(`TWO_SHOT_PLAN=[5,10]`):拆"分镜①5s + 分镜②10s"**两段并行**生成 → `services/video_concat.concat_videos` 拼接成 15s。拼接点 = 两个镜头的硬切。
+  - **母帧策略(per-shot,§7 内容策划层)**:给了 `scene1`/`scene2`(向导产出)→ 每镜各生成一张**独立场景母帧**,镜头间真正换场景;未给 → 回退两段共享一张母帧(旧行为,向后兼容)。某镜母帧生成失败 → 仅该镜降级回共享 `imgs`,不阻断作业。
+  - **印花一致性不受影响**:每张母帧都是 gpt-image 把同一张商品图合成进场景,印花像素级锁定(A/B 实证:卧室/街头母帧里 otter 骑士印花全程没坏)。
+- **计费翻倍**:15s = 两段算力 → 扣 `video×2`(6 点)。**所有退点路径都对齐翻倍**:worker 失败(`TOOL_WORKS` n_field="n")、卡死回收(reaper 读 `params["n"]`)、入队失败/配额超(submit_celery 的 n)、第二笔余额不足 402 退首笔。
+
+## 4. 智能方案向导(一站式)
+
+`VideoWizardDialog.vue` + `services/video_wizard.py`:
+1. **Step1 商品信息**:看图 → 结构化简报(产品名/受众/核心卖点),可改。
+2. **Step2 视频方案**:据简报出 3 个【故事方向彼此不同】的方案(内容导演视角,商品=故事道具非主角);15s 时每个方案含 `story`(故事线)+ `shot1`/`shot2`(动作脚本)+ `scene1`/`scene2`(每镜场景母帧)。生成时以 `services/video_templates.py` 的故事模板做 few-shot grounding;模型漏给场景 → 用模板兜底场景补齐(保证两镜场景不同)。
+3. **声音选择**(向导内自洽,默认真人旁白+市场语言+字幕)→ **选方案 = 带完整配置一键出片**(`onWizardApply` 把声音设置 + `scene1`/`scene2` 同步回主页,`run()` 透传给 `ai-generate` → 触发 per-shot 母帧生成)。
+
+> 历史坑:早期"采用方案"只存一条 `video_script` 记录(伪成品,误导用户以为出片);已**移除**,改为采用即生成。
+
+## 5. 声音(三态互斥)
+
+| 模式 | 实现 | 说明 |
+|---|---|---|
+| 无声(默认) | `with_audio=false` | 纯画面 |
+| 视频音效 | CogVideoX `with_audio=true` | AI 音效,非人声 |
+| 真人旁白 | `services/voiceover.py` | edge-tts 看图写**目标语言**口播稿 → 合成 → ffmpeg 叠回 |
+
+旁白细节:**多语言**(葡/英/西/中);**嗓音池随机**(每语言多候选,治"永远同一个人声");字幕**分段定时**(随语音逐段);`atempo` 把配音精确贴合视频时长。双分镜时旁白对**拼好的整段 15s** 做(同步)。
+
+## 6. 一致性 & 可靠性(已攻克)
+
+- **场景首帧优化**(默认开):gpt-image 把商品合成进场景做视频第一帧,**印花像素级保留** → 开场即场景(治"开场平铺产品图")+ 跨镜头一致。
+- **provider 三层健壮性**(`ai/video.py` `ZhipuCogVideoProvider`):
+  1. **网络层重试**:建任务/轮询/下载各自对 `httpx.TransportError`(WriteTimeout/ConnectTimeout/…)+ 5xx 重试;发图改 **JPEG**(体积小 5~10×,降发图写超时)。
+  2. **任务级重试**:智谱偶发把任务判 FAIL(实测返回"网络错误,请稍后重试")→ 退避后**重建新任务**(最多 3 个)。重新轮询同一个 FAIL 任务无用,必须重建。
+  3. 轮询容忍连续抖动;真超时不重建。
+- **缩略图**:用**上传的商品图**(两张取第一张),稳定、所见即所得(不用智谱外链封面——带水印且签名会过期)。
+
+## 7. ⚠️ 核心痛点 & 设计取舍:呆板
+
+**现象**:成片"像静态图加运镜",镜头内主体几乎不动,缺短视频节奏。
+**根因(范畴判断,非 bug)**:CogVideoX-3 是**单镜头运动模型**,为保一致性必须压低运动 → 静。这是"一致性 ↔ 动态性"的固有取舍。
+
+**已分析的提升方向(不破坏一致性、不引入高风险动作/物理错误)**:
+- 镜头运动(最安全)、环境运动(模型擅长)、受限主体运动(非操作性自然动作)、**节奏剪辑(最大杠杆,纯工程)**、TikTok 表现力(音乐/动态文字)。
+- **关键认知**:短视频"内容感"80% 在**剪辑/后期层 + 内容策划层**,不在模型——别向模型要更多运动(风险全在那),让镜头之间的【内容】动起来。
+
+### 7.1 内容策划层(per-shot 母帧)— ✅ 已落地,A/B 实证
+
+**结论(单变量 A/B,唯一变量=shot2 是否换母帧)**:
+| 时间点 | A·共享母帧(旧) | B·每镜独立母帧(新) |
+|---|---|---|
+| 2s(shot1) | 卧室对镜自拍 | 卧室对镜自拍(与 A 逐字节相同) |
+| 8s(shot2) | **还是卧室**,同人同姿势 | **已切街头**,走路 OOTD、斜挎包 |
+| 13s(shot2) | 还是卧室 | 还是街头,边走边笑 |
+
+- A = "同一个妹子在卧室站 15 秒"(精确复现了观感上的"呆板/重复");B = 卧室自拍→街头 OOTD,像刷到一条真 TikTok。
+- **同质化 ~80% 来自母帧复用**;CogVideoX "跟着母帧走"——换母帧=换内容,**不必跟模型要运动**。otter 骑士印花 A/B 全程没坏 → 一致性零牺牲。
+- **落地**:`tasks.py:_work_aivideo` 双分镜分支每镜按 `scene1`/`scene2` 各生成母帧(见 §3);向导/模板库产出场景;计费/退点不变(仍 video×2)。
+- **已知边界(主动接受)**:① 跨镜头可能换人(shot1 丸子头 / shot2 长直发)——硬切处像"真实 UGC 换机位",**先接受漂移更像 UGC**,全程同人是更难的另一个一致性问题;② 片内运动仍温和——但镜头间内容已变,**不重要了**。
+
+**下一跳(GPT P1,未做)**:从 2-shot 升到**事件弧 / 场景递进**(卧室→出门→街头→咖啡店),让商品在"发生了一件事"的故事里自然出现。`video_templates.py` 的 `beats` 结构已预留 3-shot 扩展位。
+
+**后期编排层(`services/video_edit.py`,已建基建、当前 parked)**:
+- `punch_up`:beat 切段、全景/推近交替(纯构图,不改时长/音轨/商品像素 → 一致性零风险)。**experimental,实测在"已有分镜的成片"上效果偏弱**,在单母帧片上才明显。
+- `add_music_bed` / `pick_music`:CC0 bgm 垫在旁白之下(`backend/assets/music/`,音频不入 git)。
+- 现状:`POD_VIDEO_PUNCHUP` / `POD_VIDEO_MUSIC` 均**默认关**;music 接线已在 `tasks.py` 注释。**先保证生成效果,实验层后续按需取消注释/开启 + 调参。**
+- **两段衔接**:生产用**硬切**;xfade 叠化过渡在实验里验证过能柔化接缝(不碰一致性),**尚未接进生产**——是"衔接优化"的现成下一步。
+
+## 8. 配置开关(`.env`,前缀 POD_)
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `POD_VIDEO_PROVIDER` | `local` | `local`(兜底 GIF)/ `cogvideox`(智谱真视频) |
+| `POD_VIDEO_API_KEY` | 空 | cogvideox 必填 |
+| `POD_VIDEO_*`(model/quality/fps/seconds/with_audio/size/timeout/poll_interval) | 见 `.env.example` | 不暴露前端 |
+| `voiceover_enabled` | true | 旁白总开关(运维兜底) |
+| `POD_VIDEO_PUNCHUP` | **false** | 后期节奏快切(experimental) |
+| `POD_VIDEO_MUSIC` | **false** | 背景音乐床(experimental,接线已注释) |
+
+## 9. 文件地图
+
+| 文件 | 职责 |
+|---|---|
+| `routers/video.py` | 端点:options / `GET /templates`(故事模板)/ 智能向导(brief/proposals)/ ai-generate(双分镜+`scene1/2`+计费)/ 本地 GIF generate |
+| `ai/video.py` | provider(local GIF / **ZhipuCogVideoProvider** 重试)+ 提示词工程 + 画幅/防拉伸 + `scene_frame_prompt(scene=…)`(per-shot 母帧 + UGC 抓拍质感) |
+| `services/video_templates.py` | **内容策划层**:POD 故事模板库(品类感知,每模板 2 拍 scene+action);`templates_for` / `template_guidance`(LLM few-shot)/ `fallback_two_shot`(无 key 兜底) |
+| `ai/openai_image.py` | gpt-image(场景母帧合成 / 改图) |
+| `services/video_concat.py` | 双分镜拼接(mp4 ffmpeg / gif Pillow,keep_audio) |
+| `services/video_wizard.py` | 智能向导(商品简报 + 故事方案,15s 出 story/shot1/shot2 + scene1/scene2;模板库 grounding) |
+| `services/video_describe.py` | 智能识别(看图写单段镜头脚本) |
+| `services/voiceover.py` | edge-tts 旁白(写稿/合成/字幕/叠回,嗓音池) |
+| `services/video_edit.py` | 后期层(punch_up / 音乐床,parked) |
+| `services/video.py` | 本地兜底 GIF(Ken-Burns/轮播) |
+| `tasks.py` `_work_aivideo` | worker 编排:母帧 → 生成 → 拼接 → [punch_up] → 旁白 → [音乐] → 缩略图 → 入库 |
+| 前端 `VideoGenerate.vue` / `VideoWizardDialog.vue` | 视频页 + 智能向导 |
+
+## 10. 下一步(roadmap)
+
+1. **两段衔接**:把验证过的 **xfade 叠化** 接进生产 `concat_mp4`(低风险,直接改善"硬切")。
+2. **动态表现力**:逐镜头环境/相机运动提示 + 后期节奏剪辑 + 音乐床(调参后开)。
+3. (可选)评估更强视频模型(可灵/Kling 等)做对比,但**架构是第一顺位,模型是第二**。

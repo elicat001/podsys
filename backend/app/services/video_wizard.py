@@ -88,14 +88,22 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
     storyboard 为两段合并展示。下游(前端)在 15s 时把 shot1/shot2 分别填进 分镜①/分镜② 脚本。"""
     two_shot = seconds == 15
     if two_shot:
+        from .video_templates import template_guidance
         time_rule = (
-            "本视频为【双分镜 · 共 15 秒】= 分镜①(0-5 秒,约 5 秒)+ 分镜②(5-15 秒,约 10 秒)。"
-            "两个分镜镜头/景别/节奏要明显不同、但内容连贯递进(如 分镜①产品特写氛围 → 分镜②人物使用并点出卖点)。"
+            "本视频为【双分镜 · 共 15 秒】= 分镜①(0-5 秒)+ 分镜②(5-15 秒),两拍要连成一个【生活小故事/事件】:"
+            "分镜①铺垫(准备/起手,如 镜子前确认穿搭、伸手拿起杯子),分镜②payoff(出门/落座/街头展示)。"
+            "关键:商品是这段真实生活里【自然出现/穿着的道具】,不是被摆拍展示的主角;"
+            "两拍必须是【两个明显不同的场景/地点】(如 卧室→街头),绝不要两拍都在同一地方做同一件事。\n"
+            "可参考下面这些 POD 内容故事模板的【结构】(照结构、贴合本商品改写,别直接抄文案):\n"
+            f"{template_guidance(category)}"
         )
         shot_fields = (
-            '"shot1":"分镜①脚本(约 5 秒,自成一体,按【0-x秒】分时间轴,以商品为画面主体)",'
-            '"shot2":"分镜②脚本(约 10 秒,自成一体,按【0-x秒】分时间轴,承接分镜①但镜头/景别不同)",'
-            '"storyboard":"把分镜①与分镜②合并后的完整脚本(仅供预览;实际以 shot1/shot2 为准)"'
+            '"story":"一句话故事线(如 出门前镜子前确认穿搭→走上街头展示)",'
+            '"scene1":"分镜①的【场景母帧】:商品自然出现在什么真实生活场景里(给 AI 合成视频第一帧用,只描述场景+人物状态,别写运镜)",'
+            '"shot1":"分镜①镜头脚本(约 5 秒,按【0-x秒】分时间轴,这一拍发生的动作)",'
+            '"scene2":"分镜②的【场景母帧】:换一个与 scene1 明显不同地点的真实生活场景",'
+            '"shot2":"分镜②镜头脚本(约 10 秒,按【0-x秒】分时间轴,承接分镜①、推进故事)",'
+            '"storyboard":"两拍合并的完整脚本(仅供预览)"'
         )
     else:
         time_rule = f"视频时长 {seconds} 秒。"
@@ -104,20 +112,21 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
             "描述镜头语言(推拉摇移/特写)+人物动作+产品展示,紧扣核心卖点)\""
         )
     prompt = (
-        f"你是 TikTok 跨境电商短视频策划。根据下面的商品简报,设计 {n} 个【方向彼此明显不同】的带货视频方案。\n"
+        f"你是 TikTok 跨境电商短视频【内容导演】。根据下面的商品简报,设计 {n} 个【故事方向彼此明显不同】的带货短视频方案。\n"
+        "目标:做出『一条真人随手发的 TikTok 生活内容』,而不是『商品展示页』——靠真实生活场景和小事件自然带出商品。\n"
         f"{time_rule}\n"
         f"产品:{name or '(见卖点)'}\n目标受众:{audience or '(自行判断)'}\n核心卖点:{selling_points or '(自行提炼)'}\n"
         f"投放市场/语言:{language};商品类目:{category}\n"
         f"只输出一个 JSON 数组(禁止任何解释、标题、markdown 代码块),含 {n} 个对象,每个对象字段固定为:\n"
-        '{"title":"方案标题(简短有画面感,如 温馨家居氛围感)",'
+        '{"title":"方案标题(简短有画面感)",'
         '"angle":"一句话创意方向",'
         '"model":"出镜模特设定(年龄/外貌/气质/穿着,贴合目标受众与投放市场;若无人出镜写 无模特)",'
-        '"environment":"拍摄环境/场景(贴合卖点与市场风格)",'
+        '"environment":"整体拍摄风格/地区氛围",'
         + shot_fields +
         "}\n"
-        "分镜动作要贴合 AI 视频能力边界:优先简单稳妥的展示类动作,弱化开盖/拆封/穿脱/倾倒等复杂物理变化,"
-        "手与物体全程接触、符合重力。\n"
-        f"硬性:{n} 个方案方向要拉开差距(如 情感氛围 / 卖点测评 / 场景搭配 等不同切入);全部字段用中文。"
+        "动作要贴合 AI 视频能力边界:优先简单稳妥的生活化动作(走、坐、转身、微笑、整理、端起),"
+        "弱化开盖/拆封/穿脱/倾倒等复杂物理变化,手与物体全程接触、符合重力。\n"
+        f"硬性:{n} 个方案的【故事与场景】要拉开差距;双分镜两拍必须是不同地点/场景;全部字段用中文。"
     )
     data = _loads_json(_chat([{"role": "user", "content": prompt}]), expect_list=True)
     if isinstance(data, dict):                       # 容错:模型把数组裹进 {"proposals":[…]} / {"方案":[…]}
@@ -142,6 +151,12 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
             s1 = s1 or item["storyboard"]
             s2 = s2 or item["storyboard"]
             item["shot1"], item["shot2"] = s1, s2
+            # 场景母帧(内容策划层):模型给了就用;没给 → 用模板兜底场景,保证两镜场景不同(per-shot 母帧的关键)。
+            from .video_templates import templates_for
+            beats = templates_for(category)[0]["beats"]
+            item["scene1"] = (str(p.get("scene1") or p.get("场景1") or "").strip()[:500] or beats[0]["scene"])
+            item["scene2"] = (str(p.get("scene2") or p.get("场景2") or "").strip()[:500] or beats[1]["scene"])
+            item["story"] = str(p.get("story") or p.get("故事") or p.get("故事线") or "").strip()[:200]
             if not item["storyboard"]:
                 item["storyboard"] = f"【分镜①·0-5秒】{s1}\n\n【分镜②·5-15秒】{s2}"
         out.append(item)

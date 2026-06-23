@@ -1,0 +1,159 @@
+"""POD 内容策划层:故事模板库(Content Planning Layer)。
+
+为什么有这层:A/B 实验证明「每镜独立母帧」能让镜头之间真正换场景(治呆板/同质化);
+但要从「会动的商品展示页」升级成「一条真人发的内容」,还差**内容导演**——
+让商品成为一段生活故事里的【道具】,而不是被展示的【主角】。
+
+每个模板 = 一条故事线,拆成 2 拍(对齐双分镜 15s = 5s 分镜① + 10s 分镜②):
+  beat = {scene, action}
+    scene  = 这一拍的「场景母帧」描述(gpt-image 把商品自然合成进这个生活场景做首帧)
+    action = 这一拍画面里发生的事(compose_prompt 的镜头脚本;与另一拍连成迷你故事弧)
+两拍连起来要有「事件」:beat1 铺垫(准备/起手)→ beat2 payoff(出门/落座/展示)。
+
+结构可向 3 拍扩展(beats 加一项即可),目前产品是 2-shot。
+纯数据 + 纯函数,离线可测;不依赖网关。
+"""
+from __future__ import annotations
+
+# 商品类目 → 适配的故事模板。商品在 scene/action 里都是「生活片段里自然出现/穿着的道具」,
+# 但仍是画面主体(POD 要卖货,不能让商品糊掉)。措辞刻意往「随手拍的真实生活」靠,而非「摆拍展示」。
+STORY_TEMPLATES: list[dict] = [
+    # ── 服装(T恤/卫衣):POD 主力品类,故事最丰富 ──────────────────────────
+    {
+        "id": "ootd", "name": "出门穿搭 OOTD", "categories": ["T恤", "卫衣"],
+        "story": "出门前在镜子前确认今天的穿搭,然后走上街头展示一身 look",
+        "beats": [
+            {"scene": "年轻女生在卧室全身镜前、手机举着自拍,确认今天的穿搭",
+             "action": "对镜自拍视角,她随手整理一下衣领、左右看看身上的搭配,对镜头比个轻松的小表情"},
+            {"scene": "同一位女生走在城市街头人行道上、街景与店铺虚化",
+             "action": "她已经出门走在街上,边走边自然摆动、回头对镜头笑,完整展示这身穿搭的上身效果"},
+        ],
+    },
+    {
+        "id": "morning", "name": "晨间日常 Morning", "categories": ["T恤", "卫衣"],
+        "story": "慵懒的早晨刚起床,穿着这件衣服开始一天",
+        "beats": [
+            {"scene": "清晨卧室窗边、自然光,女生刚起床穿着这件上衣伸了个懒腰",
+             "action": "窗边逆光、温暖晨光,她揉揉眼睛、伸懒腰,睡眼惺忪的真实居家感,衣服自然在身上"},
+            {"scene": "明亮的家居厨房/餐桌边,女生倒了一杯咖啡",
+             "action": "她端着咖啡走到桌边坐下、低头笑了一下,镜头随手记录早晨,衣服自然入镜"},
+        ],
+    },
+    {
+        "id": "coffee", "name": "周末咖啡 Coffee", "categories": ["T恤", "卫衣"],
+        "story": "周末出门喝咖啡,在咖啡店窗边的惬意时光",
+        "beats": [
+            {"scene": "出门前玄关/镜子前,女生背上包准备出门",
+             "action": "她在镜子前快速理一下衣服、拿起包,一副要出门的样子,随手对镜自拍一下"},
+            {"scene": "咖啡店靠窗的位置、暖色光、窗外街景虚化,女生坐着捧着咖啡杯",
+             "action": "她坐在窗边捧着咖啡、看向窗外又回头对镜头微笑,松弛惬意,衣服自然展示在上身"},
+        ],
+    },
+    {
+        "id": "street", "name": "街头随拍 Street", "categories": ["T恤", "卫衣"],
+        "story": "朋友在街头帮她随手拍的一段穿搭",
+        "beats": [
+            {"scene": "居民楼下/店铺门口,女生刚转过身面向镜头",
+             "action": "她从背身转过来面向镜头、撩一下头发,街拍随手抓拍的感觉,构图略随意"},
+            {"scene": "城市街头、阳光斑驳、行人与车流虚化,女生走在路上",
+             "action": "她沿街走来、镜头轻微跟拍,边走边笑、自然摆 pose,真实街拍 vibe"},
+        ],
+    },
+    # ── 家居/配件:商品不是穿在身上,但同样塞进生活片段 ──────────────────────
+    {
+        "id": "mug_morning", "name": "晨间咖啡 ☕", "categories": ["马克杯", "水杯"],
+        "story": "用这个杯子开启慵懒的早晨",
+        "beats": [
+            {"scene": "清晨厨房台面/木桌上摆着这个杯子,旁边有手正伸过来",
+             "action": "晨光下,一只手自然伸过来握住杯子、轻轻端起,温暖的居家早晨感"},
+            {"scene": "窗边、暖光,有人捧着这个杯子坐着",
+             "action": "她捧着杯子靠近窗边坐下、低头喝了一口、抬头微笑,惬意的晨间时光,杯子是画面焦点"},
+        ],
+    },
+    {
+        "id": "pillow_cozy", "name": "居家慵懒 🛋", "categories": ["抱枕"],
+        "story": "周末窝在沙发里的慵懒午后",
+        "beats": [
+            {"scene": "客厅沙发上放着这个抱枕、暖色灯光的温馨居家",
+             "action": "镜头从沙发缓缓推近这个抱枕,温馨慵懒的居家氛围,抱枕是画面主角"},
+            {"scene": "有人窝进沙发、抱着这个抱枕看手机/喝东西",
+             "action": "她抱着抱枕窝进沙发、调整了个舒服的姿势、对镜头笑,真实居家放松感"},
+        ],
+    },
+    {
+        "id": "bag_out", "name": "挎包出街 👜", "categories": ["帆布袋"],
+        "story": "挎上这个袋子出门的一天",
+        "beats": [
+            {"scene": "玄关/门口,女生正把这个帆布袋挎上肩",
+             "action": "她在门口把帆布袋挎上肩、拍了拍、转身准备出门,随手的出门日常"},
+            {"scene": "城市街头,女生挎着这个帆布袋走在路上",
+             "action": "她挎着袋子沿街走、袋子随步伐自然晃动,回头对镜头笑,街拍 vibe,袋子清晰展示"},
+        ],
+    },
+    {
+        "id": "phonecase", "name": "日常随手 📱", "categories": ["手机壳"],
+        "story": "装着这个壳的手机陪你过日常",
+        "beats": [
+            {"scene": "咖啡桌/桌面,女生手里拿着装了这个壳的手机",
+             "action": "她拿着手机在手里翻看、手指划动屏幕,手机壳的图案与质感清晰展示"},
+            {"scene": "咖啡店桌边,她举起手机准备拍照",
+             "action": "她举起手机对着桌上的咖啡/甜点拍照、回头笑,真实生活记录感,手机壳是焦点"},
+        ],
+    },
+    # ── 通用兜底:海报/其它,或没匹配到品类时 ─────────────────────────────
+    {
+        "id": "generic", "name": "生活片段", "categories": ["通用", "海报"],
+        "story": "这件商品自然出现在一段真实生活里",
+        "beats": [
+            {"scene": "这件商品被自然地放在它该在的生活场景里、暖色自然光",
+             "action": "镜头缓缓推近这件商品,生活化的真实环境,商品是画面主角"},
+            {"scene": "有人在这个场景里自然地使用/穿着/接触这件商品",
+             "action": "她自然地拿起/穿着/用着这件商品、对镜头笑,真实随手拍质感,商品清晰展示"},
+        ],
+    },
+]
+
+# 服装类故事最通用:当类目=通用(前端默认、未细分)时,优先给这批 + 兜底,让用户拿到丰富的穿搭故事。
+_DEFAULT_IDS = ["ootd", "morning", "coffee", "street", "generic"]
+
+
+def templates_for(category: str = "通用") -> list[dict]:
+    """按商品类目取适配的故事模板。具体类目 → 该类目模板 + 通用兜底;通用/未命中 → 默认服装故事(最丰富)。"""
+    cat = (category or "通用").strip()
+    by_id = {t["id"]: t for t in STORY_TEMPLATES}
+    defaults = [by_id[i] for i in _DEFAULT_IDS if i in by_id]
+    if cat in ("", "通用"):                  # 默认/未细分:服装故事最通用,适配大多数 POD
+        return defaults
+    # 命中具体品类(排除 generic,它只作兜底):命中的排前 + 补 generic
+    hit = [t for t in STORY_TEMPLATES if cat in t.get("categories", []) and t["id"] != "generic"]
+    if hit:
+        generic = by_id.get("generic")
+        return hit + ([generic] if generic and generic not in hit else [])
+    return defaults                          # 未命中任何具体品类 → 默认那批
+
+
+def template_guidance(category: str = "通用", limit: int = 5) -> str:
+    """把适配模板格式化成给 LLM 的 few-shot 参考(让方案生成器照「故事+2拍场景」的结构产出,
+    而不是退回『展示印花/展示版型』)。只作灵感锚点,LLM 仍要贴合具体商品改写。"""
+    rows = []
+    for t in templates_for(category)[:limit]:
+        b = t["beats"]
+        rows.append(
+            f"- 《{t['name']}》故事线:{t['story']}\n"
+            f"    分镜①场景:{b[0]['scene']};动作:{b[0]['action']}\n"
+            f"    分镜②场景:{b[1]['scene']};动作:{b[1]['action']}"
+        )
+    return "\n".join(rows)
+
+
+def fallback_two_shot(category: str = "通用") -> dict:
+    """无 LLM(无 key)时也能给一条可用的故事:取首个适配模板,产出 scene1/scene2 + shot1/shot2。
+    让「故事模板」即使离线也能直接喂 ai-generate 的 per-shot 母帧。"""
+    t = templates_for(category)[0]
+    b = t["beats"]
+    return {
+        "title": t["name"], "story": t["story"], "model": "", "environment": "",
+        "scene1": b[0]["scene"], "shot1": f"【0-5秒】{b[0]['action']}",
+        "scene2": b[1]["scene"], "shot2": f"【0-10秒】{b[1]['action']}",
+        "storyboard": f"【分镜①·0-5秒】{b[0]['action']}\n\n【分镜②·5-15秒】{b[1]['action']}",
+    }

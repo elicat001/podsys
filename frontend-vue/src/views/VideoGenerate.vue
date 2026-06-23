@@ -53,6 +53,8 @@ const TYPES = [
 const selType = ref('')
 const prompt = ref('')
 const prompt2 = ref('')         // 分镜② 脚本(仅 15s 双分镜;留空则复用分镜①)
+const scene1 = ref('')          // 分镜①场景母帧(内容策划层):向导产出,空则后端回退共享母帧
+const scene2 = ref('')          // 分镜②场景母帧;两者都有 + 双分镜 → 每镜独立母帧(治同质化)
 const isTwoShot = computed(() => seconds.value === 15)   // 选 15s = 双分镜(5s+10s 拼接,价格翻倍)
 
 const ASPECTS = [
@@ -92,6 +94,7 @@ function clearSlot(slot) {
 
 // 填模板脚本:取该时长的 t5/t10;若填了产品卖点,追加一段「核心卖点」让画面/旁白都围绕它(custom 留空给用户自写)
 function applyTemplate(t) {
+  scene1.value = ''; scene2.value = ''   // 类型模板无 per-shot 场景:清掉上次向导留下的母帧场景,避免串味
   if (seconds.value === 15) {          // 双分镜:分镜①=该类型 5s 脚本、分镜②=10s 脚本
     prompt.value = t.t5
     prompt2.value = t.t10
@@ -116,12 +119,15 @@ function openWizard() {
   if (!smartReady.value) return ElMessage.warning('未配置作图 AI key,「智能方案」暂不可用')
   wizardOpen.value = true
 }
-function onWizardApply({ storyboard, shot1, shot2, generate, sound }) {
+function onWizardApply({ storyboard, shot1, shot2, scene1: s1, scene2: s2, generate, sound }) {
   if (seconds.value === 15) {          // 双分镜:把两段分镜脚本分别填进 分镜①/分镜②
     prompt.value = shot1 || storyboard || ''
     prompt2.value = shot2 || ''
+    scene1.value = s1 || ''            // 每镜独立母帧场景:有则后端每镜各生成一张母帧(治同质化)
+    scene2.value = s2 || ''
   } else {
     prompt.value = storyboard
+    scene1.value = ''; scene2.value = ''
   }
   selType.value = 'smart'
   // 把向导里选的声音设置同步到主页(UI 也随之更新),让"采用即生成"用的是向导的选择,而非主页旧值 → 消除割裂
@@ -146,7 +152,11 @@ async function run() {
     fd.append('file', img1.value)
     if (img2.value) fd.append('file2', img2.value)
     fd.append('prompt', prompt.value)
-    if (isTwoShot.value) fd.append('prompt2', prompt2.value)   // 双分镜由 seconds=15 触发,后端自行判定 two_shot
+    if (isTwoShot.value) {                                      // 双分镜由 seconds=15 触发,后端自行判定 two_shot
+      fd.append('prompt2', prompt2.value)
+      fd.append('scene1', scene1.value)                        // 每镜独立母帧场景(来自向导);空 → 后端回退共享母帧
+      fd.append('scene2', scene2.value)
+    }
     fd.append('language', language.value)
     fd.append('scene_frame', sceneFrame.value ? 'true' : 'false')
     fd.append('native_sound', nativeSound.value ? 'true' : 'false')

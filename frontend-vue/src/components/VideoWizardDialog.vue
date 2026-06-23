@@ -106,6 +106,7 @@ function choose(p) {
   // 向导自洽:声音(无声/音效/旁白+语言+字幕)在这里选,不再依赖主页 → 消除割裂。
   emit('apply', {
     storyboard: p.storyboard, shot1: p.shot1 || '', shot2: p.shot2 || '', title: p.title,
+    scene1: p.scene1 || '', scene2: p.scene2 || '',   // 每镜独立母帧场景(内容策划层):透传给 ai-generate
     generate: true,
     sound: { mode: soundMode.value, language: voLang.value, subtitle: subtitle.value },
   })

@@ -39,6 +39,15 @@ def options(user: User = Depends(current_user)):
     }
 
 
+@router.get("/templates")
+def video_templates(category: str = "通用", user: User = Depends(current_user)):
+    """内容策划层:按商品类目返回故事模板(每个含故事线 + 2 拍 scene/action)。免费,仅鉴权。
+    前端可直接展示「故事模板」供一键选用:模板 → 填 prompt/prompt2(动作)+ scene1/scene2(母帧场景)→ ai-generate。
+    每镜独立母帧 = 镜头之间真正换场景(治"同一个镜头重复"),商品成为生活故事里的道具而非展示主角。"""
+    from ..services.video_templates import templates_for
+    return {"templates": templates_for(category)}
+
+
 @router.post("/smart-describe")
 def smart_describe_endpoint(
     file: UploadFile = File(...),
@@ -117,6 +126,8 @@ def ai_generate(
     file2: UploadFile | None = File(None),
     prompt: str = Form(""),          # 视频描述/镜头脚本(由前端「视频类型」填入、可自定义编辑);双分镜时=分镜① 脚本
     prompt2: str = Form(""),         # 分镜② 脚本(仅 seconds=15 双分镜;留空则复用 prompt)
+    scene1: str = Form(""),          # 分镜①场景母帧描述(内容策划层):给了则每镜独立母帧(治同质化)
+    scene2: str = Form(""),          # 分镜②场景母帧描述;两者都给且开了场景首帧 → per-shot 母帧
     language: str = Form("葡萄牙语"),  # 配音/对白语言(默认葡语)
     category: str = Form("通用"),     # 商品类目(前端已不暴露,默认通用):仅用于场景首帧的场景 + 入库标题
     scene_frame: bool = Form(False),  # 两步:先 gpt-image 生成场景首帧再生视频(缓解硬切;无 key 自动跳过)
@@ -165,7 +176,8 @@ def ai_generate(
     return submit_celery(
         run_tool, db, user, kind="aivideo", tool_id="videogen", op="video",
         raw=img1, mask_raw=img2, n=n,
-        params={"prompt": prompt[:2000], "prompt2": prompt2[:2000], "two_shot": two_shot, "n": n,
+        params={"prompt": prompt[:2000], "prompt2": prompt2[:2000],
+                "scene1": scene1[:500], "scene2": scene2[:500], "two_shot": two_shot, "n": n,
                 "language": language[:20],
                 "category": category, "scene_frame": bool(scene_frame), "subtitle": bool(subtitle),
                 "native_sound": bool(native_sound), "voiceover": bool(voiceover),
