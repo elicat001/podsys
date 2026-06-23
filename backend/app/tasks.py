@@ -500,12 +500,14 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
                 out.setdefault("meta", {})["voiceover"] = script[:200]
         except Exception:  # noqa: BLE001 — 配音绝不阻断视频作业
             pass
-    # 背景音乐床(opt-in,默认关):在旁白/音效【之后】把 CC0 bgm 垫在下面。目录没曲子→自动跳过。
-    if settings.video_music and out.get("ext") == "mp4":
-        from .services.video_edit import add_music_bed, pick_music
-        track = pick_music()
-        if track:
-            out["bytes"] = add_music_bed(out["bytes"], track)
+    # 背景音乐床:暂时停用(已注释)。基建保留在 services/video_edit.py(pick_music/add_music_bed)+
+    # backend/assets/music/,需要时取消下面注释 + 放 CC0 曲子 + 开 POD_VIDEO_MUSIC 即可恢复。
+    # 现阶段先聚焦"保证生成效果",不叠音乐层。
+    # if settings.video_music and out.get("ext") == "mp4":
+    #     from .services.video_edit import add_music_bed, pick_music
+    #     track = pick_music()
+    #     if track:
+    #         out["bytes"] = add_music_bed(out["bytes"], track)
     ext = out.get("ext", "mp4")
     name = f"video.{ext}"
     storage.output_path(job_id, name).write_bytes(out["bytes"])
