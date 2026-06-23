@@ -24,6 +24,8 @@ const submitted = ref(false)
 const aiReady = ref(true)
 const smartReady = ref(false)
 const wizardOpen = ref(false)   // 智能方案向导弹窗
+const stories = ref([])         // 故事模板库(内容策划层,/video/templates):双分镜一键选用,无需 AI key
+const selStory = ref('')        // 当前选中的故事模板 id
 
 const DURATIONS = [
   { id: 5, label: '5 秒', hint: '快' },
@@ -94,7 +96,8 @@ function clearSlot(slot) {
 
 // 填模板脚本:取该时长的 t5/t10;若填了产品卖点,追加一段「核心卖点」让画面/旁白都围绕它(custom 留空给用户自写)
 function applyTemplate(t) {
-  scene1.value = ''; scene2.value = ''   // 类型模板无 per-shot 场景:清掉上次向导留下的母帧场景,避免串味
+  scene1.value = ''; scene2.value = ''   // 类型模板无 per-shot 场景:清掉上次向导/故事留下的母帧场景,避免串味
+  selStory.value = ''                    // 选了「视频类型」→ 取消故事模板高亮(互斥)
   if (seconds.value === 15) {          // 双分镜:分镜①=该类型 5s 脚本、分镜②=10s 脚本
     prompt.value = t.t5
     prompt2.value = t.t10
@@ -104,6 +107,9 @@ function applyTemplate(t) {
 }
 function pickDuration(s) {
   seconds.value = s
+  if (s !== 15 && selStory.value) {      // 故事模板仅用于双分镜:切到 5/10s 时清掉,避免残留场景误透传
+    selStory.value = ''; scene1.value = ''; scene2.value = ''
+  }
   const t = TYPES.find((x) => x.id === selType.value)   // 已选类型 → 重填该时长脚本(custom 保留用户内容)
   if (t && t.id !== 'custom' && selType.value !== 'smart') applyTemplate(t)
 }
@@ -113,10 +119,24 @@ function pickType(t) {
   applyTemplate(t)
 }
 
+// 选用故事模板(内容策划层):双分镜一键填两镜动作脚本 + 各自场景母帧 → 商品成为生活故事里的道具。
+// 不需要 AI key:脚本/场景来自静态模板库;开了「场景首帧」+ 有 key 时,每镜各生成独立母帧(真换场景)。
+function pickStory(s) {
+  if (seconds.value !== 15) return ElMessage.warning('故事模板用于「双分镜 15 秒」,请先把时长选到 15 秒')
+  const b = s.beats || []
+  prompt.value = b[0] ? `【0-5秒】${b[0].action}` : ''
+  prompt2.value = b[1] ? `【0-10秒】${b[1].action}` : ''
+  scene1.value = b[0] ? b[0].scene : ''
+  scene2.value = b[1] ? b[1].scene : ''
+  selStory.value = s.id
+  selType.value = ''             // 与「视频类型」互斥
+}
+
 function openWizard() {
   if (!img1.value) return ElMessage.warning('请先上传商品图片')
   if (!seconds.value) return ElMessage.warning('请先选择视频时长')
   if (!smartReady.value) return ElMessage.warning('未配置作图 AI key,「智能方案」暂不可用')
+  selStory.value = ''            // 向导自带场景,取消故事模板高亮
   wizardOpen.value = true
 }
 function onWizardApply({ storyboard, shot1, shot2, scene1: s1, scene2: s2, generate, sound }) {
@@ -182,6 +202,9 @@ onMounted(async () => {
     aiReady.value = !!d.ai_ready
     smartReady.value = !!d.smart_ready
   } catch (e) { /* 静默 */ }
+  try {
+    stories.value = (await api.get('/video/templates')).data.templates || []
+  } catch (e) { /* 静默:故事模板拉取失败不影响主流程 */ }
 })
 </script>
 
@@ -235,6 +258,15 @@ onMounted(async () => {
             </button>
           </div>
           <div v-if="!seconds" class="lock-tip">↑ 请先选择时长</div>
+
+          <template v-if="isTwoShot && stories.length">
+            <div class="clabel mt">📖 故事模板 <span class="opt">双分镜专属:商品融入生活故事,两镜真换场景(治"同个镜头重复")</span></div>
+            <div class="stories">
+              <button v-for="s in stories" :key="s.id" class="story" :class="{ on: selStory === s.id }" @click="pickStory(s)">
+                <b>{{ s.name }}</b><i>{{ s.story }}</i>
+              </button>
+            </div>
+          </template>
         </div>
       </div>
 
@@ -355,6 +387,13 @@ onMounted(async () => {
 .type .tt b { font-size: 12.5px; color: var(--fg); font-weight: 600; }
 .type .tt i { font-size: 11px; color: var(--mut); font-style: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lock-tip { font-size: 12px; color: var(--brand2); margin-top: 8px; text-align: center; }
+
+.stories { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.story { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--line2); border-radius: 10px; background: var(--bg2); cursor: pointer; text-align: left; min-width: 0; }
+.story:hover { border-color: var(--brand); }
+.story.on { border-color: var(--brand); background: var(--panel2); }
+.story b { font-size: 12.5px; color: var(--fg); font-weight: 600; }
+.story i { font-size: 11px; color: var(--mut); font-style: normal; line-height: 1.4; }
 
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .flabel { font-size: 12.5px; color: var(--mut); }
