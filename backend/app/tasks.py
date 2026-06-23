@@ -463,14 +463,22 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             pass
     per_shot_frames = bool(p.get("two_shot") and use_scene and scene1 and scene2)
 
+    warnings: list[str] = []   # 显式记录"静默降级"(母帧/配音失败),写进 Job 结果让用户看见,不再无声吞掉
+
     def _scene_frame(scene: str):
-        """gpt-image 把商品合成进 scene 做母帧并贴合画幅;失败返回 None(调用方降级原图首帧)。"""
+        """gpt-image 把商品合成进 scene 做母帧并贴合画幅;失败返回 None(调用方降级原图首帧)。
+        ⚠ 失败【显式记录到 warnings】:否则用户只会拿到一段"平铺像砖块"的成片却不知为何(母帧才是 3D 物理的关键)。"""
         try:
             from .ai.openai_image import OpenAIImageClient
             framed = OpenAIImageClient().edit(raw[0], scene_frame_prompt(cat, lang, scene=scene),
                                               size=gptimage_size(aspect))
             return fit_to_aspect(framed, tw, th)
-        except Exception:  # noqa: BLE001 — 母帧失败不阻断视频作业
+        except Exception as exc:  # noqa: BLE001 — 母帧失败不阻断视频作业,但要让用户看见降级
+            if not any(w.startswith("场景母帧") for w in warnings):   # 去重(per-shot 会调 2 次)
+                warnings.append(
+                    "场景母帧生成失败,已退回原始平铺商品图作首帧——成片的立体感/物理真实度会明显变差"
+                    "(衣物可能像砖块般僵硬)。常见原因:作图 AI(gpt-image)未配置 key 或账户余额不足。"
+                    f"详情:{str(exc)[:160]}")
             return None
 
     if use_scene and not per_shot_frames:   # 单镜 / 双分镜未给场景:一张共享母帧(类目默认场景),同原行为
@@ -529,8 +537,8 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             out["bytes"] = new_bytes
             if script:
                 out.setdefault("meta", {})["voiceover"] = script[:200]
-        except Exception:  # noqa: BLE001 — 配音绝不阻断视频作业
-            pass
+        except Exception as exc:  # noqa: BLE001 — 配音不阻断视频作业,但显式记录降级(不再静默无声)
+            warnings.append(f"旁白配音失败,已输出无声视频。详情:{str(exc)[:160]}")
     # 背景音乐床:暂时停用(已注释)。基建保留在 services/video_edit.py(pick_music/add_music_bed)+
     # backend/assets/music/,需要时取消下面注释 + 放 CC0 曲子 + 开 POD_VIDEO_MUSIC 即可恢复。
     # 现阶段先聚焦"保证生成效果",不叠音乐层。
@@ -560,7 +568,8 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     return {"video_url": url, "ext": ext, "voiceover": meta.get("voiceover", ""),
             "cover": cover, "engine": meta.get("engine", ""),
             "two_shot": bool(meta.get("two_shot")),
-            "degraded": bool(meta.get("degraded"))}
+            "degraded": bool(meta.get("degraded")),
+            "warnings": warnings}   # 显式暴露降级原因(母帧/配音失败等),前端在成片卡片上提示用户
 
 
 # kind → (work, refund_op, n_param)。n_param 非空时退点笔数 = job.params[n_param](如裂变按张扣)。

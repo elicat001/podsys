@@ -643,7 +643,11 @@ def test_compose_prompt_has_physics_constraints():
         assert "物理" in out                       # 正/负向都强调遵循真实物理
         assert "自行开合" in out                    # 负向:部件无人触碰不得自行开合
         assert "凭空" in out and "瞬移" in out       # 负向:物体不得凭空出现/瞬移
-        assert "保持不变" in out                    # 正向后缀:商品形态/开合状态保持不变
+        # 材质物理【全覆盖】(不只衣服):软布垂坠、弹性回弹、液体晃荡,禁止僵硬如砖块/果冻
+        assert "垂坠" in out and "砖块" in out       # 软布:垂坠飘动,禁僵硬如砖块(治"平面像砖块")
+        assert "回弹" in out                        # 弹性/蓬松:按压后弹性回弹(治"像弹簧"等弹性失真)
+        assert "液体" in out and "果冻" in out       # 液体晃荡 + 禁刚性物果冻般软塌
+        assert "保持一致" in out                    # 正向:商品图案/结构保持一致(印花保真,但不锁死形态)
 
 
 def test_ai_generate_full_params(client, auth_headers):
@@ -669,7 +673,7 @@ def test_ai_generate_scene_frame_with_gptimage(client, auth_headers, monkeypatch
 
     def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto"):
         called["edit"] += 1
-        assert "保持商品本身" in prompt   # 用的是场景首帧指令
+        assert "立体形态" in prompt and "图案" in prompt   # 场景首帧指令:立体使用形态 + 保留印花(治砖块)
         return _Img.new("RGB", (64, 96), (10, 20, 30))
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
     monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _fake_edit)
@@ -883,6 +887,26 @@ def test_ai_generate_single_shot_shared_mufra(client, auth_headers, monkeypatch,
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
     assert called["edit"] == 1                          # 单镜 → 一张共享母帧
+
+
+def test_ai_generate_records_warning_when_scene_frame_fails(client, auth_headers, monkeypatch, png):
+    # 母帧(gpt-image)失败(如额度不足/无 key)→ 不阻断、仍出片,但 Job 结果【显式记录降级 warning】,
+    # 不再静默吞掉(治"用户拿到平铺像砖块的成片却不知为何")。
+    from app.ai import openai_image
+    from app.config import settings
+
+    def _boom(self, image, prompt, mask=None, size="auto", background="auto"):
+        raise RuntimeError("Error code: 403 insufficient_user_quota")
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _boom)
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "p", "seconds": "10", "scene_frame": "true", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job                 # 母帧失败不阻断,仍用原图出片
+    warns = job["result"].get("warnings") or []
+    assert any("场景母帧" in w for w in warns)           # 降级被显式记录 → 用户/运营能看见真因
 
 
 def test_wizard_proposals_two_shot_adds_scenes(monkeypatch):

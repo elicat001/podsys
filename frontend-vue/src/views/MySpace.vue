@@ -428,6 +428,9 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
                     <!-- 信息类结果(标题/侵权)直接把结果文字显示在卡片上,不必点开预览 -->
                     <div v-if="jobSummary(job)" class="job-summary" :title="jobSummary(job)">{{ jobSummary(job) }}</div>
                     <div v-if="job.status === 'error'" class="job-err" :title="job.error">{{ job.error }}</div>
+                    <!-- 已完成但有降级(母帧/配音失败等)→ 显式告知用户,别让人拿到差成片却不知为何 -->
+                    <div v-if="job.status === 'done' && job.result && job.result.warnings && job.result.warnings.length"
+                         class="job-warn" :title="job.result.warnings.join('\n')">⚠ {{ job.result.warnings[0] }}</div>
                     <div class="job-actions">
                       <button v-if="job.status === 'done' && job.result" class="chip preview" @click="openPreview(job)">👁 预览</button>
                       <button v-if="job.result && job.result.title" class="chip copy" @click="copyText(job.result.title, '标题')">📋 复制</button>
@@ -1122,6 +1125,14 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.job-warn {
+  font-size: 12px;
+  color: #e6a23c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: help;
 }
 .job-actions {
   display: flex;
