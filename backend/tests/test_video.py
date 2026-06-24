@@ -619,14 +619,13 @@ def test_aspect_size_by_resolution():
 
 
 def test_compose_prompt_pro_layers():
-    # 专业化拼装:镜头脚本(动作全交给它,不再按类目追加)+ 巴西风格(葡语)+ 语言 + 防拉伸 + 负向
+    # 拼装:脚本(任务/故事层)+ 巴西风格(葡语)+ 语言 + 导演层 + 画面底线;地区随语言变。
     from app.ai.video import compose_prompt
     out = compose_prompt("素人开箱,手持拍摄", language="葡萄牙语")
     assert "素人开箱,手持拍摄" in out
     assert "巴西" in out                             # 葡语 → 巴西本地风格
     assert "葡萄牙语" in out                          # 语言指令
-    assert "拉伸" in out                             # 防拉伸/一致性
-    assert "避免" in out                             # 负向词被追加
+    assert "拉伸" in out                             # 画面底线:印花不被拉伸扭曲
     # 地区风格跟着语言智能变:英语 → 欧美(不是巴西)
     out2 = compose_prompt("镜头推近", language="英语")
     assert "巴西" not in out2 and "欧美" in out2 and "英语" in out2
@@ -635,37 +634,26 @@ def test_compose_prompt_pro_layers():
     assert "巴西" not in out3 and "欧美" not in out3 and "配音使用" not in out3 and out3.strip()
 
 
-def test_compose_prompt_has_physics_constraints():
-    # 物理连贯约束:不分内容通用追加,治"瓶盖凭空而启"这类违背物理的画面(不给某个场景写死)。
-    from app.ai.video import compose_prompt
-    for motion in ("展示商品", "拿起转动", "模特上身穿着"):
-        out = compose_prompt(motion, language="无对白")
-        assert "物理" in out                       # 正/负向都强调遵循真实物理
-        assert "自行开合" in out                    # 负向:部件无人触碰不得自行开合
-        assert "凭空" in out and "瞬移" in out       # 负向:物体不得凭空出现/瞬移
-        # 材质物理【全覆盖】(不只衣服):软布垂坠、弹性回弹、液体晃荡,禁止僵硬如砖块/果冻
-        assert "垂坠" in out and "砖块" in out       # 软布:垂坠飘动,禁僵硬如砖块(治"平面像砖块")
-        assert "回弹" in out                        # 弹性/蓬松:按压后弹性回弹(治"像弹簧"等弹性失真)
-        assert "液体" in out and "果冻" in out       # 液体晃荡 + 禁刚性物果冻般软塌
-        assert "保持一致" in out                    # 正向:商品图案/结构保持一致(印花保真,但不锁死形态)
-
-
-def test_compose_prompt_has_human_behavior():
-    # 真人感(核心杠杆):人物行为为主导——破除"模特对镜头摆拍/全程看镜头展示",用具体生活动作。通用,不写死。
+def test_compose_prompt_is_positive_director_led():
+    # 正向导演为主(治"负向堆太多→模型保守无聊"):身份=记录真实生活 + 任务动作>模特动作 + 手持镜头;
+    # 旧的大段负向堆砌已移除(只在底线留少量必要的"不")。
     from app.ai.video import compose_prompt
     out = compose_prompt("展示商品", language="无对白")
-    assert "人物行为" in out                             # 行为块为主导(最重要)
-    assert "看镜头" in out and "摆拍" in out             # 破除"全程看镜头/模特摆拍"
-    assert ("整理" in out or "转身" in out or "甩头发" in out)  # 行为词汇库(模型按情境选)
+    assert "导演定位" in out and "真实生活" in out      # 身份层:记录真实生活片段
+    assert "任务动作" in out                            # 任务驱动(任务动作 > 模特动作)
+    assert "手持" in out                                # 镜头层:手持随手拍
+    assert "平滑克制" not in out                         # 不压制镜头
+    # 已拆掉负向堆砌:这些旧负向词不应再出现(改用正向导演 + 简短底线)
+    assert "自行开合" not in out and "果冻" not in out and "凭空" not in out and "瞬移" not in out
 
 
-def test_compose_prompt_camera_is_secondary_handheld():
-    # 镜头降为次要:保留基础手持运镜、反对死机位/会动的照片;不再有"平滑克制"这类压制。
+def test_compose_prompt_keeps_essential_guards():
+    # 画面底线(简短保留真实踩过的失败):印花一致 + 材质物理(垂坠/回弹/液体)+ 重力连贯。
     from app.ai.video import compose_prompt
     out = compose_prompt("展示商品", language="无对白")
-    assert "手持" in out                                # 基础手持运镜仍在
-    assert "照片" in out                                # 反对"会动的 AI 照片"
-    assert "平滑克制" not in out                         # 已放开镜头运动(不压制)
+    assert "保持一致" in out                            # 印花/设计一致(POD 关键)
+    assert "垂坠" in out and "回弹" in out and "液体" in out  # 材质物理底线(治砖块/弹性失真)
+    assert "重力" in out                                # 物理连贯
 
 
 def test_ai_generate_full_params(client, auth_headers):
