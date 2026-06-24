@@ -466,19 +466,26 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
 
     warnings: list[str] = []   # 显式记录"静默降级"(母帧/配音失败),写进 Job 结果让用户看见,不再无声吞掉
 
+    # 母帧源图:把原图缩到长边 ≤1024 再发给 gpt-image(输出本就 ≤1024×1536),大幅降上传体积/耗时,
+    # 治"母帧 Request timed out"(尤其三分镜要调 3 次 gpt-image)。商品印花在 1024 下仍清晰,不损保真。
+    _frame_src = raw[0]
+    if max(_frame_src.size) > 1024:
+        _frame_src = _frame_src.copy()
+        _frame_src.thumbnail((1024, 1024), Image.LANCZOS)
+
     def _scene_frame(scene: str):
         """gpt-image 把商品合成进 scene 做母帧并贴合画幅;失败返回 None(调用方降级原图首帧)。
         ⚠ 失败【显式记录到 warnings】:否则用户只会拿到一段"平铺像砖块"的成片却不知为何(母帧才是 3D 物理的关键)。"""
         try:
             from .ai.openai_image import OpenAIImageClient
-            framed = OpenAIImageClient().edit(raw[0], scene_frame_prompt(cat, lang, scene=scene),
+            framed = OpenAIImageClient().edit(_frame_src, scene_frame_prompt(cat, lang, scene=scene),
                                               size=gptimage_size(aspect))
             return fit_to_aspect(framed, tw, th)
         except Exception as exc:  # noqa: BLE001 — 母帧失败不阻断视频作业,但要让用户看见降级
             if not any(w.startswith("场景母帧") for w in warnings):   # 去重(per-shot 每段各调一次)
                 warnings.append(
                     "场景母帧生成失败,已退回原始平铺商品图作首帧——成片的立体感/物理真实度会明显变差"
-                    "(衣物可能像砖块般僵硬)。常见原因:作图 AI(gpt-image)未配置 key 或账户余额不足。"
+                    "(衣物可能像砖块般僵硬)。常见原因:作图 AI(gpt-image)网关超时 / 未配 key / 余额不足。"
                     f"详情:{str(exc)[:160]}")
             return None
 
@@ -494,13 +501,12 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
         # 每镜各自脚本 + 各自场景母帧 → 镜头间真换场景、动作连续(动作链),而非同一画面重复。
         from .services.video_concat import concat_videos
         prov = get_video_provider()
-        seg_imgs: list[list] = []
-        for i in range(n_shots):
-            if per_shot_frames:              # 每镜独立母帧(失败的那镜降级回共享 imgs)
-                fr = _scene_frame(scenes[i])
-                seg_imgs.append([fr] if fr is not None else imgs)
-            else:
-                seg_imgs.append(imgs)
+        if per_shot_frames:                  # 每镜独立母帧:N 次 gpt-image【并行】调(治串行慢/超时);失败的那镜降级回共享 imgs
+            with ThreadPoolExecutor(max_workers=n_shots) as ex:
+                frames = list(ex.map(_scene_frame, scenes[:n_shots]))
+            seg_imgs = [[f] if f is not None else imgs for f in frames]
+        else:
+            seg_imgs = [imgs for _ in range(n_shots)]
         plan = [(seg_imgs[i], compose_prompt(prompts[i] or prompts[0], language=lang), MULTI_SHOT_PLAN[i])
                 for i in range(n_shots)]
 
