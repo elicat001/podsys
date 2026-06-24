@@ -57,9 +57,32 @@ def _probe(ff: str, path: str) -> tuple[float, int, int, bool]:
     return dur, w, h, ("Audio:" in r.stderr)
 
 
-def punch_up(video_bytes: bytes, *, beat: float = 1.8, zoom: float = 0.72) -> bytes:
-    """节奏快切:按 beat 切段,奇数段中心推近(裁 zoom 比例→放回原尺寸),拼回。
-    总时长不变、音轨保留对齐、商品像素不变。失败/太短 → 原片。"""
+# 构图预设 (zoom 裁切比例, 锚点 ax, ay)。循环取用 → 每个 beat 一个不同景别/机位,
+# 把"一段连续单镜"在后期切出【多镜头密度感】(治"信息频率太低=呆板")。
+# 通用、纯几何重构图:不重新生成、不碰商品像素、不按场景/商品写死。
+_FRAMINGS: list[tuple[float, float, float]] = [
+    (1.00, 0.5, 0.50),   # 全景(原画)
+    (0.72, 0.5, 0.40),   # 推近 · 偏上(脸/上身)
+    (0.82, 0.35, 0.50),  # 中近 · 偏左
+    (0.68, 0.5, 0.50),   # 近景 · 居中
+    (0.82, 0.66, 0.50),  # 中近 · 偏右
+    (0.64, 0.5, 0.36),   # 特写 · 偏上
+]
+
+
+def _framing_filter(i: int, w: int, h: int) -> str:
+    """第 i 个 beat 的构图滤镜:按预设循环裁切到不同景别/机位,再放回原尺寸。"""
+    z, ax, ay = _FRAMINGS[i % len(_FRAMINGS)]
+    if z >= 0.999:
+        return f"scale={w}:{h},setsar=1"
+    # crop 到 z 比例,锚点 ax/ay 决定取景区域(0=左/上,0.5=中,1=右/下)
+    return (f"crop=iw*{z}:ih*{z}:(iw-iw*{z})*{ax}:(ih-ih*{z})*{ay},"
+            f"scale={w}:{h},setsar=1")
+
+
+def punch_up(video_bytes: bytes, *, beat: float = 2.0) -> bytes:
+    """节奏快切:按 beat 切段,每段按 _FRAMINGS 循环换一个景别/机位(裁切→放回原尺寸),拼回。
+    把连续单镜切出"多镜头"密度感。总时长不变、音轨保留对齐、商品像素不变。失败/太短 → 原片。"""
     try:
         import os
         import subprocess
@@ -76,9 +99,8 @@ def punch_up(video_bytes: bytes, *, beat: float = 1.8, zoom: float = 0.72) -> by
             if len(plan) < 2:
                 return video_bytes      # 太短,不值得切
             parts = []
-            for i, (s, e, punch) in enumerate(plan):
-                crop = f"crop=iw*{zoom}:ih*{zoom}," if punch else ""
-                parts.append(f"[0:v]trim={s}:{e},setpts=PTS-STARTPTS,{crop}scale={w}:{h},setsar=1[v{i}]")
+            for i, (s, e, _punch) in enumerate(plan):
+                parts.append(f"[0:v]trim={s}:{e},setpts=PTS-STARTPTS,{_framing_filter(i, w, h)}[v{i}]")
             fc = ";".join(parts) + ";" + "".join(f"[v{i}]" for i in range(len(plan))) + \
                  f"concat=n={len(plan)}:v=1[outv]"
             maps = ["-map", "[outv]"]

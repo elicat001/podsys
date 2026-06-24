@@ -599,6 +599,18 @@ def test_video_edit_beat_plan():
     assert p2[-1][1] == 3.9 and all(e - s >= 0.6 for s, e, _ in p2)
 
 
+def test_video_edit_framing_cycle():
+    # 多景别循环(治"镜头密度太低"):相邻 beat 取不同景别/机位;第 0 段=全景(纯 scale 无 crop)。
+    from app.services.video_edit import _FRAMINGS, _framing_filter
+    f0 = _framing_filter(0, 720, 1280)
+    assert "crop" not in f0 and "scale=720:1280" in f0      # 第0段全景:无裁切
+    f1 = _framing_filter(1, 720, 1280)
+    assert "crop=" in f1                                    # 后续段:裁切到不同景别(推近/偏移)
+    # 循环覆盖多种构图(≥4 种),且按 i 循环(通用,不写死场景)
+    assert len(_FRAMINGS) >= 4
+    assert _framing_filter(len(_FRAMINGS), 720, 1280) == _framing_filter(0, 720, 1280)  # 循环
+
+
 def test_video_edit_pick_music(tmp_path):
     # 音乐床选曲:空目录/不存在 → None;有音频文件 → 挑到;非音频忽略
     from app.services.video_edit import pick_music

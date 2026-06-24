@@ -107,9 +107,10 @@ class Settings(BaseSettings):
     video_size: str = ""                   # 留空=按画幅取高分辨率(ASPECT_SIZE);填则强制(如 3840x2160 上 4K)
     video_timeout: float = 1500.0          # 轮询总超时(秒);视频远比图片慢,给 25min(4K/排队时真要这么久)
     video_poll_interval: float = 5.0
-    # 后期「节奏快切」(services/video_edit.punch_up):按 beat 切段、交替全景/推近,加短视频节奏感。
-    # 不改时长/音轨/商品像素(一致性零风险);experimental,默认关,验证调好再开。
-    video_punchup: bool = False
+    # 后期「节奏快切」(services/video_edit.punch_up):按 beat(~2s)切段、每段换景别/机位(多景别循环),
+    # 把连续单镜在后期切出【多镜头密度感】——治"信息频率太低=呆板"(GPT 判定的真瓶颈)。
+    # 不改时长/音轨/商品像素(一致性零风险);离线已验证(抽帧确认多景别)→ 默认开。
+    video_punchup: bool = True
     # 背景音乐床(services/video_edit.add_music_bed):从 backend/assets/music/ 随机挑 CC0 bgm 垫在旁白之下。
     # 默认关;开了但目录没放曲子 → 自动跳过(no-op)。音乐文件不入 git,运维投放到服务器。
     video_music: bool = False
