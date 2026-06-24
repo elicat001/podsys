@@ -650,15 +650,22 @@ def test_compose_prompt_has_physics_constraints():
         assert "保持一致" in out                    # 正向:商品图案/结构保持一致(印花保真,但不锁死形态)
 
 
-def test_compose_prompt_has_camera_language():
-    # 镜头语言(治"AI 照片活了"):要求主动手持运镜 + 节奏弧 + 反对死机位/会动的照片。通用,不按场景写死。
+def test_compose_prompt_has_human_behavior():
+    # 真人感(核心杠杆):人物行为为主导——破除"模特对镜头摆拍/全程看镜头展示",用具体生活动作。通用,不写死。
     from app.ai.video import compose_prompt
     out = compose_prompt("展示商品", language="无对白")
-    assert "镜头语言" in out and "手持" in out           # 主动镜头语言块存在
-    assert ("推近" in out or "跟拍" in out)              # 含运镜词汇库(模型按情境选)
-    assert "照片" in out                                # 负向:反对"会动的 AI 照片"/死机位
-    # 不应再有"镜头平滑克制"这类一致性优先的压制(已授权放开镜头运动)
-    assert "平滑克制" not in out
+    assert "人物行为" in out                             # 行为块为主导(最重要)
+    assert "看镜头" in out and "摆拍" in out             # 破除"全程看镜头/模特摆拍"
+    assert ("整理" in out or "转身" in out or "甩头发" in out)  # 行为词汇库(模型按情境选)
+
+
+def test_compose_prompt_camera_is_secondary_handheld():
+    # 镜头降为次要:保留基础手持运镜、反对死机位/会动的照片;不再有"平滑克制"这类压制。
+    from app.ai.video import compose_prompt
+    out = compose_prompt("展示商品", language="无对白")
+    assert "手持" in out                                # 基础手持运镜仍在
+    assert "照片" in out                                # 反对"会动的 AI 照片"
+    assert "平滑克制" not in out                         # 已放开镜头运动(不压制)
 
 
 def test_ai_generate_full_params(client, auth_headers):
