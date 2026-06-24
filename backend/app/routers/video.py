@@ -8,7 +8,7 @@ from PIL import Image
 from sqlalchemy.orm import Session
 
 from .. import storage
-from ..ai.video import ASPECT_RATIOS, CATEGORIES, DURATIONS, LANGUAGES, RESOLUTION_SHORT
+from ..ai.video import ASPECT_RATIOS, CATEGORIES, DURATIONS, LANGUAGES, MULTI_SHOT_PLAN, RESOLUTION_SHORT
 from ..auth import current_user
 from ..config import settings
 from ..db import get_db
@@ -31,8 +31,10 @@ def options(user: User = Depends(current_user)):
         "languages": LANGUAGES,
         "categories": CATEGORIES,
         "durations": DURATIONS,
-        # 双分镜 15s:5s 分镜 + 10s 分镜 两段并行生成后拼接(单段模型只支持 5/10s)。
-        "two_shot": {"plan": [5, 10], "total": 15},
+        # 多分镜 15s:N 段(MULTI_SHOT_PLAN,当前 3×5s)并行生成后拼接成动作链(单段模型只支持 5/10s)。
+        # 计费 = video × len(plan);前端据 shots 渲染分镜数、算扣点。键名沿用 two_shot(前端契约)。
+        "two_shot": {"plan": list(MULTI_SHOT_PLAN), "total": sum(MULTI_SHOT_PLAN),
+                     "shots": len(MULTI_SHOT_PLAN)},
         # smart_ready=true 表示配了作图网关 key,可用「智能识别」(看图自动写脚本)。
         "smart_ready": bool(settings.openai_api_key),
         "ai_ready": settings.video_provider != "local" and bool(settings.video_api_key),
@@ -115,10 +117,12 @@ def wizard_proposals(
 def ai_generate(
     file: UploadFile = File(...),
     file2: UploadFile | None = File(None),
-    prompt: str = Form(""),          # 视频描述/镜头脚本(由前端「视频类型」填入、可自定义编辑);双分镜时=分镜① 脚本
-    prompt2: str = Form(""),         # 分镜② 脚本(仅 seconds=15 双分镜;留空则复用 prompt)
+    prompt: str = Form(""),          # 视频描述/镜头脚本(由前端「视频类型」填入、可自定义编辑);多分镜时=分镜① 脚本
+    prompt2: str = Form(""),         # 分镜② 脚本(仅 seconds=15 多分镜;留空则复用 prompt)
+    prompt3: str = Form(""),         # 分镜③ 脚本(仅 seconds=15 三分镜;留空则复用 prompt)
     scene1: str = Form(""),          # 分镜①场景母帧描述(内容策划层):给了则每镜独立母帧(治同质化)
-    scene2: str = Form(""),          # 分镜②场景母帧描述;两者都给且开了场景首帧 → per-shot 母帧
+    scene2: str = Form(""),          # 分镜②场景母帧描述
+    scene3: str = Form(""),          # 分镜③场景母帧描述;给齐 + 开场景首帧 → per-shot 母帧(动作链)
     language: str = Form("葡萄牙语"),  # 配音/对白语言(默认葡语)
     category: str = Form("通用"),     # 商品类目(前端已不暴露,默认通用):仅用于场景首帧的场景 + 入库标题
     scene_frame: bool = Form(False),  # 两步:先 gpt-image 生成场景首帧再生视频(缓解硬切;无 key 自动跳过)
@@ -152,24 +156,27 @@ def ai_generate(
         category = "通用"
     if seconds not in DURATIONS:
         seconds = 10
-    two_shot = seconds == 15          # 15s = 双分镜:拆 5s(分镜①)+10s(分镜②)两段并行生成后拼接
-    # 计费:双分镜 = 两段算力(5s+10s),价格翻倍。charge_for 依赖已扣 1 笔 video;再扣 1 笔 = 共 2 笔。
-    # 第二笔余额不足 → 退回第一笔 + 402。n = 退点笔数(翻倍时=2),贯穿所有退点路径:
-    #   入队失败 / 配额超(submit_celery 的 n)、worker 失败(TOOL_WORKS n_field="n")、卡死回收(reap 读 params["n"])。
+    two_shot = seconds == 15          # 15s = 多分镜:拆 N 段(MULTI_SHOT_PLAN,当前 3×5s)并行生成后拼接
+    # 计费:多分镜 = N 段算力,扣 video×N。charge_for 依赖已扣 1 笔;这里再补扣 N-1 笔 = 共 N 笔。
+    # 任一笔余额不足 → 退回【已扣的全部】+ 402。n = 退点笔数(=N),贯穿所有退点路径:
+    #   入队失败/配额超(submit_celery 的 n)、worker 失败(TOOL_WORKS n_field="n")、卡死回收(reap 读 params["n"])。
     n = 1
     if two_shot:
-        try:
-            charge(db, user, "video")
-        except InsufficientCredits as exc:
-            refund(db, user, "video")
-            raise HTTPException(status_code=402, detail=str(exc)) from exc
-        n = 2
+        n = len(MULTI_SHOT_PLAN)      # N(当前 3);改 MULTI_SHOT_PLAN 段数 → 计费自动跟随,不写死
+        charged = 1                   # charge_for 依赖已扣的 1 笔
+        for _ in range(n - 1):        # 再补扣 N-1 笔
+            try:
+                charge(db, user, "video"); charged += 1
+            except InsufficientCredits as exc:
+                for _ in range(charged):   # 余额不足 → 退回已扣的全部 N' 笔
+                    refund(db, user, "video")
+                raise HTTPException(status_code=402, detail=str(exc)) from exc
     return submit_celery(
         run_tool, db, user, kind="aivideo", tool_id="videogen", op="video",
         raw=img1, mask_raw=img2, n=n,
-        params={"prompt": prompt[:2000], "prompt2": prompt2[:2000],
-                "scene1": scene1[:500], "scene2": scene2[:500], "two_shot": two_shot, "n": n,
-                "language": language[:20],
+        params={"prompt": prompt[:2000], "prompt2": prompt2[:2000], "prompt3": prompt3[:2000],
+                "scene1": scene1[:500], "scene2": scene2[:500], "scene3": scene3[:500],
+                "two_shot": two_shot, "n": n, "language": language[:20],
                 "category": category, "scene_frame": bool(scene_frame), "subtitle": bool(subtitle),
                 "native_sound": bool(native_sound), "voiceover": bool(voiceover),
                 "aspect": aspect, "resolution": resolution, "seconds": seconds, "frames2": bool(img2)},

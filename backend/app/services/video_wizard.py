@@ -89,21 +89,23 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
     two_shot = seconds == 15
     if two_shot:
         time_rule = (
-            "本视频为【双分镜 · 共 15 秒】= 分镜①(0-5 秒)+ 分镜②(5-15 秒),两拍要连成一个【生活小故事/事件】:"
-            "分镜①铺垫(准备/起手),分镜②payoff(出门/落座/展示)。"
-            "关键:商品是这段真实生活里【自然出现/穿着的道具】,不是被摆拍展示的主角;"
-            "两拍必须是【两个明显不同的场景/地点】,绝不要两拍都在同一地方做同一件事。\n"
-            "请【完全围绕上面这件具体商品及其卖点/受众/投放市场】原创故事线与两拍场景,"
-            "贴合商品真实使用情境(穿戴类→上身/出街,家居/杯具→居家使用,配件→随身日常…),不要套用任何固定模板套路。"
+            "本视频为【三分镜 · 共 15 秒】= 分镜①(0-5s)+ 分镜②(5-10s)+ 分镜③(10-15s),"
+            "三拍要连成一条【连续的动作链 / 小事件】,有因果:"
+            "① 起因(做某事时触发,如 看手机收到消息 / 早晨准备)→ ② 过渡动作(起身拿东西、走向门口、推门)→ "
+            "③ payoff(到了另一个场景:街上 / 咖啡店 / 目的地)。\n"
+            "关键:动作要【连续因果】——后一拍自然承接前一拍的动作(让大脑能补全),不是三个互不相关的摆拍片段;"
+            "商品是这条生活动作链里【自然穿着/使用的道具】,不是被展示的主角;三拍是【三个递进的场景/时刻】(如 卧室→玄关→街头)。\n"
+            "请完全围绕上面这件具体商品及其卖点/受众原创动作链与场景,贴合商品真实使用情境,不要套用任何固定模板套路。"
         )
         shot_fields = (
-            '"story":"一句话故事线(如 出门前镜子前确认穿搭→走上街头展示)",'
-            '"scene1":"分镜①的【场景母帧】:商品自然出现在什么真实生活场景里(给 AI 合成视频第一帧用,只描述场景+人物状态,别写运镜)",'
-            '"shot1":"分镜①镜头脚本(约 5 秒,按【0-x秒】分时间轴):每段都要写清【镜头怎么动】'
-            '(手持随手拍感 + 推近/拉远/跟拍/转头/换手/角度切换里选合适的)+ 人物动作;开头先用一个吸睛运镜抓人)",'
-            '"scene2":"分镜②的【场景母帧】:换一个与 scene1 明显不同地点的真实生活场景",'
-            '"shot2":"分镜②镜头脚本(约 10 秒,按【0-x秒】分时间轴):同样写清运镜+动作,承接分镜①、推进故事、结尾自然收)",'
-            '"storyboard":"两拍合并的完整脚本(仅供预览)"'
+            '"story":"一句话故事线/动作链(如 收到朋友消息→拿钥匙出门→走在街头赴约)",'
+            '"scene1":"分镜①场景母帧:动作链【起因】发生在什么真实场景(只描述场景+人物状态,别写运镜)",'
+            '"shot1":"分镜①镜头脚本(约5秒,按【0-x秒】轴):起因动作(如 看手机发现消息),手持随手拍",'
+            '"scene2":"分镜②场景母帧:承接①的【过渡】场景(如 玄关/门口)",'
+            '"shot2":"分镜②镜头脚本(约5秒):过渡动作,自然承接①(如 拿钥匙、推门),动作连续",'
+            '"scene3":"分镜③场景母帧:动作链【payoff】的新场景(如 街头/咖啡店)",'
+            '"shot3":"分镜③镜头脚本(约5秒):payoff动作,承接②(如 走在街上、坐下),自然收尾",'
+            '"storyboard":"三拍合并的完整脚本(仅供预览)"'
         )
     else:
         time_rule = f"视频时长 {seconds} 秒。"
@@ -131,7 +133,7 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
         "再用具体的【任务动作】把它演出来(找钥匙、拿起包、推门、走向某处、端起杯子、看手机、整理一下就出门"
         "——任务动作比「拉衣角/摆 pose/甩头发」这类模特动作更真实)。商品是这件事里自然穿用的道具。"
         "别为展示商品而僵硬摆拍;口播/种草类可自然对镜头说话。镜头次之:手持随手拍即可,不堆运镜。\n"
-        f"硬性:{n} 个方案的【故事与场景】要拉开差距;双分镜两拍必须是不同地点/场景;全部字段用中文。"
+        f"硬性:{n} 个方案的【故事与场景】要拉开差距;三分镜三拍是连续因果的动作链、且为递进的不同场景;全部字段用中文。"
     )
     data = _loads_json(_chat([{"role": "user", "content": prompt}]), expect_list=True)
     if isinstance(data, dict):                       # 容错:模型把数组裹进 {"proposals":[…]} / {"方案":[…]}
@@ -152,19 +154,22 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
         if two_shot:
             s1 = str(p.get("shot1") or p.get("分镜1") or p.get("分镜①") or "").strip()[:1500]
             s2 = str(p.get("shot2") or p.get("分镜2") or p.get("分镜②") or "").strip()[:1500]
-            # 兜底:模型没拆两段 → 用合并 storyboard 兜底,保证双分镜两段都非空(时长达标、必出两段)
+            s3 = str(p.get("shot3") or p.get("分镜3") or p.get("分镜③") or "").strip()[:1500]
+            # 兜底:模型漏拆 → 后段承接前段/storyboard,保证三拍都非空(时长达标、必出三段)
             s1 = s1 or item["storyboard"]
-            s2 = s2 or item["storyboard"]
-            item["shot1"], item["shot2"] = s1, s2
-            # 场景母帧:优先用模型(产品驱动)产出的;模型漏给 → 退到中性通用场景兜底,保证两镜非空且不同
-            # (per-shot 的前提),但不再写死具体故事(如 OOTD),避免给非服装商品套穿搭场景。
+            s2 = s2 or s1
+            s3 = s3 or s2
+            item["shot1"], item["shot2"], item["shot3"] = s1, s2, s3
+            # 场景母帧:优先用模型(产品驱动)产出的;模型漏给 → 退到中性【动作链】通用场景兜底,
+            # 保证三镜非空且递进(per-shot 前提),不写死具体故事(如 OOTD),避免给非服装商品套穿搭场景。
             from .video_templates import default_scenes
-            d1, d2 = default_scenes(category)
-            item["scene1"] = (str(p.get("scene1") or p.get("场景1") or "").strip()[:500] or d1)
-            item["scene2"] = (str(p.get("scene2") or p.get("场景2") or "").strip()[:500] or d2)
+            defs = default_scenes(category, 3)
+            item["scene1"] = (str(p.get("scene1") or p.get("场景1") or "").strip()[:500] or defs[0])
+            item["scene2"] = (str(p.get("scene2") or p.get("场景2") or "").strip()[:500] or defs[1])
+            item["scene3"] = (str(p.get("scene3") or p.get("场景3") or "").strip()[:500] or defs[2])
             item["story"] = str(p.get("story") or p.get("故事") or p.get("故事线") or "").strip()[:200]
             if not item["storyboard"]:
-                item["storyboard"] = f"【分镜①·0-5秒】{s1}\n\n【分镜②·5-15秒】{s2}"
+                item["storyboard"] = f"【分镜①·0-5s】{s1}\n\n【分镜②·5-10s】{s2}\n\n【分镜③·10-15s】{s3}"
         out.append(item)
     if not out:
         raise RuntimeError("方案解析为空")

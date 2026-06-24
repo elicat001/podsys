@@ -9,7 +9,7 @@ import { useAuth } from '../stores/auth.js'
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   image: { type: Object, default: null },        // File(商品图,必需)
-  seconds: { type: Number, default: null },       // 时长 5/10/15(15=双分镜,方案带 shot1/shot2)
+  seconds: { type: Number, default: null },       // 时长 5/10/15(15=三分镜动作链,方案带 shot1/2/3 + scene1/2/3)
   language: { type: String, default: '葡萄牙语' }, // 投放市场语言(沿用页面选择)
   sellingPoints: { type: String, default: '' },   // 页面已填的产品卖点(带入初值)
 })
@@ -102,12 +102,12 @@ async function goStep2() {
 }
 
 function choose(p) {
-  // 采用方案 = 填脚本 + 带【向导内选的声音设置】直接生成(双分镜 15s 时方案含 shot1/shot2)。
+  // 采用方案 = 填脚本 + 带【向导内选的声音设置】直接生成(三分镜 15s 时方案含 shot1/2/3 动作链)。
   // 向导自洽:声音(无声/音效/旁白+语言+字幕)在这里选,不再依赖主页 → 消除割裂。
   emit('apply', {
-    storyboard: p.storyboard, shot1: p.shot1 || '', shot2: p.shot2 || '', title: p.title,
-    scene1: p.scene1 || '', scene2: p.scene2 || '',   // 每镜独立母帧场景(内容策划层):透传给 ai-generate
-    generate: true,
+    storyboard: p.storyboard, title: p.title, generate: true,
+    shot1: p.shot1 || '', shot2: p.shot2 || '', shot3: p.shot3 || '',
+    scene1: p.scene1 || '', scene2: p.scene2 || '', scene3: p.scene3 || '',  // 每镜独立母帧场景 → ai-generate
     sound: { mode: soundMode.value, language: voLang.value, subtitle: subtitle.value },
   })
   close()
@@ -129,7 +129,7 @@ function choose(p) {
       <span class="arrow">→</span>
       <span class="sp" :class="{ on: step === 2 }">2 选择视频方案</span>
       <span class="flex" />
-      <span class="lang-note">市场语言:{{ language }} · 时长:{{ seconds || '?' }}s{{ seconds === 15 ? '(双分镜)' : '' }}</span>
+      <span class="lang-note">市场语言:{{ language }} · 时长:{{ seconds || '?' }}s{{ seconds === 15 ? '(三分镜·动作链)' : '' }}</span>
     </div>
 
     <!-- ===== Step 1:商品信息 ===== -->

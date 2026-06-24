@@ -134,7 +134,7 @@ def test_concat_gif_stitches_all_frames():
 
 
 def test_ai_generate_two_shot_concats_offline(client, auth_headers):
-    # 选 15s = 双分镜:本地兜底两段 GIF(5s+10s)并行生成 → 拼接成一段更长 GIF;作业 done、价格翻倍扣 6。
+    # 选 15s = 三分镜:本地兜底 3 段 GIF(5+5+5)并行生成 → 拼接成一段更长 GIF;作业 done、扣 video×3=9。
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     r = client.post("/api/video/ai-generate", headers=auth_headers,
                     data={"prompt": "分镜①:产品特写推近", "prompt2": "分镜②:达人出镜使用",
@@ -151,11 +151,11 @@ def test_ai_generate_two_shot_concats_offline(client, auth_headers):
     # 拼接后帧数应明显多于单段上限(5s≈60 帧 + 10s≈120 帧封顶 = 180 > 单段 120)
     from PIL import Image
     assert Image.open(io.BytesIO(got.content)).n_frames > 120
-    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 6  # 翻倍
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 9  # video×3
 
 
 def test_two_shot_generates_two_segments_and_total_seconds(client, auth_headers, monkeypatch, png):
-    # 双分镜:provider 被调两次(5s + 10s 两段并行),旁白按 15s 总时长写稿
+    # 三分镜:provider 被调 3 次(5+5+5 三段并行),旁白按 15s 总时长写稿
     from app.ai import video as video_mod
     from app.services import voiceover as vo_mod
 
@@ -181,8 +181,8 @@ def test_two_shot_generates_two_segments_and_total_seconds(client, auth_headers,
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
-    assert sorted(calls["seconds"]) == [5, 10]   # 两段:5s 分镜 + 10s 分镜
-    assert calls["vo_seconds"] == [15]           # 旁白按拼接后的 15s 总时长写稿
+    assert sorted(calls["seconds"]) == [5, 5, 5]  # 三段:5+5+5 动作链
+    assert calls["vo_seconds"] == [15]            # 旁白按拼接后的 15s 总时长写稿
 
 
 def test_two_shot_native_sound_keeps_audio_in_concat(client, auth_headers, monkeypatch, png):
@@ -215,7 +215,7 @@ def test_two_shot_native_sound_keeps_audio_in_concat(client, auth_headers, monke
 
 
 def test_two_shot_15s_failure_refunds_doubled(client, auth_headers, monkeypatch, png):
-    # 双分镜失败(provider 抛错)→ 整作业 error + 退回翻倍的 6 点(扣 6 退 6,净 0)
+    # 三分镜失败(provider 抛错)→ 整作业 error + 退回全部 9 点(扣 9 退 9=refund_n=3,净 0)
     from app.ai import video as video_mod
 
     def _boom():
@@ -231,7 +231,7 @@ def test_two_shot_15s_failure_refunds_doubled(client, auth_headers, monkeypatch,
     assert r.status_code == 200, r.text   # 入队成功(eager 下同步跑→error)
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "error", job
-    # 扣了 6(翻倍)、退了 6(refund_n=2)→ 余额回到原点
+    # 扣了 9(video×3)、退了 9(refund_n=3)→ 余额回到原点
     assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0
 
 
@@ -260,16 +260,17 @@ def test_two_shot_15s_insufficient_credits_402_refunds_first(client, auth_header
 
 
 def test_wizard_proposals_two_shot_returns_shots(monkeypatch):
-    # 双分镜(seconds=15)生成方案:每个方案含 shot1(5s)+ shot2(10s),storyboard 为合并展示
+    # 三分镜(seconds=15)生成方案:每个方案含 shot1/shot2/shot3(动作链),storyboard 为合并展示
     from app.services import video_wizard
-    fake = ('[{"title":"特写氛围","angle":"a","model":"无模特","environment":"居家",'
-            '"shot1":"【0-5秒】产品特写","shot2":"【0-10秒】达人使用并讲解卖点",'
-            '"storyboard":"合并脚本"}]')
+    fake = ('[{"title":"出门赴约","angle":"a","model":"无模特","environment":"居家",'
+            '"shot1":"【0-5秒】看手机收到消息","shot2":"【0-5秒】拿钥匙推门",'
+            '"shot3":"【0-5秒】走在街头","storyboard":"合并脚本"}]')
     monkeypatch.setattr(video_wizard, "_chat", lambda msgs: fake)
     out = video_wizard.generate_proposals("杯子", "家居", "保温", seconds=15, n=1)
-    assert out[0]["shot1"] == "【0-5秒】产品特写"
-    assert out[0]["shot2"] == "【0-10秒】达人使用并讲解卖点"
-    # 单段(10s)不产 shot1/shot2
+    assert out[0]["shot1"] == "【0-5秒】看手机收到消息"
+    assert out[0]["shot2"] == "【0-5秒】拿钥匙推门"
+    assert out[0]["shot3"] == "【0-5秒】走在街头"     # 第三拍(动作链 payoff)
+    # 单段(10s)不产 shot1/shot2/shot3
     monkeypatch.setattr(video_wizard, "_chat",
                         lambda msgs: '[{"title":"t","storyboard":"【0-10秒】展示"}]')
     out10 = video_wizard.generate_proposals("杯子", "家居", "保温", seconds=10, n=1)
@@ -338,8 +339,9 @@ def test_video_options_ai_ready_false_offline(client, auth_headers):
     assert "1080p" in body["resolutions"] and "4k" in body["resolutions"]
     assert "葡萄牙语" in body["languages"]
     assert "通用" in body["categories"] and "马克杯" in body["categories"]
-    assert 5 in body["durations"] and 10 in body["durations"] and 15 in body["durations"]  # 15=双分镜
-    assert body["two_shot"]["plan"] == [5, 10] and body["two_shot"]["total"] == 15  # 双分镜 15s
+    assert 5 in body["durations"] and 10 in body["durations"] and 15 in body["durations"]  # 15=多分镜
+    assert body["two_shot"]["plan"] == [5, 5, 5] and body["two_shot"]["total"] == 15  # 三分镜 15s
+    assert body["two_shot"]["shots"] == 3
     assert body["smart_ready"] is False   # 无 openai key → 智能识别不可用
 
 
@@ -852,14 +854,14 @@ def test_ai_generate_two_shot_per_shot_mufra(client, auth_headers, monkeypatch, 
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
-    assert len(seen) == 2                            # 每镜一张母帧(共享母帧只会调 1 次)
+    assert len(seen) == 3                            # 三镜每镜一张母帧(scene3 缺 → 后台补中性场景)
     assert any("卧室镜子前自拍" in s for s in seen)   # 分镜①母帧用了 scene1
     assert any("城市街头走路" in s for s in seen)     # 分镜②母帧用了 scene2
 
 
 def test_ai_generate_two_shot_no_scene_auto_fuses_per_shot(client, auth_headers, monkeypatch, png):
-    # 故事能力下沉后台:双分镜未给 scene1/scene2(= 手动「视频类型」路径)+ key + 场景首帧
-    # → 后台自动融合中性两拍场景 → gpt-image edit 调 2 次、两镜场景不同(自动 per-shot 母帧)
+    # 故事能力下沉后台:三分镜未给 scene(= 手动「视频类型」路径)+ key + 场景首帧
+    # → 后台自动融合中性动作链 3 拍场景 → gpt-image edit 调 3 次、各镜场景不同(自动 per-shot 母帧)
     from PIL import Image as _Img
 
     from app.ai import openai_image
@@ -879,9 +881,9 @@ def test_ai_generate_two_shot_no_scene_auto_fuses_per_shot(client, auth_headers,
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
-    assert len(seen) == 2                              # 后台自动融合 → 每镜一张母帧
-    d1, d2 = default_scenes("通用")
-    assert any(d1 in s for s in seen) and any(d2 in s for s in seen)  # 用了后台中性两拍场景
+    assert len(seen) == 3                              # 后台自动融合 → 三镜各一张母帧
+    d = default_scenes("通用", 3)
+    assert all(any(d[i] in s for s in seen) for i in range(3))  # 用了后台中性 3 拍动作链场景
 
 
 def test_ai_generate_single_shot_shared_mufra(client, auth_headers, monkeypatch, png):
@@ -930,21 +932,23 @@ def test_ai_generate_records_warning_when_scene_frame_fails(client, auth_headers
 def test_wizard_proposals_two_shot_adds_scenes(monkeypatch):
     # 模型给了 scene1/scene2/story → 透传进方案(喂 per-shot 母帧)
     from app.services import video_wizard
-    fake = ('[{"title":"出门","story":"出门穿搭","model":"无","environment":"街头",'
-            '"scene1":"卧室镜子前","shot1":"【0-5秒】自拍",'
-            '"scene2":"城市街头","shot2":"【0-10秒】街拍","storyboard":"合并"}]')
+    fake = ('[{"title":"出门","story":"出门赴约","model":"无","environment":"街头",'
+            '"scene1":"卧室镜子前","shot1":"【0-5秒】看手机",'
+            '"scene2":"玄关门口","shot2":"【0-5秒】拿钥匙推门",'
+            '"scene3":"城市街头","shot3":"【0-5秒】走在街上","storyboard":"合并"}]')
     monkeypatch.setattr(video_wizard, "_chat", lambda msgs: fake)
     out = video_wizard.generate_proposals("T恤", "年轻人", "潮", seconds=15, n=1, category="T恤")
-    assert out[0]["scene1"] == "卧室镜子前" and out[0]["scene2"] == "城市街头"
-    assert out[0]["story"] == "出门穿搭"
+    assert out[0]["scene1"] == "卧室镜子前" and out[0]["scene2"] == "玄关门口" and out[0]["scene3"] == "城市街头"
+    assert out[0]["story"] == "出门赴约"
 
 
 def test_wizard_proposals_two_shot_scene_fallback(monkeypatch):
-    # 模型没给 scene1/scene2 → 退到中性通用场景兜底(不再写死 OOTD),保证两镜非空且不同(per-shot 前提)
+    # 模型没给 scene → 退到中性【动作链】通用场景兜底(不写死 OOTD),保证三镜非空且递进(per-shot 前提)
     from app.services import video_wizard
     from app.services.video_templates import default_scenes
     monkeypatch.setattr(video_wizard, "_chat",
                         lambda msgs: '[{"title":"t","shot1":"a","shot2":"b","storyboard":"s"}]')
     out = video_wizard.generate_proposals("T恤", "", "", seconds=15, n=1, category="T恤")
-    assert out[0]["scene1"] and out[0]["scene2"] and out[0]["scene1"] != out[0]["scene2"]
-    assert (out[0]["scene1"], out[0]["scene2"]) == default_scenes("T恤")   # 中性通用兜底
+    d = default_scenes("T恤", 3)
+    assert out[0]["scene1"] == d[0] and out[0]["scene2"] == d[1] and out[0]["scene3"] == d[2]
+    assert len({d[0], d[1], d[2]}) == 3                   # 三拍场景各不相同(递进)

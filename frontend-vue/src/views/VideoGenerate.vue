@@ -30,7 +30,7 @@ const wizardOpen = ref(false)   // 智能方案向导弹窗
 const DURATIONS = [
   { id: 5, label: '5 秒', hint: '快' },
   { id: 10, label: '10 秒', hint: '完整' },
-  { id: 15, label: '15 秒', hint: '双分镜·翻倍' },
+  { id: 15, label: '15 秒', hint: '三分镜·×3' },
 ]
 
 // 每类型都有 5s / 10s 两套「镜头脚本」(分时间轴);选时长后填对应的那套。类目动作/地区风格/负向词后端追加。
@@ -56,11 +56,13 @@ const TYPES = [
 ]
 const selType = ref('')
 const prompt = ref('')
-const prompt2 = ref('')         // 分镜② 脚本(仅 15s 双分镜;留空则复用分镜①)
+const prompt2 = ref('')         // 分镜② 脚本(仅 15s 三分镜;留空则复用分镜①)
+const prompt3 = ref('')         // 分镜③ 脚本(仅 15s 三分镜;留空则复用上一镜)
 // 分镜场景母帧(per-shot):只由智能向导(AI 产品驱动)填;手动视频类型留空 → 后台按类目自动融合(仅有 key 时)
 const scene1 = ref('')
 const scene2 = ref('')
-const isTwoShot = computed(() => seconds.value === 15)   // 选 15s = 双分镜(5s+10s 拼接,价格翻倍)
+const scene3 = ref('')
+const isTwoShot = computed(() => seconds.value === 15)   // 选 15s = 三分镜(5+5+5 动作链拼接,扣 video×3)
 
 const ASPECTS = [
   { id: 'portrait', label: '9:16', hint: '竖屏·带货' },
@@ -98,12 +100,13 @@ function clearSlot(slot) {
 }
 
 // 填视频类型脚本:取该时长的 t5/t10(custom 留空给用户自写)。手动类型不带 per-shot 场景:
-// 清空 scene1/scene2 → two_shot 时后台按类目自动融合故事场景(仅有 key 时生效)。
+// 清空 scene1/2/3 → two_shot 时后台按类目自动融合动作链场景(仅有 key 时生效)。
 function applyTemplate(t) {
-  scene1.value = ''; scene2.value = ''
-  if (seconds.value === 15) {          // 双分镜:分镜①=该类型 5s 脚本、分镜②=10s 脚本
+  scene1.value = ''; scene2.value = ''; scene3.value = ''
+  if (seconds.value === 15) {          // 三分镜:①=该类型 5s 脚本、②=10s 脚本、③留空(向导/用户填动作链 payoff)
     prompt.value = t.t5
     prompt2.value = t.t10
+    prompt3.value = ''
   } else {
     prompt.value = seconds.value === 5 ? t.t5 : t.t10
   }
@@ -125,15 +128,17 @@ function openWizard() {
   if (!smartReady.value) return ElMessage.warning('未配置作图 AI key,「智能方案」暂不可用')
   wizardOpen.value = true
 }
-function onWizardApply({ storyboard, shot1, shot2, scene1: s1, scene2: s2, generate, sound }) {
-  if (seconds.value === 15) {          // 双分镜:把两段分镜脚本分别填进 分镜①/分镜②
+function onWizardApply({ storyboard, shot1, shot2, shot3, scene1: s1, scene2: s2, scene3: s3, generate, sound }) {
+  if (seconds.value === 15) {          // 三分镜:把三段分镜脚本分别填进 分镜①/②/③(动作链)
     prompt.value = shot1 || storyboard || ''
     prompt2.value = shot2 || ''
-    scene1.value = s1 || ''            // 每镜独立母帧场景:有则后端每镜各生成一张母帧(治同质化)
+    prompt3.value = shot3 || ''
+    scene1.value = s1 || ''            // 每镜独立母帧场景:后端每镜各生成一张母帧(动作链 per-shot)
     scene2.value = s2 || ''
+    scene3.value = s3 || ''
   } else {
     prompt.value = storyboard
-    scene1.value = ''; scene2.value = ''
+    scene1.value = ''; scene2.value = ''; scene3.value = ''
   }
   selType.value = 'smart'
   // 把向导里选的声音设置同步到主页(UI 也随之更新),让"采用即生成"用的是向导的选择,而非主页旧值 → 消除割裂
@@ -158,10 +163,12 @@ async function run() {
     fd.append('file', img1.value)
     if (img2.value) fd.append('file2', img2.value)
     fd.append('prompt', prompt.value)
-    if (isTwoShot.value) {                                      // 双分镜由 seconds=15 触发,后端自行判定 two_shot
+    if (isTwoShot.value) {                                      // 三分镜由 seconds=15 触发,后端自行判定 two_shot
       fd.append('prompt2', prompt2.value)
+      fd.append('prompt3', prompt3.value)
       fd.append('scene1', scene1.value)                        // per-shot 场景:仅向导填;手动类型留空 → 后台自动融合
       fd.append('scene2', scene2.value)
+      fd.append('scene3', scene3.value)
     }
     fd.append('language', language.value)
     fd.append('scene_frame', sceneFrame.value ? 'true' : 'false')
@@ -252,11 +259,16 @@ onMounted(async () => {
             placeholder="先选时长和视频类型,这里会填入镜头脚本;也可点「✨智能识别」让 AI 看图写,或自己改写"></textarea>
         </div>
         <div v-if="isTwoShot" class="field">
-          <span class="flabel">分镜② 脚本 · 5–15 秒 <span class="opt">第二个镜头;留空则复用分镜①</span></span>
+          <span class="flabel">分镜② 脚本 · 5–10 秒 <span class="opt">承接①的过渡动作(动作链);留空则复用①</span></span>
           <textarea v-model="prompt2" class="inp desc-ta" maxlength="2000"
-            placeholder="写第二个镜头,如:达人出镜手持产品讲解卖点、展示使用效果与氛围…"></textarea>
+            placeholder="承接分镜①的连续动作,如:起身拿钥匙、走向门口、推门…"></textarea>
         </div>
-        <div v-if="isTwoShot" class="two-shot-note">🎞️ 双分镜:5 秒(分镜①)+ 10 秒(分镜②)两段并行生成后拼接为 15 秒,算力翻倍 → <b>扣 6 点</b></div>
+        <div v-if="isTwoShot" class="field">
+          <span class="flabel">分镜③ 脚本 · 10–15 秒 <span class="opt">承接②的收尾(payoff);留空则复用②</span></span>
+          <textarea v-model="prompt3" class="inp desc-ta" maxlength="2000"
+            placeholder="承接分镜②、动作链收尾,如:走在街头、坐进咖啡店…"></textarea>
+        </div>
+        <div v-if="isTwoShot" class="two-shot-note">🎞️ 三分镜动作链:5+5+5 秒三段并行生成后拼接为 15 秒(镜头多+动作连续,更像 TikTok),算力 ×3 → <b>扣 9 点</b></div>
 
         <div class="row">
           <div class="field">
@@ -299,7 +311,7 @@ onMounted(async () => {
         </div>
 
         <button class="btn-primary run" :disabled="submitting || !img1 || !seconds" @click="run">
-          {{ submitting ? '提交中…' : (isTwoShot ? '生成双分镜视频(15 秒)· 扣 6 点' : '生成视频 · 扣 3 点') }}
+          {{ submitting ? '提交中…' : (isTwoShot ? '生成三分镜视频(15 秒)· 扣 9 点' : '生成视频 · 扣 3 点') }}
         </button>
         <div v-if="submitted" class="submitted">
           ✅ 已提交,后台生成中。去 <router-link to="/app/space?sub=video" class="lnk">任务中心 → 视频</router-link> 查看进度与结果

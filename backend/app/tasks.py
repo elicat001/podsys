@@ -446,22 +446,23 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     # 无 key / 失败 → 优雅降级,直接用原图首帧(不阻断)。
     lang = p.get("language", "葡萄牙语")
     use_scene = bool(p.get("scene_frame") and settings.openai_api_key)
-    # 内容策划层(per-shot 母帧):双分镜给了 scene1/scene2 → 每镜各生成一张【独立场景母帧】。
-    # A/B 实证:换母帧=换内容(卧室→街头),治"同一个镜头重复"。没给场景 → 回退原行为(共享母帧)。
-    scene1 = (p.get("scene1") or "").strip()
-    scene2 = (p.get("scene2") or "").strip()
-    # 故事能力下沉后台(自动融合):双分镜 + 有 key 但未显式给场景(= 手动「视频类型」路径)→ 按类目从
-    # 故事模板库自动补两拍场景母帧,让手动路径也自动获得 per-shot(镜头间真换场景)。仅 use_scene(有 key)
-    # 时才补;无 key 不补 → 回退共享/原图首帧(符合"per-shot 仅有 key 可用")。向导路径已带 AI 场景,不进这里。
-    if p.get("two_shot") and use_scene and (not scene1 or not scene2):
+    # 内容策划层(per-shot 母帧 + 动作链):多分镜每镜各自脚本(prompt/prompt2/prompt3…)+ 各自场景母帧
+    # (scene1/scene2/scene3…)→ 镜头间真换场景、动作连续。段数由 MULTI_SHOT_PLAN 决定(当前 3×5s),不写死。
+    from .ai.video import MULTI_SHOT_PLAN
+    n_shots = len(MULTI_SHOT_PLAN)
+    scenes = [(p.get(f"scene{i + 1}") or "").strip() for i in range(n_shots)]
+    prompts = [p.get("prompt" if i == 0 else f"prompt{i + 1}", "") for i in range(n_shots)]
+    # 故事能力下沉后台(自动融合):多分镜 + 有 key 但未给场景(= 手动「视频类型」路径)→ 按类目补中性
+    # 【动作链】场景,让手动路径也走 per-shot。仅 use_scene(有 key)时补;无 key 不补 → 回退共享/原图首帧。
+    # 向导路径已带 AI 场景,不进这里。
+    if p.get("two_shot") and use_scene and any(not s for s in scenes):
         try:
             from .services.video_templates import default_scenes
-            d1, d2 = default_scenes(cat)
-            scene1 = scene1 or d1
-            scene2 = scene2 or d2
+            defaults = default_scenes(cat, n_shots)
+            scenes = [scenes[i] or (defaults[i] if i < len(defaults) else "") for i in range(n_shots)]
         except Exception:  # noqa: BLE001 — 模板兜底失败不阻断,退回共享母帧
             pass
-    per_shot_frames = bool(p.get("two_shot") and use_scene and scene1 and scene2)
+    per_shot_frames = bool(p.get("two_shot") and use_scene and all(scenes))
 
     warnings: list[str] = []   # 显式记录"静默降级"(母帧/配音失败),写进 Job 结果让用户看见,不再无声吞掉
 
@@ -474,7 +475,7 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
                                               size=gptimage_size(aspect))
             return fit_to_aspect(framed, tw, th)
         except Exception as exc:  # noqa: BLE001 — 母帧失败不阻断视频作业,但要让用户看见降级
-            if not any(w.startswith("场景母帧") for w in warnings):   # 去重(per-shot 会调 2 次)
+            if not any(w.startswith("场景母帧") for w in warnings):   # 去重(per-shot 每段各调一次)
                 warnings.append(
                     "场景母帧生成失败,已退回原始平铺商品图作首帧——成片的立体感/物理真实度会明显变差"
                     "(衣物可能像砖块般僵硬)。常见原因:作图 AI(gpt-image)未配置 key 或账户余额不足。"
@@ -489,33 +490,33 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     native_sound = bool(p.get("native_sound", False))
     # 提示词工程:镜头脚本 + 地区风格(随语言)+ 语言 + 一致性/防拉伸 + 负向(动作交给用户脚本,不按类目追加)
     if p.get("two_shot"):
-        # 双分镜 15s:单段模型最多 10s,故拆「分镜1=5s + 分镜2=10s」两段【并行】生成,再首尾拼接=15s。
-        # 每镜各自脚本 + 各自场景母帧 → 镜头之间真正换场景(内容感),而非同一画面重复。
+        # 多分镜 15s:单段模型最多 10s,故拆 N 段(当前 3×5s)【并行】生成,再首尾拼接=15s。
+        # 每镜各自脚本 + 各自场景母帧 → 镜头间真换场景、动作连续(动作链),而非同一画面重复。
         from .services.video_concat import concat_videos
         prov = get_video_provider()
-        if per_shot_frames:                  # 每镜独立母帧(失败的那镜降级回共享 imgs)
-            f1, f2 = _scene_frame(scene1), _scene_frame(scene2)
-            imgs1 = [f1] if f1 is not None else imgs
-            imgs2 = [f2] if f2 is not None else imgs
-        else:
-            imgs1 = imgs2 = imgs
-        plan = [
-            (imgs1, compose_prompt(p.get("prompt", ""), language=lang), 5),                 # 分镜1
-            (imgs2, compose_prompt(p.get("prompt2") or p.get("prompt", ""), language=lang), 10),  # 分镜2
-        ]
+        seg_imgs: list[list] = []
+        for i in range(n_shots):
+            if per_shot_frames:              # 每镜独立母帧(失败的那镜降级回共享 imgs)
+                fr = _scene_frame(scenes[i])
+                seg_imgs.append([fr] if fr is not None else imgs)
+            else:
+                seg_imgs.append(imgs)
+        plan = [(seg_imgs[i], compose_prompt(prompts[i] or prompts[0], language=lang), MULTI_SHOT_PLAN[i])
+                for i in range(n_shots)]
 
         def _seg(item: tuple) -> dict:
             shot_imgs, sp, sec = item
             return prov.image_to_video(shot_imgs, sp, size=size, seconds=sec, with_audio=native_sound)
 
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            segs = list(ex.map(_seg, plan))   # 保序 [5s 段, 10s 段];任一段抛错 → 整作业 error + 退点
+        with ThreadPoolExecutor(max_workers=n_shots) as ex:
+            segs = list(ex.map(_seg, plan))   # 保序;任一段抛错 → 整作业 error + 退点
         ext0 = segs[0].get("ext", "mp4")
-        # 选了「视频音效」(native_sound)→ 两段带原生音轨,拼接保留;默认无声/旁白则拼接丢音轨(旁白后叠)
+        # 选了「视频音效」(native_sound)→ 各段带原生音轨,拼接保留;默认无声/旁白则拼接丢音轨(旁白后叠)
         merged = concat_videos([s["bytes"] for s in segs], ext0, keep_audio=native_sound)
         out = {"bytes": merged, "ext": ext0,
-               "meta": {**segs[-1].get("meta", {}), "two_shot": True, "shots": 2, "shot_seconds": [5, 10]}}
-        total_seconds = 15
+               "meta": {**segs[-1].get("meta", {}), "two_shot": True, "shots": n_shots,
+                        "shot_seconds": list(MULTI_SHOT_PLAN)}}
+        total_seconds = sum(MULTI_SHOT_PLAN)
     else:
         prompt = compose_prompt(p.get("prompt", ""), language=lang)
         out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"),

@@ -153,7 +153,7 @@ const paramRows = computed(() => {
   const job = paramsJob.value; if (!job) return []
   const p = job.params || {}; const r = job.result || {}; const rows = []
   if (job.kind === 'aivideo') {
-    rows.push(['时长', p.two_shot ? '15 秒(双分镜:分镜① 5s + 分镜② 10s)' : `${p.seconds || '-'} 秒`])
+    rows.push(['时长', p.two_shot ? '15 秒(三分镜动作链:5+5+5s)' : `${p.seconds || '-'} 秒`])
     rows.push(['画幅', ASPECT_LABEL[p.aspect] || p.aspect || '-'])
     rows.push(['清晰度', RES_LABEL[p.resolution] || p.resolution || '-'])
     rows.push(['声音', p.native_sound ? '视频音效(AI 原生)' : (p.voiceover ? `真人旁白${p.subtitle ? ' + 字幕' : ''}` : '无声')])
@@ -168,11 +168,12 @@ const paramRows = computed(() => {
   }
   return rows
 })
-// 脚本(仅视频):双分镜分镜①/② 或单段描述
+// 脚本(仅视频):三分镜分镜①/②/③ 或单段描述
 const paramScripts = computed(() => {
   const job = paramsJob.value; if (!job || job.kind !== 'aivideo') return []
   const p = job.params || {}
-  if (p.two_shot) return [['分镜① · 0–5s', p.prompt || '(空)'], ['分镜② · 5–15s', p.prompt2 || '(空)']]
+  if (p.two_shot) return [['分镜① · 0–5s', p.prompt || '(空)'], ['分镜② · 5–10s', p.prompt2 || '(空)'],
+                          ['分镜③ · 10–15s', p.prompt3 || '(空)']]
   return p.prompt ? [['视频描述', p.prompt]] : []
 })
 
