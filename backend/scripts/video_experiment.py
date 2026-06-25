@@ -7,7 +7,7 @@ r"""批量视频生成实验脚手架(工程指标优先,不看 CTR/转化)。
   # 先用 local provider 验证框架(快、免费;success 恒 100% 只为验证脚手架通路):
   $env:POD_VIDEO_PROVIDER="local"; .\.venv\Scripts\python.exe scripts\video_experiment.py --images data\uploads --limit 3
   # 真实良品率(需配 cogvideox+gpt-image key,慢、耗额度,建议小批量起步):
-  .\.venv\Scripts\python.exe scripts\video_experiment.py --images <SKU图目录> --structures universal,single_frame,multi_ootd --repeat 1
+  .\.venv\Scripts\python.exe scripts\video_experiment.py --images <SKU图目录> --structures tier1,tier2,tier3 --repeat 1
 
 输出:终端工程指标看板(每结构一行)+ data/experiments/report_*.json 明细。
 第一版只测工程指标:success_rate / clean_rate / human_fix_rate / avg_time / avg_cost。
@@ -29,22 +29,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 COST_PER_SEGMENT = 3   # video op = 3 点/段;成本 = 段数 × 3(单镜=3,三分镜=9)
 
-# 结构预设:把"视频结构"参数化成一组 ai-generate 参数。新增结构=加一条,不改引擎。
-# 关键:universal = 产品前置(template=universal)+ 单镜 + 不依赖 gpt-image 母帧 → 翻车面最小、任意 SKU 通用。
+# 结构预设 = 三层出片体系 = 三个 A/B 变体(与生产 tier 一一对应)。把"视频结构"参数化成一组 _work_aivideo 入参。
+# 新增结构=加一条,不改引擎。第一版判断标准是工程指标(成功率/成本/翻车);转化(CTR/CVR)需真实投放数据。
+#   tier1 = L1 通用产品片 / 变体A(商品前置):template=universal + 单镜 + 无母帧 → 翻车面最小、最便宜。
+#   tier2 = L2 种草结果片 / 变体B(结果前置):template=result + 单镜 + 结果母帧(卖"拥有后的样子"、商品是主角)。
+#   tier3 = L3 Hero·真人 / 变体C(商品随附):creative + 三分镜动作链 + per-shot 母帧(最复杂、最贵、历史翻车最多)。
 STRUCTURES: dict[str, dict] = {
-    # 工业化默认主力:商品为主角、近乎无人、单镜、无 gpt-image 母帧(绕开 #1 翻车源:母帧超时)
-    "universal": {
+    "tier1": {   # L1 / 变体A:商品为主角、近乎无人、单镜、无母帧(绕开 #1 翻车源:母帧超时)
         "template": "universal", "two_shot": False, "n": 1, "seconds": 10,
         "scene_frame": False, "prompt": "", "category": "通用",
     },
-    # 对照:单镜 + 开启 gpt-image 场景母帧(测母帧那一步的良品率/耗时)
-    "single_frame": {
-        "two_shot": False, "n": 1, "seconds": 10,
-        "scene_frame": True, "prompt": "商品自然出现在真实使用场景里,镜头缓缓推近展示", "category": "通用",
+    "tier2": {   # L2 / 变体B:结果前置(种草)+ 单镜 + 结果母帧
+        "template": "result", "two_shot": False, "n": 1, "seconds": 10,
+        "scene_frame": True, "prompt": "", "category": "T恤",
     },
-    # 对照:三分镜 OOTD/动作链(最复杂、最贵、历史翻车最多——验证它确实工业化最差)
-    "multi_ootd": {
-        "two_shot": True, "n": 3, "seconds": 15, "scene_frame": True,
+    "tier3": {   # L3 Hero:三分镜 OOTD/动作链 + per-shot 母帧(最贵、最易翻车——验证它工业化最差)
+        "template": "creative", "two_shot": True, "n": 3, "seconds": 15, "scene_frame": True,
         "prompt": "0-5秒:在家看手机", "prompt2": "0-5秒:玄关拿钥匙推门", "prompt3": "0-5秒:走在街头",
         "scene1": "", "scene2": "", "scene3": "", "category": "通用",
     },

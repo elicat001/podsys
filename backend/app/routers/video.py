@@ -8,7 +8,7 @@ from PIL import Image
 from sqlalchemy.orm import Session
 
 from .. import storage
-from ..ai.video import ASPECT_RATIOS, CATEGORIES, DURATIONS, LANGUAGES, MULTI_SHOT_PLAN, RESOLUTION_SHORT
+from ..ai.video import ASPECT_RATIOS, CATEGORIES, DURATIONS, LANGUAGES, MULTI_SHOT_PLAN, RESOLUTION_SHORT, TIERS
 from ..auth import current_user
 from ..config import settings
 from ..db import get_db
@@ -31,6 +31,8 @@ def options(user: User = Depends(current_user)):
         "languages": LANGUAGES,
         "categories": CATEGORIES,
         "durations": DURATIONS,
+        # 三层出片体系(L5 商业系统视角):默认 L1=通用产品片(最稳)。前端据此渲染「出片模式」。
+        "tiers": TIERS,
         # 多分镜 15s:N 段(MULTI_SHOT_PLAN,当前 3×5s)并行生成后拼接成动作链(单段模型只支持 5/10s)。
         # 计费 = video × len(plan);前端据 shots 渲染分镜数、算扣点。键名沿用 two_shot(前端契约)。
         "two_shot": {"plan": list(MULTI_SHOT_PLAN), "total": sum(MULTI_SHOT_PLAN),
@@ -124,7 +126,8 @@ def ai_generate(
     scene2: str = Form(""),          # 分镜②场景母帧描述
     scene3: str = Form(""),          # 分镜③场景母帧描述;给齐 + 开场景首帧 → per-shot 母帧(动作链)
     language: str = Form("葡萄牙语"),  # 配音/对白语言(默认葡语)
-    category: str = Form("通用"),     # 商品类目(前端已不暴露,默认通用):仅用于场景首帧的场景 + 入库标题
+    category: str = Form("通用"),     # 商品类目:L2 品类模板用它选使用场景母帧;也用作入库标题
+    tier: int = Form(1),              # 出片模式(三层体系):1=通用产品片(默认最稳)/ 2=品类模板 / 3=Hero真人
     scene_frame: bool = Form(False),  # 两步:先 gpt-image 生成场景首帧再生视频(缓解硬切;无 key 自动跳过)
     aspect: str = Form("portrait"),
     resolution: str = Form("1080p"),
@@ -156,7 +159,24 @@ def ai_generate(
         category = "通用"
     if seconds not in DURATIONS:
         seconds = 10
-    two_shot = seconds == 15          # 15s = 多分镜:拆 N 段(MULTI_SHOT_PLAN,当前 3×5s)并行生成后拼接
+    # ── 三层出片体系 = 三个 A/B 变体(默认 L1 最稳):tier 决定提示词模板 / 是否母帧 / 是否多分镜 ──────────
+    # 后端是权威:L1/L2 强制单镜、按 tier 决定母帧(忽略前端传的 scene_frame/15s),保证「默认即最稳」。
+    #   L1 通用产品片(默认/变体A·商品前置):产品前置 + 无母帧 + 单镜 → 翻车面最小、成本最低(绕开母帧链)。
+    #   L2 种草结果片(变体B·结果前置):单镜 + 结果母帧(把商品放进"想拥有的样子"、商品是清晰主角,失败降级回原图)。
+    #   L3 Hero·真人(变体C·商品随附):人物行为 + 可三分镜(15s 动作链)+ 智能向导 → 上限最高、成功率最低。
+    # ⚠ 哪个变体转化更高【没有业绩数据无法断言】→ 三层即 A/B 投放底座,让真实留存/转化裁决,不靠拍脑袋。
+    if tier not in (1, 2, 3):
+        tier = 1
+    if tier == 3:
+        template = "creative"           # → compose_prompt(人物行为路径)
+        two_shot = seconds == 15        # 仅 Hero 才拆三分镜动作链(MULTI_SHOT_PLAN,当前 3×5s)
+        use_scene = bool(scene_frame)   # 向导/手动按需(per-shot 或共享母帧)
+    else:
+        template = "result" if tier == 2 else "universal"   # L2→结果前置(种草) / L1→产品前置
+        two_shot = False                # L1/L2 恒单镜(单镜=翻车面最小)
+        if seconds == 15:
+            seconds = 10                # 单镜模型最长 10s,选了 15s 自动落到 10s
+        use_scene = tier == 2           # L2=结果母帧(卖"拥有后的样子");L1=无母帧(最稳,绕开 #1 翻车源)
     # 计费:多分镜 = N 段算力,扣 video×N。charge_for 依赖已扣 1 笔;这里再补扣 N-1 笔 = 共 N 笔。
     # 任一笔余额不足 → 退回【已扣的全部】+ 402。n = 退点笔数(=N),贯穿所有退点路径:
     #   入队失败/配额超(submit_celery 的 n)、worker 失败(TOOL_WORKS n_field="n")、卡死回收(reap 读 params["n"])。
@@ -177,7 +197,8 @@ def ai_generate(
         params={"prompt": prompt[:2000], "prompt2": prompt2[:2000], "prompt3": prompt3[:2000],
                 "scene1": scene1[:500], "scene2": scene2[:500], "scene3": scene3[:500],
                 "two_shot": two_shot, "n": n, "language": language[:20],
-                "category": category, "scene_frame": bool(scene_frame), "subtitle": bool(subtitle),
+                "tier": tier, "template": template,   # tier=出片层级;template=universal(产品前置)/creative(人物行为)
+                "category": category, "scene_frame": use_scene, "subtitle": bool(subtitle),
                 "native_sound": bool(native_sound), "voiceover": bool(voiceover),
                 "aspect": aspect, "resolution": resolution, "seconds": seconds, "frames2": bool(img2)},
     )

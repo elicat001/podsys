@@ -138,7 +138,7 @@ def test_ai_generate_two_shot_concats_offline(client, auth_headers):
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     r = client.post("/api/video/ai-generate", headers=auth_headers,
                     data={"prompt": "分镜①:产品特写推近", "prompt2": "分镜②:达人出镜使用",
-                          "seconds": "15", "aspect": "portrait"},
+                          "seconds": "15", "tier": "3", "aspect": "portrait"},   # 三分镜=Hero(L3)
                     files={"file": ("x.png", _png(), "image/png")})
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
@@ -175,7 +175,7 @@ def test_two_shot_generates_two_segments_and_total_seconds(client, auth_headers,
     monkeypatch.setattr(vo_mod, "add_voiceover", _fake_vo)
 
     r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15",
+                    data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15", "tier": "3",
                           "voiceover": "true", "language": "英语", "aspect": "portrait"},
                     files={"file": ("x.png", png(), "image/png")})
     assert r.status_code == 200, r.text
@@ -201,7 +201,7 @@ def test_two_shot_native_sound_keeps_audio_in_concat(client, auth_headers, monke
 
     def _run(extra):
         r = client.post("/api/video/ai-generate", headers=auth_headers,
-                        data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15",
+                        data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15", "tier": "3",
                               "aspect": "portrait", **extra},
                         files={"file": ("x.png", png(), "image/png")})
         assert r.status_code == 200, r.text
@@ -214,25 +214,53 @@ def test_two_shot_native_sound_keeps_audio_in_concat(client, auth_headers, monke
     assert seen["keep_audio"] is False         # 旁白 → 拼接丢音轨(后叠旁白)
 
 
-def test_two_shot_15s_failure_refunds_doubled(client, auth_headers, monkeypatch, png):
-    # 三分镜失败(provider 抛错)→ 整作业 error + 退回全部 9 点(扣 9 退 9=refund_n=3,净 0)
+def test_two_shot_15s_provider_failure_falls_back_to_gif_and_refunds(client, auth_headers, monkeypatch, png):
+    # 【保证交付】三分镜 provider 抛错/超时 → 不再整作业 error,而是降级兜底本地 GIF + 退回全部 9 点。
+    # 用户永远拿到可用结果(成片 done),且降级=不按 AI 视频原价收费(扣 9 退 9,净 0)。
     from app.ai import video as video_mod
 
     def _boom():
         class _P:
             def image_to_video(self, *a, **k):
-                raise RuntimeError("provider down")
+                raise RuntimeError("provider down")   # 模拟智谱超时/网关繁忙
         return _P()
     monkeypatch.setattr(video_mod, "get_video_provider", _boom)
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15", "aspect": "portrait"},
+                    data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15", "tier": "3",
+                          "aspect": "portrait"},
                     files={"file": ("x.png", png(), "image/png")})
-    assert r.status_code == 200, r.text   # 入队成功(eager 下同步跑→error)
+    assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
-    assert job["status"] == "error", job
-    # 扣了 9(video×3)、退了 9(refund_n=3)→ 余额回到原点
+    assert job["status"] == "done", job                       # 兜底交付:作业成功而非失败
+    res = job["result"]
+    assert res["video_url"].endswith(".gif")                  # 降级成本地产品展示 GIF
+    assert res["degraded"] is True
+    assert res.get("warnings"), "降级须显式告知用户原因"
+    # 扣了 9(video×3)、兜底退了 9 → 余额回到原点(降级不收 AI 视频原价)
     assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0
+
+
+def test_single_shot_provider_failure_falls_back_to_gif_and_refunds(client, auth_headers, monkeypatch, png):
+    # 单镜同样保证交付:provider 失败 → 兜底 GIF + 退回 1 笔 video(3 点),作业 done。
+    from app.ai import video as video_mod
+
+    def _boom():
+        class _P:
+            def image_to_video(self, *a, **k):
+                raise RuntimeError("timeout")
+        return _P()
+    monkeypatch.setattr(video_mod, "get_video_provider", _boom)
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "商品旋转展示", "seconds": "10", "aspect": "portrait"},
+                    files={"file": ("x.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    res = job["result"]
+    assert res["video_url"].endswith(".gif") and res["degraded"] is True
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0  # 扣3退3
 
 
 def test_two_shot_15s_insufficient_credits_402_refunds_first(client, auth_headers, monkeypatch, png):
@@ -253,7 +281,7 @@ def test_two_shot_15s_insufficient_credits_402_refunds_first(client, auth_header
     monkeypatch.setattr(video_router, "charge", _charge_once)
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "x", "seconds": "15", "aspect": "portrait"},
+                    data={"prompt": "x", "seconds": "15", "tier": "3", "aspect": "portrait"},
                     files={"file": ("x.png", png(), "image/png")})
     assert r.status_code == 402, r.text
     assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0  # 净不扣
@@ -677,6 +705,93 @@ def test_compose_product_prompt_is_human_free():
     assert "主体" in out and "近乎无人" in out          # 商品为主角、无人剧情
     assert "任务动作" not in out and "导演定位" not in out  # 不走 compose_prompt 的人物行为块
     assert "保持一致" in out                            # 仍含画面底线(印花一致)
+    # 信息密度优先:第一帧就读懂在卖什么;且明确禁旋转(平面图防砖块)
+    assert "第一帧" in out and ("旋转" in out)
+
+
+def test_compose_result_prompt_sells_the_owned_state():
+    # 变体 B「结果前置/种草」:卖"拥有后的样子",商品是结果里清晰的【主角】(非孤立特写、非纯背景);
+    # 与 compose_product_prompt(产品前置)区分,但仍守 POD 画面底线(印花一致)。通用、不按品类写死。
+    from app.ai.video import compose_result_prompt
+    out = compose_result_prompt("", language="无对白")
+    assert "主角" in out and "结果" in out              # 商品是"想拥有的结果"里的主角
+    assert "近乎无人" not in out                         # 不是产品前置的"近乎无人"
+    assert "保持一致" in out                            # 仍含画面底线(印花不可改)
+    # 通用:不写死某一品类(不应只提衣服)
+    assert "T恤" not in out and "毛毯" not in out
+
+
+# ---------- 三层出片体系(L5 商业系统视角:默认 L1 最稳)----------
+def test_video_options_returns_tiers(client, auth_headers):
+    # options 返回三层出片体系,前端据此渲染「出片模式」;默认主力 L1=通用产品片排第一。
+    body = client.get("/api/video/options", headers=auth_headers).json()
+    tiers = body["tiers"]
+    assert [t["id"] for t in tiers] == [1, 2, 3]
+    assert tiers[0]["name"] == "通用产品片"        # L1 默认主力
+
+
+def test_tier1_default_avoids_mufra_and_multishot(client, auth_headers, monkeypatch, png):
+    # 工业化默认(不传 tier=L1):即便传了 scene_frame=true + seconds=15 + 配了 key,
+    # 后端也强制【无 gpt-image 母帧 + 单镜】——绕开 #1 翻车源(母帧链)、成本恒 3 点。这是「默认即最稳」。
+    from app.ai import openai_image
+    from app.config import settings
+    called = {"edit": 0}
+
+    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto"):
+        called["edit"] += 1
+        from PIL import Image as _Img
+        return _Img.new("RGB", (64, 96))
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _fake_edit)
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "", "scene_frame": "true", "seconds": "15", "aspect": "portrait"},
+                    files={"file": ("x.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert called["edit"] == 0                     # L1 不调母帧(即便传了 scene_frame=true + key)
+    assert job["result"]["two_shot"] is False      # L1 恒单镜(即便选了 15s)
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 3  # 单镜=3 点
+
+
+def test_tier2_uses_single_category_mufra(client, auth_headers, monkeypatch, png):
+    # L2 品类模板:单镜 + 品类使用场景母帧(gpt-image 调 1 次),成本仍 3 点。
+    from app.ai import openai_image
+    from app.config import settings
+    seen = []
+
+    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto"):
+        seen.append(prompt)
+        from PIL import Image as _Img
+        return _Img.new("RGB", (64, 96))
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _fake_edit)
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"tier": "2", "category": "T恤", "seconds": "10", "aspect": "portrait"},
+                    files={"file": ("x.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert len(seen) == 1                          # 单镜 → 一张品类母帧
+    assert "T 恤" in seen[0] or "T恤" in seen[0]   # 用了 T恤 品类场景
+    assert job["result"]["two_shot"] is False
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 3
+
+
+def test_tier3_hero_15s_is_multishot(client, auth_headers, png):
+    # L3 Hero:选 15s → 三分镜动作链(two_shot=True),扣 video×3=9 点(本地兜底 GIF)。
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"tier": "3", "prompt": "分镜1", "prompt2": "分镜2", "seconds": "15",
+                          "aspect": "portrait"},
+                    files={"file": ("x.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert job["result"]["two_shot"] is True
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 9
 
 
 def test_ai_generate_full_params(client, auth_headers):
@@ -707,8 +822,8 @@ def test_ai_generate_scene_frame_with_gptimage(client, auth_headers, monkeypatch
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
     monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _fake_edit)
     r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "开箱", "category": "马克杯", "scene_frame": "true", "aspect": "portrait"},
-                    files={"file": ("a.png", png(), "image/png")})
+                    data={"prompt": "开箱", "category": "马克杯", "tier": "2", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})   # L2 品类模板:单镜 + 品类母帧
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
@@ -858,7 +973,7 @@ def test_ai_generate_two_shot_per_shot_mufra(client, auth_headers, monkeypatch, 
     r = client.post("/api/video/ai-generate", headers=auth_headers,
                     data={"prompt": "分镜1动作", "prompt2": "分镜2动作",
                           "scene1": "卧室镜子前自拍", "scene2": "城市街头走路",
-                          "seconds": "15", "scene_frame": "true", "aspect": "portrait"},
+                          "seconds": "15", "tier": "3", "scene_frame": "true", "aspect": "portrait"},
                     files={"file": ("a.png", png(), "image/png")})
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
@@ -884,7 +999,7 @@ def test_ai_generate_two_shot_no_scene_auto_fuses_per_shot(client, auth_headers,
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
     monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _fake_edit)
     r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15",
+                    data={"prompt": "分镜1", "prompt2": "分镜2", "seconds": "15", "tier": "3",
                           "scene_frame": "true", "aspect": "portrait"},
                     files={"file": ("a.png", png(), "image/png")})
     assert r.status_code == 200, r.text
@@ -909,9 +1024,9 @@ def test_ai_generate_single_shot_shared_mufra(client, auth_headers, monkeypatch,
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
     monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _fake_edit)
     r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "单镜脚本", "seconds": "10",
-                          "scene_frame": "true", "aspect": "portrait"},
-                    files={"file": ("a.png", png(), "image/png")})
+                    data={"prompt": "单镜脚本", "seconds": "10", "tier": "2",
+                          "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})   # L2:单镜 + 品类母帧
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
@@ -929,8 +1044,8 @@ def test_ai_generate_records_warning_when_scene_frame_fails(client, auth_headers
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
     monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _boom)
     r = client.post("/api/video/ai-generate", headers=auth_headers,
-                    data={"prompt": "p", "seconds": "10", "scene_frame": "true", "aspect": "portrait"},
-                    files={"file": ("a.png", png(), "image/png")})
+                    data={"prompt": "p", "seconds": "10", "tier": "2", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})   # L2 母帧失败 → 降级回原图
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job                 # 母帧失败不阻断,仍用原图出片

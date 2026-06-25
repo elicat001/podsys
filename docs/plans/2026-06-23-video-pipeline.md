@@ -3,6 +3,31 @@
 > 这是项目里**演进最密集**的模块(~25 次提交)。本文档是它当前的**架构 + 设计取舍 + 已知边界**的真相源。
 > 历史细节散在 git log;本文聚焦"现在是什么样、为什么这样、下一步往哪走"。
 
+## 0. 产品定位:这是 SKU 自动出片系统,不是 TikTok 账号(最高约束)
+
+> **改视频前先读这条。它决定了所有取舍的方向。**
+
+老板要买的不是"真人感/OOTD/创意",而是 **「给 1 万个 SKU,系统能不能自动、低成本、高成功率、不翻车地批量出片」**。
+所以判断一个结构好不好,**第一顺位是工程指标**(成功率 / 稳定性 / SKU 泛化 / 翻车率 / 成本),不是艺术价值。
+原则:**"60 分稳定量产 > 95 分 10% 成功率";变量越少越值钱;信息密度(用户多久读懂在卖什么)> 真人感。**
+
+落地为**三层出片体系**(`ai/video.py:TIERS`,端点 `ai-generate` 的 `tier` 参数,**默认 L1**):
+
+三层**同时就是 A/B/C 三个投放变体**(`tier` 参数 1/2/3,**默认 L1**):
+
+| 层 | 名称 / 变体 | 首帧卖什么 | 引擎 | gpt-image 母帧 | 分镜 | 成本 |
+|---|---|---|---|---|---|---|
+| **L1** | 通用产品片(**默认**)· 变体A 商品前置 | **商品本身**(第一帧读懂卖什么) | `compose_product_prompt` 产品前置、近乎无人、只推近/平移不旋转 | **无**(绕开 #1 翻车源) | 单镜 | 3 |
+| **L2** | 种草结果片 · 变体B 结果前置 | **"拥有后的样子"**(好看穿搭/惬意氛围/理想使用),商品是其中清晰主角 | `compose_result_prompt` + 结果母帧 | 单次结果母帧(失败降级回原图) | 单镜 | 3 |
+| **L3** | Hero·真人种草 · 变体C 商品随附 | **人物/生活**,商品随附 | `compose_prompt` 人物行为 + 智能向导 | 多母帧 per-shot | 单/三分镜 | 3~9 |
+
+- **关键认知①(产能/泛化)**:变量越少越值钱。L1 变量=`商品`;L3 变量=`模特/身材/脸/穿搭/房间/光线…`(爆炸)。换 SKU,L1 不失效、L3 立刻失效。所以**默认锁 L1**(成功率优先),L3 是爆款高配。
+- **关键认知②(转化 ≠ 曝光密度)**:竞品复盘提出一个**假设**——首帧怼印花易被读成广告→划走;真正留住人的是"想拥有/想模仿的结果"(卖的不是土星印花,是"穿上它的我")。这正是 **L2/变体B** 的来由。
+- **⚠ 但没有业绩数据,无法断言谁的转化更高。** 故**不推翻 L1 默认**(避免"商品太小→怼脸"那种来回过度矫正);三层即 **A/B 投放底座**,让真实留存/转化裁决:同款 SKU 分别按 tier=1/2/3 出片投放,比数据,再定默认。
+- **后端是权威**:L1/L2 强制单镜、按 tier 决定母帧/模板(忽略前端传的 scene_frame/15s),保证"默认即最稳"。
+- §7 以下真人感/StoryBeat/punch_up **仅属 L3** 的内部优化项,**不是产品方向**;L1/L2 不碰。
+- **实验脚手架对齐**:`scripts/video_experiment.py` 的 `STRUCTURES = {tier1,tier2,tier3}` 与三层/三变体一一对应,`--structures tier1,tier2,tier3` 一把跑。
+
 ## 1. 目标与现状
 
 把**商品图**变成**巴西市场 TikTok 风格带货短视频**。当前状态:
@@ -61,6 +86,22 @@
   2. **任务级重试**:智谱偶发把任务判 FAIL(实测返回"网络错误,请稍后重试")→ 退避后**重建新任务**(最多 3 个)。重新轮询同一个 FAIL 任务无用,必须重建。
   3. 轮询容忍连续抖动;真超时不重建。
 - **缩略图**:用**上传的商品图**(两张取第一张),稳定、所见即所得(不用智谱外链封面——带水印且签名会过期)。
+
+### 6.1 保证交付:provider 失败 → 兜底降级(工业化可靠性底座)— ✅ 已落地
+
+> **背景(真实实验的结论)**:把视频功能"能不能交付给用户基本使用"拆开看,**瓶颈不是创意/脚本,而是 provider 产能 + 链式依赖**。
+> 实测(3 SKU × 3 结构,真 cogvideox+gpt-image,5min/段封顶)**9 条全超时**——连 `universal`(单段无母帧)在智谱当时的降级状态下都做不出来。
+> 工程经验:**最不稳定环节 × 次数 = 故障率**(单次 95% → 链 6 次 ≈ 73%)。OOTD 的 `gpt-image×3 → CogVideoX×3` 链式依赖是 #1 故障源。
+> 所以"能基本使用"的关键 = **provider 不可靠时仍稳定交付**,而不是再调 prompt。
+
+**机制(`tasks.py:_work_aivideo`)**:把整个 provider 生成段(单镜 / 多分镜)包进 `try`,**任何超时/失败/网关繁忙 → 降级兜底【本地产品展示 GIF】**(`LocalGifProvider`,瞬时、离线、100% 成功、任意 SKU):
+- **永远交付**:作业判 `done`(不再 25min 挂起后 error),用户永远拿到可用结果;
+- **兜底退点**:降级=没给到 AI 视频 → **退回本次全部点数**(单镜退 1 笔、三分镜退 3 笔;由 `run_job_in_worker` 统一 commit,同失败退点路径;幂等护栏防 broker 重投重复退);
+- **显式告知**:`result.degraded=True` + `warnings` 写明原因,前端成片卡片提示用户;
+- **不收 AI 原价的较低规格产物**:GIF 是干净的产品展示运镜,对 POD 而言本身就是**当前唯一能 100% 规模化的可交付层**(provider 健康时升级为真 AI 视频)。
+
+**这是一个分层交付架构**:Tier-1 = CogVideoX 真视频(provider 健康时);Tier-0 = 本地 GIF 产品展示(永远兜底)。系统**自动降级、自动退点**,从"provider 一抖就白扣 + 挂死"变成"最坏也瞬时给一条免费可用片"。
+**测试**:`test_*_provider_failure_falls_back_to_gif_and_refunds`(单镜/三分镜各一)——mock provider 抛错 → 断言 done + GIF + degraded + 净退点。
 
 ## 7. ⚠️ 核心痛点 & 设计取舍:呆板
 
@@ -155,7 +196,7 @@ TikTok 的"活跃感"主要来自 **人物行为(Human Behavior),不是运镜**:
 | 文件 | 职责 |
 |---|---|
 | `routers/video.py` | 端点:options / `GET /templates`(故事模板)/ 智能向导(brief/proposals)/ ai-generate(双分镜+`scene1/2`+计费)/ 本地 GIF generate |
-| `ai/video.py` | provider(local GIF / **ZhipuCogVideoProvider** 重试 + 4xx 带响应体)+ 提示词工程 + 画幅/防拉伸。提示词块:`_BEHAVIOR_BLOCK`(真人感·主)/`_CAMERA_BLOCK`(运镜·次)/`_PHYSICS_BLOCK`(材质物理)/`NEGATIVE_BLOCK` + `scene_frame_prompt`(per-shot 3D 立体母帧) |
+| `ai/video.py` | provider(local GIF / **ZhipuCogVideoProvider** 重试 + 4xx 带响应体)+ 提示词工程 + 画幅/防拉伸 + `TIERS`(三层体系)。提示词块见下「提示词公式覆盖」 |
 | `services/video_templates.py` | **内容策划层**:POD 故事模板库(品类感知,每模板 2 拍 scene+action);`templates_for` / `template_guidance`(LLM few-shot)/ `fallback_two_shot`(无 key 兜底) |
 | `ai/openai_image.py` | gpt-image(场景母帧合成 / 改图) |
 | `services/video_concat.py` | 双分镜拼接(mp4 ffmpeg / gif Pillow,keep_audio) |
@@ -166,6 +207,25 @@ TikTok 的"活跃感"主要来自 **人物行为(Human Behavior),不是运镜**:
 | `services/video.py` | 本地兜底 GIF(Ken-Burns/轮播) |
 | `tasks.py` `_work_aivideo` | worker 编排:母帧 → 生成 → 拼接 → [punch_up] → 旁白 → [音乐] → 缩略图 → 入库 |
 | 前端 `VideoGenerate.vue` / `VideoWizardDialog.vue` | 视频页 + 智能向导 |
+
+## 9.1 提示词公式覆盖(对齐厂商官方建议,**通用·不按品类写死**)
+
+官方公式:`(镜头语言 + 景别角度 + 光影) + 主体(主体描述) + 主体运动 + 场景(场景描述) + (氛围)`。
+三条 compose 函数(L1/L2/L3 各一)已逐项覆盖,且**镜头/景别/光影/氛围全部写成品类无关的通用块**——避免"只优化一种商品、其它品类问题依旧":
+
+| 公式维度 | L1 `compose_product_prompt`(变体A) | L2 `compose_result_prompt`(变体B) | L3 `compose_prompt`(变体C) |
+|---|---|---|---|
+| 镜头语言 | motion(推近/平移)+ `_CINEMA_PRODUCT` | motion + `_CINEMA_RESULT` | `_DIRECTION_BLOCK`(手持/推拉/跟拍) |
+| **景别角度** | `_CINEMA_PRODUCT`(中景→近景特写) | `_CINEMA_RESULT`(中景↔近景) | `_CINEMA_HUMAN`(中景↔近景) |
+| **光影** | `_CINEMA_PRODUCT`(柔光,商业干净) | `_CINEMA_RESULT`(自然光,种草 vibe) | `_CINEMA_HUMAN`(窗光/日光,反影棚) |
+| 主体 + 描述 | 【主体】信息密度:第一帧读懂卖什么 | 【主角与钩子】商品=结果里的清晰主角 | 用户脚本 + 商品作道具 |
+| 主体运动 | motion(克制、不旋转、6s 可展现) | motion(自然穿用在结果里) | `_DIRECTION_BLOCK`(任务动作链) |
+| 场景 + 描述 | 中性背景 | "想拥有的结果"场景 + 品类结果母帧(`scene_frame_prompt` + `_SCENE_BY_CAT`) | 脚本 + 地区风格 |
+| **氛围** | `_CINEMA_PRODUCT`(清爽·电商短片) | `_CINEMA_RESULT`(温暖·有 vibe·种草) | 地区 UGC 风格(随语言) |
+
+- **三条线光影/氛围取向不同但各自通用**:L1=干净商业感(产品大片)、L2=种草 vibe(想拥有的结果)、L3=反影棚原生 UGC。镜头/景别/光影/氛围**对所有 SKU 通用,不按品类写死**;唯一按品类差异化的是 L2 的「场景」(母帧 + `_SCENE_BY_CAT`,这是 L2 定位)。
+- **变体B 的铁律**:卖"拥有后的样子"≠ 丢掉商品——`scene_frame_prompt` 仍**像素级保真印花**(POD 非协商),只是让商品自然穿用在好看的结果里、作清晰主角,而非孤立特写或纯背景。
+- `_CINEMA_*` 是通用正向引导而非负向堆砌(守"正向导演引领"教训,§7.2)。
 
 ## 10. 下一步(roadmap)
 

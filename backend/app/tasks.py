@@ -427,6 +427,7 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
         aspect_size,
         compose_product_prompt,
         compose_prompt,
+        compose_result_prompt,
         fit_to_aspect,
         get_video_provider,
         gptimage_size,
@@ -434,8 +435,10 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     )
     from .config import settings
     p = job.params
-    # 提示词路径:template="universal" → 产品前置(无人、高良品率、工业化默认);否则人物行为(compose_prompt)。
-    prompt_fn = compose_product_prompt if p.get("template") == "universal" else compose_prompt
+    # 提示词路径(三层=三个 A/B 变体):universal=产品前置(L1/变体A)、result=结果前置/种草(L2/变体B)、
+    # creative=人物行为(L3/变体C)。变体 B「卖拥有后的样子、商品是清晰主角」是竞品复盘的转化假设,待真实投放裁决。
+    _PROMPT_FNS = {"universal": compose_product_prompt, "result": compose_result_prompt}
+    prompt_fn = _PROMPT_FNS.get(p.get("template"), compose_prompt)
     cat = p.get("category", "通用")
     aspect = p.get("aspect", "portrait")
     size = aspect_size(aspect, p.get("resolution", "1080p"))
@@ -499,38 +502,50 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     # 视频音效(默认关)= CogVideoX 自带音频(with_audio=true,AI 音效非真人);默认无声;旁白开 = 无声再叠真人 AI 旁白。三者:默认无声 / 音效 / 旁白互斥。
     native_sound = bool(p.get("native_sound", False))
     # 提示词工程:镜头脚本 + 地区风格(随语言)+ 语言 + 一致性/防拉伸 + 负向(动作交给用户脚本,不按类目追加)
-    if p.get("two_shot"):
-        # 多分镜 15s:单段模型最多 10s,故拆 N 段(当前 3×5s)【并行】生成,再首尾拼接=15s。
-        # 每镜各自脚本 + 各自场景母帧 → 镜头间真换场景、动作连续(动作链),而非同一画面重复。
-        from .services.video_concat import concat_videos
-        prov = get_video_provider()
-        if per_shot_frames:                  # 每镜独立母帧:N 次 gpt-image【并行】调(治串行慢/超时);失败的那镜降级回共享 imgs
+    # 【保证交付】provider(智谱)超时/失败/网关繁忙 → 不让作业挂死或报错,降级兜底【本地产品展示 GIF】
+    # (瞬时、离线、100% 成功、任意 SKU)并退回点数。实测瓶颈=provider 产能 + 链式依赖(gpt-image×N→CogVideoX×N),
+    # 这层兜底是视频功能"能基本使用"的可靠性底座:用户永远拿到可用结果,绝不再 25min 挂起后失败白扣。
+    degraded_fallback = False
+    try:
+        if p.get("two_shot"):
+            # 多分镜 15s:单段模型最多 10s,故拆 N 段(当前 3×5s)【并行】生成,再首尾拼接=15s。
+            from .services.video_concat import concat_videos
+            prov = get_video_provider()
+            if per_shot_frames:              # 每镜独立母帧:N 次 gpt-image【并行】调;失败的那镜降级回共享 imgs
+                with ThreadPoolExecutor(max_workers=n_shots) as ex:
+                    frames = list(ex.map(_scene_frame, scenes[:n_shots]))
+                seg_imgs = [[f] if f is not None else imgs for f in frames]
+            else:
+                seg_imgs = [imgs for _ in range(n_shots)]
+            plan = [(seg_imgs[i], prompt_fn(prompts[i] or prompts[0], language=lang), MULTI_SHOT_PLAN[i])
+                    for i in range(n_shots)]
+
+            def _seg(item: tuple) -> dict:
+                shot_imgs, sp, sec = item
+                return prov.image_to_video(shot_imgs, sp, size=size, seconds=sec, with_audio=native_sound)
+
             with ThreadPoolExecutor(max_workers=n_shots) as ex:
-                frames = list(ex.map(_scene_frame, scenes[:n_shots]))
-            seg_imgs = [[f] if f is not None else imgs for f in frames]
+                segs = list(ex.map(_seg, plan))   # 保序;任一段抛错 → 跳到 except 兜底
+            ext0 = segs[0].get("ext", "mp4")
+            merged = concat_videos([s["bytes"] for s in segs], ext0, keep_audio=native_sound)
+            out = {"bytes": merged, "ext": ext0,
+                   "meta": {**segs[-1].get("meta", {}), "two_shot": True, "shots": n_shots,
+                            "shot_seconds": list(MULTI_SHOT_PLAN)}}
+            total_seconds = sum(MULTI_SHOT_PLAN)
         else:
-            seg_imgs = [imgs for _ in range(n_shots)]
-        plan = [(seg_imgs[i], prompt_fn(prompts[i] or prompts[0], language=lang), MULTI_SHOT_PLAN[i])
-                for i in range(n_shots)]
-
-        def _seg(item: tuple) -> dict:
-            shot_imgs, sp, sec = item
-            return prov.image_to_video(shot_imgs, sp, size=size, seconds=sec, with_audio=native_sound)
-
-        with ThreadPoolExecutor(max_workers=n_shots) as ex:
-            segs = list(ex.map(_seg, plan))   # 保序;任一段抛错 → 整作业 error + 退点
-        ext0 = segs[0].get("ext", "mp4")
-        # 选了「视频音效」(native_sound)→ 各段带原生音轨,拼接保留;默认无声/旁白则拼接丢音轨(旁白后叠)
-        merged = concat_videos([s["bytes"] for s in segs], ext0, keep_audio=native_sound)
-        out = {"bytes": merged, "ext": ext0,
-               "meta": {**segs[-1].get("meta", {}), "two_shot": True, "shots": n_shots,
-                        "shot_seconds": list(MULTI_SHOT_PLAN)}}
-        total_seconds = sum(MULTI_SHOT_PLAN)
-    else:
-        prompt = prompt_fn(p.get("prompt", ""), language=lang)
-        out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"),
-                                                  with_audio=native_sound)
-        total_seconds = int(p.get("seconds") or settings.video_seconds)
+            prompt = prompt_fn(p.get("prompt", ""), language=lang)
+            out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"),
+                                                      with_audio=native_sound)
+            total_seconds = int(p.get("seconds") or settings.video_seconds)
+    except Exception as exc:  # noqa: BLE001 — provider 超时/失败/网关繁忙 → 降级兜底,绝不挂死/白扣
+        from .ai.video import LocalGifProvider
+        sec = int(p.get("seconds") or settings.video_seconds) or 10
+        out = LocalGifProvider().image_to_video(imgs, "", size=size, seconds=min(sec, 10))
+        total_seconds = min(sec, 10)
+        warnings.append(
+            "AI 视频网关繁忙/超时,已用快速兜底版本(本地产品展示)交付,并已退回本次点数。"
+            f"详情:{str(exc)[:160]}")
+        degraded_fallback = True
     # 后期节奏快切(opt-in,默认关):按 beat 切段、全景/推近交替,治"呆板"。在旁白/字幕【之前】做 → 不裁字幕。
     # 不改时长/音轨/商品像素(一致性零风险);失败回退原片。
     if settings.video_punchup and out.get("ext") == "mp4":
@@ -572,14 +587,26 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
         cover = storage.output_url(job_id, "cover.jpg")
     except Exception:  # noqa: BLE001 — 缩略图失败不影响视频交付
         cover = meta.get("cover", "")
+    # 降级兜底交付(GIF 代替 AI 视频)→ 退回本次点数:交付了较低规格产物,不按 AI 视频原价收费。
+    # 由 run_job_in_worker 在 work 返回后统一 commit(同失败退点路径);幂等护栏防 broker 重投重复退。
+    if degraded_fallback and job.owner_id is not None and db is not None:
+        try:
+            from .models_db import User
+            from .services.billing import refund
+            user = db.get(User, job.owner_id)
+            if user is not None:
+                for _ in range(int(p.get("n", 1) or 1)):
+                    refund(db, user, "video")
+        except Exception:  # noqa: BLE001 — 退点失败不阻断交付(宁可少退也先把视频给到用户)
+            pass
     if job.owner_id is not None:  # 入库(用首帧做查重源,size 用视频字节)→ 删任务时可进回收站,不再成幽灵
         save_as_asset(db, job.owner_id, imgs[0], f"图生视频 {cat}", url, source="generated",
                       size_bytes=len(out["bytes"]))
     return {"video_url": url, "ext": ext, "voiceover": meta.get("voiceover", ""),
             "cover": cover, "engine": meta.get("engine", ""),
             "two_shot": bool(meta.get("two_shot")),
-            "degraded": bool(meta.get("degraded")),
-            "warnings": warnings}   # 显式暴露降级原因(母帧/配音失败等),前端在成片卡片上提示用户
+            "degraded": bool(meta.get("degraded")) or degraded_fallback,
+            "warnings": warnings}   # 显式暴露降级原因(母帧/配音失败/provider 兜底等),前端在成片卡片上提示
 
 
 # kind → (work, refund_op, n_param)。n_param 非空时退点笔数 = job.params[n_param](如裂变按张扣)。
