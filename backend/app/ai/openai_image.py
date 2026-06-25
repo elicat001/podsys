@@ -36,6 +36,25 @@ def _png_bytes(img: Image.Image) -> bytes:
     return buf.getvalue()
 
 
+def _jpeg_bytes(img: Image.Image, quality: int = 92) -> bytes:
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
+def _has_alpha(img: Image.Image) -> bool:
+    """图是否含真实透明像素 —— 决定上传编码。不透明 → JPEG(体积小 5~10×,大幅降网关上传写超时
+    WriteTimeout,直接减少『母帧/改图 失败退回原图』);含透明 → 必须 PNG(否则 alpha 丢失,改变模型看到的内容)。"""
+    if img.mode in ("RGBA", "LA", "PA"):
+        try:
+            return img.getchannel("A").getextrema()[0] < 255
+        except Exception:  # noqa: BLE001 — 取不到 alpha 极值就保守按"有透明"走 PNG
+            return True
+    if img.mode == "P":
+        return "transparency" in img.info
+    return False
+
+
 def _cap_for_edit(img: Image.Image, max_side: int = 1024) -> Image.Image:
     """gpt-image edit/生成输出最大 1024×1536,发更大的原图纯浪费上传+网关处理时间
     (实测大图比小图慢数倍)。把最长边缩到 ≤ max_side(Lanczos),显著提速,产出质量不受影响。"""
@@ -46,8 +65,13 @@ def _cap_for_edit(img: Image.Image, max_side: int = 1024) -> Image.Image:
     return img.resize((max(1, round(img.width * s)), max(1, round(img.height * s))), Image.LANCZOS)
 
 
-def _file_tuple(img: Image.Image, name: str = "image.png"):
-    return (name, _png_bytes(img), "image/png")
+def _file_tuple(img: Image.Image, name: str = "image", force_png: bool = False):
+    """上传文件元组(网关稳固):不透明图 → JPEG(体积小 5~10× → 降上传写超时);含透明 / 强制 → PNG(保 alpha)。
+    gpt-image edit/compose 的输入只作参考(输出像素重生),JPEG q92 对结果无实质影响,纯粹为更稳更快上网关。
+    mask 必须 force_png=True(它就是 alpha 区域,绝不能 JPEG)。"""
+    if force_png or _has_alpha(img):
+        return (f"{name}.png", _png_bytes(img), "image/png")
+    return (f"{name}.jpg", _jpeg_bytes(img), "image/jpeg")
 
 
 _SDK_CACHE: dict = {}
@@ -107,8 +131,8 @@ class OpenAIImageClient:
             prompt=prompt, n=1, size=self._size(size), background=background,
         )
         if mask is not None:
-            # mask 必须与图同尺寸(图缩了 mask 也要跟着缩)
-            kwargs["mask"] = _file_tuple(mask.resize(image.size, Image.LANCZOS), "mask.png")
+            # mask 必须与图同尺寸(图缩了 mask 也要跟着缩);force_png:mask=alpha 区域,绝不能 JPEG
+            kwargs["mask"] = _file_tuple(mask.resize(image.size, Image.LANCZOS), "mask", force_png=True)
         with _API_GATE:  # 限并发,避免整批超时(图裂变 N 路并发→网关压不住→全超时)
             resp = self.client.images.edit(**kwargs)
         return self._decode(resp)
@@ -118,7 +142,7 @@ class OpenAIImageClient:
                 input_fidelity: str = "high") -> Image.Image:
         """多张输入图一起送 gpt-image edit(如 [产品照, 新设计]):模型按 prompt 把它们融合。
         input_fidelity=high 尽量保留输入细节(设计忠实)。用于商品套图『把设计真实地印到产品上』。"""
-        files = [_file_tuple(_cap_for_edit(im), f"img{i}.png") for i, im in enumerate(images)]
+        files = [_file_tuple(_cap_for_edit(im), f"img{i}") for i, im in enumerate(images)]
         with _API_GATE:  # 限并发,避免整批超时
             resp = self.client.images.edit(model=self.model, image=files, prompt=prompt,
                                            n=1, size=self._size(size), input_fidelity=input_fidelity)

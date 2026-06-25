@@ -47,3 +47,23 @@ def test_dewatermark_no_key_offline_real(client, auth_headers, png):
         files={"file": ("a.png", png(), "image/png")})
     assert resp.status_code == 200, resp.text
     assert resp.json()["image_url"]
+
+
+# --------------------------------------------------------------------------
+# gpt-image 上传编码(网关稳固):不透明→JPEG(降写超时)、含透明→PNG(保 alpha)、mask 强制 PNG
+# --------------------------------------------------------------------------
+def test_gptimage_upload_jpeg_for_opaque_png_for_alpha():
+    from PIL import Image
+
+    from app.ai.openai_image import _file_tuple, _has_alpha
+    opaque = Image.new("RGB", (32, 32), (10, 20, 30))
+    transparent = Image.new("RGBA", (32, 32), (10, 20, 30, 0))
+    assert not _has_alpha(opaque) and _has_alpha(transparent)
+    # 不透明 → JPEG(SOI 魔数 FF D8 FF),体积小、降网关上传写超时(治"母帧/改图失败退回原图")
+    name, data, mime = _file_tuple(opaque)
+    assert mime == "image/jpeg" and name.endswith(".jpg") and data[:3] == b"\xff\xd8\xff"
+    # 含透明 → PNG(保 alpha,否则模型看到的内容会变)
+    name2, data2, mime2 = _file_tuple(transparent)
+    assert mime2 == "image/png" and name2.endswith(".png") and data2[:8] == b"\x89PNG\r\n\x1a\n"
+    # mask 强制 PNG(即便不透明也绝不能 JPEG:它是 alpha 区域)
+    assert _file_tuple(opaque, "mask", force_png=True)[2] == "image/png"

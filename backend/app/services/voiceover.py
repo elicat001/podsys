@@ -112,9 +112,13 @@ def synthesize(text: str, language: str) -> bytes:
 
 
 def _probe_dur(ff: str, path: str) -> float:
-    """ffmpeg 读时长(秒);读不到 → 0.0。"""
+    """ffmpeg 读时长(秒);读不到/超时 → 0.0。"""
     import subprocess
-    r = subprocess.run([ff, "-i", path], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        r = subprocess.run([ff, "-i", path], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=60)
+    except subprocess.TimeoutExpired:
+        return 0.0
     for line in r.stderr.splitlines():
         if "Duration:" in line:
             try:
@@ -126,10 +130,14 @@ def _probe_dur(ff: str, path: str) -> float:
 
 
 def _probe_size(ff: str, path: str) -> tuple[int, int]:
-    """ffmpeg 读视频分辨率 (w,h);读不到 → (0,0)。"""
+    """ffmpeg 读视频分辨率 (w,h);读不到/超时 → (0,0)。"""
     import re
     import subprocess
-    r = subprocess.run([ff, "-i", path], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        r = subprocess.run([ff, "-i", path], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=60)
+    except subprocess.TimeoutExpired:
+        return (0, 0)
     m = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", r.stderr)
     return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
@@ -280,7 +288,7 @@ def mux(video_bytes: bytes, audio_bytes: bytes, subtitle_text: str = "", languag
                 af = ["-filter:a", f"atempo={factor:.3f}"] if abs(factor - 1.0) > 0.03 else []
                 cmd = [ff, "-y", "-i", vp, "-i", ap, "-map", "0:v:0", "-map", "1:a:0",
                        "-c:v", "copy", *af, "-c:a", "aac", "-b:a", "128k", "-loglevel", "error", op]
-            r = subprocess.run(cmd, capture_output=True)
+            r = subprocess.run(cmd, capture_output=True, timeout=300)   # 防 ffmpeg 卡死;超时→外层 except→原视频
             if r.returncode != 0 or not os.path.exists(op) or os.path.getsize(op) < 1024:
                 log.warning("ffmpeg 叠加失败: %s", (r.stderr or b"")[:300])
                 return video_bytes

@@ -42,7 +42,11 @@ def beat_plan(duration: float, beat: float = 1.8) -> list[tuple[float, float, bo
 def _probe(ff: str, path: str) -> tuple[float, int, int, bool]:
     import re
     import subprocess
-    r = subprocess.run([ff, "-i", path], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        r = subprocess.run([ff, "-i", path], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=60)
+    except subprocess.TimeoutExpired:
+        return (0.0, 0, 0, False)
     dur = 0.0
     for line in r.stderr.splitlines():
         if "Duration:" in line:
@@ -109,7 +113,7 @@ def punch_up(video_bytes: bytes, *, beat: float = 2.0) -> bytes:
             cmd = [ff, "-y", "-i", ip, "-filter_complex", fc, *maps,
                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
                    "-threads", "3", "-loglevel", "error", op]
-            r = subprocess.run(cmd, capture_output=True)
+            r = subprocess.run(cmd, capture_output=True, timeout=300)   # 防卡死;超时→外层 except→回退原片
             if r.returncode != 0 or not os.path.exists(op) or os.path.getsize(op) < 1024:
                 log.warning("punch_up ffmpeg 失败,回退原片: %s", (r.stderr or b"")[:200])
                 return video_bytes
@@ -156,7 +160,7 @@ def add_music_bed(video_bytes: bytes, music_path: str, *, under_gain_db: float =
                    "-filter_complex", fc, "-map", "0:v", "-map", "[aout]",
                    "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest",
                    "-loglevel", "error", op]
-            r = subprocess.run(cmd, capture_output=True)
+            r = subprocess.run(cmd, capture_output=True, timeout=300)   # 防卡死;超时→外层 except→回退原片
             if r.returncode != 0 or not os.path.exists(op) or os.path.getsize(op) < 1024:
                 log.warning("add_music_bed ffmpeg 失败,回退原片: %s", (r.stderr or b"")[:200])
                 return video_bytes

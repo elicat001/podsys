@@ -42,9 +42,13 @@ def concat_gif(segments: list[bytes]) -> bytes:
 
 
 def _has_audio_stream(ff: str, path: str) -> bool:
-    """ffmpeg 探测该文件是否含音轨。"""
+    """ffmpeg 探测该文件是否含音轨。卡住(超时)→ 保守按无音轨,绝不让探测把 worker 挂死。"""
     import subprocess
-    r = subprocess.run([ff, "-i", path], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        r = subprocess.run([ff, "-i", path], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=60)
+    except subprocess.TimeoutExpired:
+        return False
     return "Audio:" in r.stderr
 
 
@@ -93,7 +97,10 @@ def concat_mp4(segments: list[bytes], keep_audio: bool = False) -> bytes:
         cmd = [ff, "-y", *inputs, "-filter_complex", fc, *maps,
                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
                "-pix_fmt", "yuv420p", "-threads", "3", "-loglevel", "error", op]
-        r = subprocess.run(cmd, capture_output=True)
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=300)   # 防 ffmpeg 卡死把 worker 挂满 40min
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("ffmpeg 拼接超时(>300s)") from exc       # 上层 _work_aivideo → 降级兜底 GIF
         if r.returncode != 0 or not os.path.exists(op) or os.path.getsize(op) < 1024:
             raise RuntimeError(f"ffmpeg 拼接失败: {(r.stderr or b'')[:300]!r}")
         with open(op, "rb") as f:
