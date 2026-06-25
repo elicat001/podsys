@@ -425,6 +425,7 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     输入图:第 1 张在 upload_path(job_id);可选第 2 张(尾帧)在 upload_path(job_id_mask)。"""
     from .ai.video import (
         aspect_size,
+        compose_product_prompt,
         compose_prompt,
         fit_to_aspect,
         get_video_provider,
@@ -433,6 +434,8 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     )
     from .config import settings
     p = job.params
+    # 提示词路径:template="universal" → 产品前置(无人、高良品率、工业化默认);否则人物行为(compose_prompt)。
+    prompt_fn = compose_product_prompt if p.get("template") == "universal" else compose_prompt
     cat = p.get("category", "通用")
     aspect = p.get("aspect", "portrait")
     size = aspect_size(aspect, p.get("resolution", "1080p"))
@@ -507,7 +510,7 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             seg_imgs = [[f] if f is not None else imgs for f in frames]
         else:
             seg_imgs = [imgs for _ in range(n_shots)]
-        plan = [(seg_imgs[i], compose_prompt(prompts[i] or prompts[0], language=lang), MULTI_SHOT_PLAN[i])
+        plan = [(seg_imgs[i], prompt_fn(prompts[i] or prompts[0], language=lang), MULTI_SHOT_PLAN[i])
                 for i in range(n_shots)]
 
         def _seg(item: tuple) -> dict:
@@ -524,7 +527,7 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
                         "shot_seconds": list(MULTI_SHOT_PLAN)}}
         total_seconds = sum(MULTI_SHOT_PLAN)
     else:
-        prompt = compose_prompt(p.get("prompt", ""), language=lang)
+        prompt = prompt_fn(p.get("prompt", ""), language=lang)
         out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"),
                                                   with_audio=native_sound)
         total_seconds = int(p.get("seconds") or settings.video_seconds)

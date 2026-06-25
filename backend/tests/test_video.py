@@ -670,6 +670,15 @@ def test_compose_prompt_keeps_essential_guards():
     assert "重力" in out                                # 物理连贯
 
 
+def test_compose_product_prompt_is_human_free():
+    # Universal Template:产品前置、近乎无人(工业化默认);不走人物行为路径,但保留画面底线。
+    from app.ai.video import compose_product_prompt
+    out = compose_product_prompt("", language="无对白")
+    assert "主体" in out and "近乎无人" in out          # 商品为主角、无人剧情
+    assert "任务动作" not in out and "导演定位" not in out  # 不走 compose_prompt 的人物行为块
+    assert "保持一致" in out                            # 仍含画面底线(印花一致)
+
+
 def test_ai_generate_full_params(client, auth_headers):
     # 描述 + 语言 + 类目 + 场景首帧(无 key 自动跳过)+ 画幅/分辨率全走通(本地兜底 GIF)
     r = client.post("/api/video/ai-generate", headers=auth_headers,

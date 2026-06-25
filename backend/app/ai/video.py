@@ -139,6 +139,23 @@ def compose_prompt(motion: str = "", language: str = "葡萄牙语") -> str:
     return " ".join(parts)
 
 
+def compose_product_prompt(motion: str = "", language: str = "葡萄牙语") -> str:
+    """Universal Template 用:**产品为主角、近乎无人**的展示提示词(高良品率、任意 SKU 通用)。
+    与 compose_prompt(人物行为为主、变量多、易翻车)相反——这里要:商品居中清晰、第一帧就读懂"卖什么"、
+    近乎无人(最多一只手)、零剧情、运镜克制。工业化默认主力:翻车面最小(无身体物理/无多母帧链)。"""
+    parts: list[str] = []
+    motion = (motion or "").strip()
+    parts.append(motion or "商品在干净、有质感的生活化背景中缓慢旋转、镜头轻轻推近展示,最后落到它被真实使用的场景。")
+    parts.append(
+        "【画面要求】商品自始至终是画面绝对主体、居中、清晰可辨;第一帧就能一眼看懂这是什么商品及其图案/设计/卖点;"
+        "近乎无人(最多一只手自然拿取或摆放),不要人物剧情、不要模特走位;光线干净、真实质感、商业级高画质。"
+    )
+    parts.append(_GUARD_BLOCK)   # 印花一致 + 材质物理 + 连贯(复用同一底线)
+    if language and language != "无对白":
+        parts.append(f"如有文字/旁白,使用{language}。")
+    return " ".join(parts)
+
+
 def gptimage_size(aspect: str = "portrait") -> str:
     """画幅 → gpt-image 支持的最接近尺寸(只有 1024x1024 / 1024x1536 / 1536x1024 / auto)。"""
     w, h = ASPECT_RATIOS.get(aspect, ASPECT_RATIOS["portrait"])
