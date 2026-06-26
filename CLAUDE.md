@@ -144,6 +144,7 @@ cd D:\podsys\backend; .\.venv\Scripts\celery.exe -A app.celery_app worker -l inf
 - 测试用 `TestClient`,**不需要启 uvicorn**。
 - `conftest.py` 已做三层隔离,**不会污染开发库、也不碰真实外部 API**:① `POD_DATA_DIR` 指向临时目录(文件存储);② **强制离线**——清空 `POD_OPENAI_API_KEY` + 锁定 `pillow` 引擎 + 锁定 `POD_VIDEO_PROVIDER=local`(出兜底 GIF、不调智谱);③ **DB 用隔离的 `*_test` 库**——读 `.env` 的 `POD_DATABASE_URL`、把库名换成 `<库>_test`(如 `podsys_test`),**带安全栅栏:库名不以 `_test` 结尾就拒绝 drop_all**,每次跑测试 drop+create 从空库开始,绝不碰真实库。所以即使 `.env` 配了真 key + 真库,`pytest` 仍离线、且只动 `*_test`(~110s)。**改 conftest 要保留这三层隔离 + `_test` 栅栏**(早期踩过坑:配了真 key 没隔离,AI 类测试真去调网关,11 个超时失败、跑了 29 分钟)。
   - ⚠️ 跑测试前需先建好 `*_test` 库 + 授权(本机:`CREATE DATABASE podsys_test CHARACTER SET utf8mb4; GRANT ALL ON podsys_test.* TO 'podsys'@'127.0.0.1','podsys'@'localhost';`)。conftest 连不上会打印这条提示。
+  - 🔒 **并发安全(已根治)**:同机**多个 `pytest` 进程**共用同一个 `*_test` 库时,各自 session 开头的 drop+create 会互抢 MySQL 元数据锁 → **死锁卡死**(历史踩坑:两个 pytest 同跑、全卡住几十分钟)。conftest 现用一把**跨进程文件锁**(`<tmp>/podsys_test_db.lock`,OS 级建议锁,进程崩溃自动释放)把「占用测试库」**串行化**:同一时刻只有一个 pytest 进程持锁跑,后到的阻塞等待(每 60s 打印一次「等待…」),前者整个 session 结束才释放。**所以同机可以放心同时开多个 `pytest`**,会自动排队、不再死锁(代价:不是真并行、后到的等前一个跑完)。要真并行(各进程独立库)再接 `pytest-xdist` + 每 worker 一个库。**改 conftest 要保留这把锁**。
 - 可用 fixtures:`client`(TestClient)、`auth_headers`(已注册用户的 Bearer 头)、`png`(内存造图工厂)。
 - 新表的测试在文件顶部确保建表:`from app.db import engine, Base; Base.metadata.create_all(engine)`。
 - 覆盖要点:正常路径 + 未登录 401 + 越权 404 + 参数非法 400/422 + 余额不足 402 +(AI 类)无 key 502 且退点。
