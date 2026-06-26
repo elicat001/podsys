@@ -8,7 +8,7 @@ from PIL import Image
 from sqlalchemy.orm import Session
 
 from .. import storage
-from ..ai.video import ASPECT_RATIOS, CATEGORIES, DURATIONS, LANGUAGES, MULTI_SHOT_PLAN, RESOLUTION_SHORT, TIERS
+from ..ai.video import ASPECT_RATIOS, CATEGORIES, DURATIONS, LANGUAGES, MULTI_SHOT_PLAN, RESOLUTION_SHORT
 from ..auth import current_user
 from ..config import settings
 from ..db import get_db
@@ -45,8 +45,6 @@ def options(user: User = Depends(current_user)):
         "languages": LANGUAGES,
         "categories": CATEGORIES,
         "durations": DURATIONS,
-        # 三层出片体系(L5 商业系统视角):默认 L1=通用产品片(最稳)。前端据此渲染「出片模式」。
-        "tiers": TIERS,
         # 多分镜 15s:N 段(MULTI_SHOT_PLAN,当前 3×5s)并行生成后拼接成动作链(单段模型只支持 5/10s)。
         # 计费 = video × len(plan);前端据 shots 渲染分镜数、算扣点。键名沿用 two_shot(前端契约)。
         "two_shot": {"plan": list(MULTI_SHOT_PLAN), "total": sum(MULTI_SHOT_PLAN),
@@ -113,53 +111,21 @@ def wizard_proposals(
     seconds: int = Form(10),
     language: str = Form("葡萄牙语"),
     category: str = Form("通用"),
-    tier: int = Form(3),              # 出片层级:1/2 → 单镜智能导向(产品向/结果向);3 → L3 故事/分镜
     user: User = Depends(charge_for("title")),
     db: Session = Depends(get_db),
 ):
     """智能向导 Step2:据商品简报 → 3 个不同方向的视频方案。同步,扣 title=1,失败退点。「换一批」=再调一次。
-    tier=1/2 时产出【单镜】方案(L1 产品向 / L2 结果向),不含分镜——把向导智能适配到单镜,不生硬照搬 L3。"""
+    15s(三分镜)时每个方案含 shot1/2/3 + scene1/2/3(动作链 per-shot 母帧)。"""
     if seconds not in DURATIONS:
         seconds = 10
-    if tier not in (1, 2, 3):
-        tier = 3
     try:
         from ..services.video_wizard import generate_proposals
         proposals = generate_proposals(name[:200], audience[:300], selling_points[:600],
-                                       seconds=seconds, language=language, category=category, n=3, tier=tier)
+                                       seconds=seconds, language=language, category=category, n=3)
     except Exception as exc:  # noqa: BLE001
         refund(db, user, "title")
         raise HTTPException(status_code=502, detail=_ai_fail_detail("方案生成失败", exc)) from exc
     return {"proposals": proposals}
-
-
-@router.post("/wizard/auto")
-def wizard_auto(
-    file: UploadFile = File(...),
-    tier: int = Form(1),              # 1=产品向(L1)/ 2=结果向(L2)
-    seconds: int = Form(10),
-    language: str = Form("葡萄牙语"),
-    category: str = Form("通用"),
-    user: User = Depends(charge_for("title")),
-    db: Session = Depends(get_db),
-):
-    """L1/L2 一键智能导向:看商品图 → 一句【为这件商品定制的单镜方案】(填进「视频描述」)。同步,扣 title=1,失败退点。
-    走 chat 视觉接口(与坏掉的母帧 images.edit 无关);无 key/失败 → 502 + 退点。"""
-    img = read_image_or_refund(file.file.read(), db, user, "title")
-    if seconds not in DURATIONS:
-        seconds = 10
-    if tier not in (1, 2):
-        tier = 1
-    try:
-        from ..services.video_wizard import auto_direction
-        result = auto_direction(img, tier=tier, seconds=seconds, language=language)
-    except Exception as exc:  # noqa: BLE001
-        refund(db, user, "title")
-        raise HTTPException(status_code=502, detail=_ai_fail_detail("智能导向失败", exc)) from exc
-    if not result.get("description"):
-        refund(db, user, "title")
-        raise HTTPException(status_code=502, detail="智能导向未返回内容,请重试")
-    return result   # {description, scene} — scene 仅 L2 有值,L1 为空
 
 
 @router.post("/ai-generate")
@@ -173,9 +139,7 @@ def ai_generate(
     scene2: str = Form(""),          # 分镜②场景母帧描述
     scene3: str = Form(""),          # 分镜③场景母帧描述;给齐 + 开场景首帧 → per-shot 母帧(动作链)
     language: str = Form("葡萄牙语"),  # 配音/对白语言(默认葡语)
-    category: str = Form("通用"),     # 商品类目:入库标题用;L2 母帧场景优先用 scene(向导产出),其次回退类目默认
-    scene: str = Form(""),            # L2 单镜结果母帧场景(智能导向产出):看图定制、任意商品通用、不靠固定清单
-    tier: int = Form(1),              # 出片模式(三层体系):1=通用产品片(默认最稳)/ 2=品类模板 / 3=Hero真人
+    category: str = Form("通用"),     # 商品类目:母帧场景 + 入库标题用
     scene_frame: bool = Form(False),  # 两步:先 gpt-image 生成场景首帧再生视频(缓解硬切;无 key 自动跳过)
     aspect: str = Form("portrait"),
     resolution: str = Form("1080p"),
@@ -207,24 +171,8 @@ def ai_generate(
         category = "通用"
     if seconds not in DURATIONS:
         seconds = 10
-    # ── 三层出片体系 = 三个 A/B 变体(默认 L1 最稳):tier 决定提示词模板 / 是否母帧 / 是否多分镜 ──────────
-    # 后端是权威:L1/L2 强制单镜、按 tier 决定母帧(忽略前端传的 scene_frame/15s),保证「默认即最稳」。
-    #   L1 通用产品片(默认/变体A·商品前置):产品前置 + 无母帧 + 单镜 → 翻车面最小、成本最低(绕开母帧链)。
-    #   L2 种草结果片(变体B·结果前置):单镜 + 结果母帧(把商品放进"想拥有的样子"、商品是清晰主角,失败降级回原图)。
-    #   L3 Hero·真人(变体C·商品随附):人物行为 + 可三分镜(15s 动作链)+ 智能向导 → 上限最高、成功率最低。
-    # ⚠ 哪个变体转化更高【没有业绩数据无法断言】→ 三层即 A/B 投放底座,让真实留存/转化裁决,不靠拍脑袋。
-    if tier not in (1, 2, 3):
-        tier = 1
-    if tier == 3:
-        template = "creative"           # → compose_prompt(人物行为路径)
-        two_shot = seconds == 15        # 仅 Hero 才拆三分镜动作链(MULTI_SHOT_PLAN,当前 3×5s)
-        use_scene = bool(scene_frame)   # 向导/手动按需(per-shot 或共享母帧)
-    else:
-        template = "result" if tier == 2 else "universal"   # L2→结果前置(种草) / L1→产品前置
-        two_shot = False                # L1/L2 恒单镜(单镜=翻车面最小)
-        if seconds == 15:
-            seconds = 10                # 单镜模型最长 10s,选了 15s 自动落到 10s
-        use_scene = tier == 2           # L2=结果母帧(卖"拥有后的样子");L1=无母帧(最稳,绕开 #1 翻车源)
+    two_shot = seconds == 15          # 15s = 多分镜:拆 N 段(MULTI_SHOT_PLAN,当前 3×5s)并行生成后拼接
+    use_scene = bool(scene_frame)     # 场景首帧(per-shot 或共享母帧);无 key 自动跳过
     # 计费:多分镜 = N 段算力,扣 video×N。charge_for 依赖已扣 1 笔;这里再补扣 N-1 笔 = 共 N 笔。
     # 任一笔余额不足 → 退回【已扣的全部】+ 402。n = 退点笔数(=N),贯穿所有退点路径:
     #   入队失败/配额超(submit_celery 的 n)、worker 失败(TOOL_WORKS n_field="n")、卡死回收(reap 读 params["n"])。
@@ -244,9 +192,7 @@ def ai_generate(
         raw=img1, mask_raw=img2, n=n,
         params={"prompt": prompt[:2000], "prompt2": prompt2[:2000], "prompt3": prompt3[:2000],
                 "scene1": scene1[:500], "scene2": scene2[:500], "scene3": scene3[:500],
-                "scene": scene[:500],  # L2 单镜结果母帧场景(向导产出,看图定制任意商品;空→回退类目默认)
                 "two_shot": two_shot, "n": n, "language": language[:20],
-                "tier": tier, "template": template,
                 "category": category, "scene_frame": use_scene, "subtitle": bool(subtitle),
                 "native_sound": bool(native_sound), "voiceover": bool(voiceover),
                 "aspect": aspect, "resolution": resolution, "seconds": seconds, "frames2": bool(img2)},

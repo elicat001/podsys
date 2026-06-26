@@ -80,110 +80,11 @@ def describe_product(image: Image.Image, selling_points: str = "", language: str
     }
 
 
-# ── 单镜智能导向(L1/L2)——把向导的"看图理解 + prompt 工程"适配成【单镜】,不生硬照搬 L3 的人物分镜 ──
-# L1/L2 不存在分镜,且哲学相反:L1=产品向(商品绝对主体、近乎无人)、L2=结果向(卖"拥有后的样子"、商品是清晰主角)。
-# 两个入口共用这套 tier 导向文案:多方案挑选(_single_shot_proposals)+ 一键自动(auto_direction)。
-_TIER_DIRECTION: dict[int, dict] = {
-    1: {
-        "role": "电商产品短视频导演",
-        "task": "产品展示(商品为画面绝对主体、近乎无人)",
-        "rule": ("商品是画面【绝对主体】、居中清晰、近乎无人(最多一只手),第一帧就读懂在卖什么;"
-                 "运镜克制(轻缓推近/平移/小幅环绕,不旋转翻转商品);突出这件商品的图案/材质/卖点;不要人物剧情。"),
-        "dirs": "纯产品大片 / 一只手自然拿取展示 / 使用场景特写",
-    },
-    2: {
-        "role": "种草短视频导演",
-        "task": "『拥有后的样子』(把商品放进想拥有的好看结果,商品是其中清晰的主角)",
-        "rule": ("把商品放进一个让人想拥有/想模仿的真实好看结果或氛围(好看穿搭/惬意使用/理想场景),"
-                 "商品是这个结果里【清晰、突出的主角】(自然穿用、不孤立特写、不被遮挡);"
-                 "运镜克制、真实生活质感而非硬广;卖『拥有它之后的样子』,不是孤立印花。"),
-        "dirs": "好看穿搭 / 惬意使用 / 理想场景氛围",
-    },
-}
-
-
-def _single_shot_proposals(tier: int, name: str, audience: str, selling_points: str,
-                           seconds: int, language: str, category: str, n: int) -> list[dict]:
-    """L1/L2 多方案挑选:据简报 → n 个【单镜】方案(按 tier 哲学:产品向/结果向),每个 {title,angle,environment,storyboard(+scene)}。"""
-    d = _TIER_DIRECTION[tier]
-    scene_field = ('"scene":"母帧场景描述:把商品放进的那个好看结果/氛围(只描述场景+人物状态,别写运镜;有母帧时用)",'
-                   if tier == 2 else "")
-    prompt = (
-        f"你是 TikTok 跨境电商短视频【{d['role']}】。围绕下面这件【具体商品】及其卖点/受众,"
-        f"设计 {n} 个【单镜 · 不分镜 · {seconds}秒】方案,聚焦{d['task']},方向彼此明显不同(如 {d['dirs']})。\n"
-        f"产品:{name or '(见卖点)'}\n目标受众:{audience or '(自行判断)'}\n核心卖点:{selling_points or '(自行提炼)'}\n"
-        f"投放市场/语言:{language};商品类目:{category}\n"
-        f"{d['rule']}\n"
-        "动作贴合 AI 视频能力:优先简单稳妥(轻微移动/手自然拿取/缓慢展示),避免开盖/拆封/穿脱等复杂物理变化。\n"
-        f"只输出一个 JSON 数组(禁止任何解释/标题/markdown),含 {n} 个对象,字段固定:\n"
-        '{"title":"方案标题(简短有画面感)","angle":"一句话创意方向","environment":"整体风格/氛围",'
-        f"{scene_field}"
-        f'"storyboard":"单镜脚本,按 {seconds}秒分时间轴(如【0-3秒】【3-7秒】…):景别+运镜+如何突出这件商品的卖点"}}\n'
-        f"硬性:{n} 个方案方向要拉开差距;全部字段用中文。"
-    )
-    data = _loads_json(_chat([{"role": "user", "content": prompt}]), expect_list=True)
-    if isinstance(data, dict):
-        data = data.get("proposals") or data.get("方案") or data.get("plans") or []
-    if not isinstance(data, list):
-        raise RuntimeError("方案解析失败")
-    out: list[dict] = []
-    for p in data[:n]:
-        if not isinstance(p, dict):
-            continue
-        item = {
-            "title": str(p.get("title") or p.get("标题") or "方案").strip()[:40],
-            "angle": str(p.get("angle") or p.get("方向") or "").strip()[:100],
-            "environment": str(p.get("environment") or p.get("环境") or p.get("场景") or "").strip()[:300],
-            "storyboard": str(p.get("storyboard") or p.get("分镜") or p.get("脚本") or "").strip()[:2000],
-            "model": "无模特" if tier == 1 else "",
-        }
-        if tier == 2:   # 结果母帧场景(有母帧时用;母帧坏/无 key 时忽略,提示词仍是结果向)
-            item["scene"] = str(p.get("scene") or p.get("场景") or p.get("母帧") or "").strip()[:500]
-        if item["storyboard"]:
-            out.append(item)
-    if not out:
-        raise RuntimeError("方案解析为空")
-    return out
-
-
-def auto_direction(image: Image.Image, *, tier: int = 1, seconds: int = 10,
-                   language: str = "葡萄牙语") -> dict:
-    """L1/L2 一键智能导向:看图 → {description(单镜脚本), scene(母帧场景,L1 为空)} 。
-    一次 chat,同时产出镜头脚本 + L2 结果母帧场景——两者同源不打架,且任意商品通用(不靠固定类目清单)。"""
-    d = _TIER_DIRECTION.get(tier, _TIER_DIRECTION[1])
-    scene_field = (
-        '"scene":"母帧场景(把这件商品放进什么好看的结果/氛围里:具体描述场景+人物状态,20字内,如 桌面温暖光线下手拿起这个玩具旋转)"'
-        if tier == 2 else '"scene":""'
-    )
-    text = (
-        f"你是 TikTok 跨境电商短视频【{d['role']}】。仔细观察这张商品图,识别它是什么商品,为它设计"
-        f"【一个最佳的单镜 · 不分镜 · {seconds}秒】带货方案,聚焦{d['task']}。\n{d['rule']}\n"
-        f"投放市场/语言:{language}。\n"
-        f"只输出一个 JSON 对象(禁止任何解释/markdown),字段固定:\n"
-        f'{{"storyboard":"单镜脚本,按{seconds}秒分时间轴(如【0-3秒】…):景别+运镜+如何突出这件商品的卖点",{scene_field}}}'
-    )
-    msgs = [{"role": "user", "content": [
-        {"type": "text", "text": text},
-        {"type": "image_url", "image_url": {"url": _data_url(image)}},
-    ]}]
-    raw = _loads_json(_chat(msgs) or "{}")
-    if not isinstance(raw, dict):
-        raw = {}
-    return {
-        "description": str(raw.get("storyboard") or raw.get("description") or "").strip()[:2000],
-        "scene": str(raw.get("scene") or "").strip()[:500] if tier == 2 else "",
-    }
-
-
 def generate_proposals(name: str, audience: str, selling_points: str, *, seconds: int = 10,
-                       language: str = "葡萄牙语", category: str = "通用", n: int = 3,
-                       tier: int = 3) -> list[dict]:
+                       language: str = "葡萄牙语", category: str = "通用", n: int = 3) -> list[dict]:
     """Step 2:据简报 → n 个不同方向的视频方案。每个 {title, angle, model, environment, storyboard}。
 
-    tier ∈ 1/2 → **单镜智能导向**(L1 产品向 / L2 结果向,见 _single_shot_proposals),不分镜。
-    tier=3 + seconds=15 → **三分镜**:每个方案额外含 shot1/shot2/shot3 + scene1/2/3(动作链)。"""
-    if tier in (1, 2):
-        return _single_shot_proposals(tier, name, audience, selling_points, seconds, language, category, n)
+    seconds=15 → **三分镜**:每个方案额外含 shot1/shot2/shot3 + scene1/2/3(动作链 per-shot 母帧)。"""
     two_shot = seconds == 15
     if two_shot:
         time_rule = (

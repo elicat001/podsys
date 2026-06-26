@@ -449,9 +449,7 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     输入图:第 1 张在 upload_path(job_id);可选第 2 张(尾帧)在 upload_path(job_id_mask)。"""
     from .ai.video import (
         aspect_size,
-        compose_product_prompt,
         compose_prompt,
-        compose_result_prompt,
         fit_to_aspect,
         get_video_provider,
         gptimage_size,
@@ -459,10 +457,7 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     )
     from .config import settings
     p = job.params
-    # 提示词路径(三层=三个 A/B 变体):universal=产品前置(L1/变体A)、result=结果前置/种草(L2/变体B)、
-    # creative=人物行为(L3/变体C)。变体 B「卖拥有后的样子、商品是清晰主角」是竞品复盘的转化假设,待真实投放裁决。
-    _PROMPT_FNS = {"universal": compose_product_prompt, "result": compose_result_prompt}
-    prompt_fn = _PROMPT_FNS.get(p.get("template"), compose_prompt)
+    prompt_fn = compose_prompt   # 人物行为/故事路径(镜头脚本 + 地区风格 + 导演层 + 画面底线)
     cat = p.get("category", "通用")
     aspect = p.get("aspect", "portrait")
     size = aspect_size(aspect, p.get("resolution", "1080p"))
@@ -522,8 +517,8 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
                     f"详情:{str(exc)[:160]}")
             return None
 
-    if use_scene and not per_shot_frames:   # 单镜结果母帧:优先用向导产出的看图场景;空→回退类目默认(不写死)
-        shared = _scene_frame(p.get("scene", ""))
+    if use_scene and not per_shot_frames:   # 单镜 / 双分镜未给场景:一张共享母帧(类目默认场景)
+        shared = _scene_frame("")
         if shared is not None:
             imgs[0] = shared
     # 视频音效(默认关)= CogVideoX 自带音频(with_audio=true,AI 音效非真人);默认无声;旁白开 = 无声再叠真人 AI 旁白。三者:默认无声 / 音效 / 旁白互斥。
