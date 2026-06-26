@@ -484,8 +484,11 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
         ⚠ 失败【显式记录到 warnings】:否则用户只会拿到一段"平铺像砖块"的成片却不知为何(母帧才是 3D 物理的关键)。"""
         try:
             from .ai.openai_image import OpenAIImageClient
+            # 母帧走作图网关/中转,慢中转上 edit 很慢:给一次更长的连续出图窗口(video_mufra_timeout),
+            # 且【不做超时翻倍重试】(max_retries=0——慢网关重试只会再慢一遍、白等)。失败→本镜降级原图。
             framed = OpenAIImageClient().edit(_frame_src, scene_frame_prompt(cat, lang, scene=scene),
-                                              size=gptimage_size(aspect))
+                                              size=gptimage_size(aspect),
+                                              timeout=settings.video_mufra_timeout, max_retries=0)
             return fit_to_aspect(framed, tw, th)
         except Exception as exc:  # noqa: BLE001 — 母帧失败不阻断视频作业,但要让用户看见降级
             if not any(w.startswith("场景母帧") for w in warnings):   # 去重(per-shot 每段各调一次)

@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     video_size: str = ""                   # 留空=按画幅取高分辨率(ASPECT_SIZE);填则强制(如 3840x2160 上 4K)
     video_timeout: float = 1500.0          # 轮询总超时(秒);视频远比图片慢,给 25min(4K/排队时真要这么久)
     video_poll_interval: float = 5.0
+    # 视频「场景母帧」(gpt-image edit)专用单次超时(秒)。母帧走作图网关/中转,慢中转上 edit 很慢;
+    # 给一次【更长的连续出图窗口】(比通用 openai_timeout 的 250s 更长),且母帧【不做超时翻倍重试】
+    # ——慢网关重试只会再慢一遍、白等。与 openai_timeout(变体/抠图共用)分开,不拖慢其它作图功能。
+    # 网关很慢时可在 .env 调大(如 POD_VIDEO_MUFRA_TIMEOUT=600);但越大,母帧卡住时整单越久(注意 40min 回收阈值)。
+    video_mufra_timeout: float = 360.0
     # 后期「节奏快切」(services/video_edit.punch_up):按 beat(~2s)切段、每段换景别/机位(多景别循环),
     # 把连续单镜在后期切出【多镜头密度感】——治"信息频率太低=呆板"(GPT 判定的真瓶颈)。
     # 不改时长/音轨/商品像素(一致性零风险);离线已验证(抽帧确认多景别)→ 默认开。

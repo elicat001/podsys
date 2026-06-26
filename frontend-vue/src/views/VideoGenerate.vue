@@ -25,7 +25,8 @@ const submitting = ref(false)
 const submitted = ref(false)
 const aiReady = ref(true)
 const smartReady = ref(false)
-const wizardOpen = ref(false)   // 智能方案向导弹窗(L3)
+const wizardOpen = ref(false)   // 智能方案向导弹窗(L1/L2 单镜 / L3 分镜)
+const autoing = ref(false)      // L1/L2 一键智能导向(看图定制单镜方案)进行中
 
 // ── 三层出片体系(默认 L1)。优先从 options 拉文案,拉不到用静态兜底 ──────────
 const tier = ref(1)
@@ -148,6 +149,31 @@ function openWizard() {
   if (!seconds.value) return ElMessage.warning('请先选择视频时长')
   if (!smartReady.value) return ElMessage.warning('未配置作图 AI key,「智能方案」暂不可用')
   wizardOpen.value = true
+}
+
+// L1/L2 一键智能导向:看图 → 为这件商品定制【单镜】方案(产品向/结果向),填进描述(可编辑)。
+// 走 chat 视觉接口、不依赖坏掉的母帧;留空不点=走通用模板免费直接出片。
+async function autoDirect() {
+  if (!img1.value) return ElMessage.warning('请先上传商品图片')
+  if (!smartReady.value) return ElMessage.warning('未配置作图 AI key,智能导向暂不可用')
+  autoing.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', img1.value)
+    fd.append('tier', tier.value)
+    fd.append('seconds', seconds.value || 10)
+    fd.append('language', language.value)
+    if (tier.value === 2) fd.append('category', category.value)
+    const d = (await api.post('/video/wizard/auto', fd)).data
+    prompt.value = d.description || ''
+    selType.value = 'smart'
+    if (auth.refreshBalance) auth.refreshBalance()
+    ElMessage.success('✅ 已按这件商品定制单镜方案,可编辑后点生成')
+  } catch (e) {
+    ElMessage.error((e.response && e.response.data && e.response.data.detail) || '智能导向失败')
+  } finally {
+    autoing.value = false
+  }
 }
 function onWizardApply({ storyboard, shot1, shot2, shot3, scene1: s1, scene2: s2, scene3: s3, generate, sound }) {
   if (seconds.value === 15) {          // 三分镜:把三段分镜脚本分别填进 分镜①/②/③(动作链)
@@ -295,12 +321,25 @@ onMounted(async () => {
 
       <!-- 右:描述(仅 L3)+ 配置 + 生成 -->
       <div class="card col">
-        <!-- L1/L2:无需写脚本 -->
-        <div v-if="tier !== 3" class="noscript">
-          <b>{{ tier === 1 ? '✅ 无需写脚本' : '✅ 无需写脚本(自动配「想拥有的样子」场景)' }}</b>
-          <span>{{ tier === 1
-            ? '系统自动生成「商品为主角、第一帧读懂卖什么」的展示视频,任意商品通用、成功率最高 —— 适合批量出片。'
-            : '系统把商品放进让人想拥有/想模仿的好看结果里(好看穿搭/惬意氛围/理想使用),商品是其中清晰的主角 —— 卖「拥有它之后的样子」。' }}</span>
+        <!-- L1/L2:智能导向(可选,看图为这件商品定制单镜方案)+ 可编辑;留空=通用模板免费直接出片 -->
+        <div v-if="tier !== 3" class="field">
+          <span class="flabel">
+            {{ tier === 1 ? '产品向 · 单镜方案' : '结果向 · 单镜方案' }}
+            <span class="opt">留空=通用模板(免费·最稳);用智能导向=看图为这件商品定制(扣点)</span>
+          </span>
+          <div class="ai-btns">
+            <button class="ai-btn" :disabled="autoing || !img1 || !smartReady" @click="autoDirect">
+              {{ autoing ? '看图定制中…' : '✨ 一键智能导向 · 扣 1 点' }}
+            </button>
+            <button class="ai-btn ghost" :disabled="!img1 || !seconds || !smartReady" @click="openWizard">
+              展开挑方案(多方向)
+            </button>
+          </div>
+          <textarea v-model="prompt" class="inp desc-ta" maxlength="2000"
+            :placeholder="tier === 1
+              ? '留空直接出通用产品片(免费·最稳);或点「✨一键智能导向」让 AI 看图定制单镜运镜+卖点突出,可再编辑'
+              : '留空直接出结果片(免费);或用智能导向让 AI 看图定制「拥有后的样子」单镜方案,可再编辑'"></textarea>
+          <div v-if="!smartReady" class="ad-warn">⚠ 未配置作图 AI key,智能导向不可用;留空走通用模板照样出片。</div>
         </div>
 
         <!-- L3:分镜脚本 -->
@@ -377,6 +416,7 @@ onMounted(async () => {
       :image="img1"
       :seconds="seconds"
       :language="language"
+      :tier="tier"
       @apply="onWizardApply"
     />
   </div>
@@ -438,6 +478,13 @@ onMounted(async () => {
 .noscript { display: flex; flex-direction: column; gap: 5px; padding: 13px 14px; border: 1px dashed var(--line2); border-radius: 11px; background: rgba(103,194,58,.07); }
 .noscript b { font-size: 13.5px; color: var(--fg); }
 .noscript span { font-size: 12px; color: var(--mut); line-height: 1.5; }
+.ai-btns { display: flex; gap: 8px; margin-bottom: 8px; }
+.ai-btn { flex: 1; padding: 9px 12px; border: 1px solid var(--brand); border-radius: 10px; background: var(--panel2); color: var(--brand2); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.ai-btn:hover:not(:disabled) { background: var(--brand); color: #fff; }
+.ai-btn.ghost { border-color: var(--line2); background: var(--bg2); color: var(--mut); font-weight: normal; }
+.ai-btn.ghost:hover:not(:disabled) { border-color: var(--brand); color: var(--fg); background: var(--panel2); }
+.ai-btn:disabled { opacity: .45; cursor: not-allowed; }
+.ad-warn { font-size: 11.5px; color: #e6a23c; margin-top: 6px; }
 
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .flabel { font-size: 12.5px; color: var(--mut); }

@@ -12,6 +12,7 @@ const props = defineProps({
   seconds: { type: Number, default: null },       // 时长 5/10/15(15=三分镜动作链,方案带 shot1/2/3 + scene1/2/3)
   language: { type: String, default: '葡萄牙语' }, // 投放市场语言(沿用页面选择)
   sellingPoints: { type: String, default: '' },   // 页面已填的产品卖点(带入初值)
+  tier: { type: Number, default: 3 },              // 出片层级:1/2=单镜智能导向(产品向/结果向)/ 3=L3 故事分镜
 })
 const emit = defineEmits(['update:modelValue', 'apply'])
 const auth = useAuth()
@@ -83,6 +84,7 @@ async function runProposals() {
     fd.append('selling_points', brief.value.selling_points)
     fd.append('seconds', props.seconds || 10)
     fd.append('language', props.language)
+    fd.append('tier', props.tier)                 // 1/2 → 单镜方案(产品向/结果向);3 → L3 故事/分镜
     const data = (await api.post('/video/wizard/proposals', fd)).data
     proposals.value = data.proposals || []
     refresh()
@@ -107,7 +109,8 @@ function choose(p) {
   emit('apply', {
     storyboard: p.storyboard, title: p.title, generate: true,
     shot1: p.shot1 || '', shot2: p.shot2 || '', shot3: p.shot3 || '',
-    scene1: p.scene1 || '', scene2: p.scene2 || '', scene3: p.scene3 || '',  // 每镜独立母帧场景 → ai-generate
+    scene1: p.scene1 || '', scene2: p.scene2 || '', scene3: p.scene3 || '',  // 每镜独立母帧场景(L3 三分镜)
+    scene: p.scene || '',                                                    // L2 单镜结果母帧场景
     sound: { mode: soundMode.value, language: voLang.value, subtitle: subtitle.value },
   })
   close()

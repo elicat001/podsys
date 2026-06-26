@@ -737,7 +737,7 @@ def test_tier1_default_avoids_mufra_and_multishot(client, auth_headers, monkeypa
     from app.config import settings
     called = {"edit": 0}
 
-    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto"):
+    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
         called["edit"] += 1
         from PIL import Image as _Img
         return _Img.new("RGB", (64, 96))
@@ -761,7 +761,7 @@ def test_tier2_uses_single_category_mufra(client, auth_headers, monkeypatch, png
     from app.config import settings
     seen = []
 
-    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto"):
+    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
         seen.append(prompt)
         from PIL import Image as _Img
         return _Img.new("RGB", (64, 96))
@@ -815,7 +815,7 @@ def test_ai_generate_scene_frame_with_gptimage(client, auth_headers, monkeypatch
     from app.config import settings
     called = {"edit": 0}
 
-    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto"):
+    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
         called["edit"] += 1
         assert "立体形态" in prompt and "图案" in prompt   # 场景首帧指令:立体使用形态 + 保留印花(治砖块)
         return _Img.new("RGB", (64, 96), (10, 20, 30))
@@ -965,7 +965,7 @@ def test_ai_generate_two_shot_per_shot_mufra(client, auth_headers, monkeypatch, 
     from app.config import settings
     seen = []
 
-    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto"):
+    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
         seen.append(prompt)
         return _Img.new("RGB", (64, 96), (10, 20, 30))
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
@@ -993,7 +993,7 @@ def test_ai_generate_two_shot_no_scene_auto_fuses_per_shot(client, auth_headers,
     from app.services.video_templates import default_scenes
     seen = []
 
-    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto"):
+    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
         seen.append(prompt)
         return _Img.new("RGB", (64, 96), (10, 20, 30))
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
@@ -1018,7 +1018,7 @@ def test_ai_generate_single_shot_shared_mufra(client, auth_headers, monkeypatch,
     from app.config import settings
     called = {"edit": 0}
 
-    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto"):
+    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
         called["edit"] += 1
         return _Img.new("RGB", (64, 96), (10, 20, 30))
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
@@ -1039,7 +1039,7 @@ def test_ai_generate_records_warning_when_scene_frame_fails(client, auth_headers
     from app.ai import openai_image
     from app.config import settings
 
-    def _boom(self, image, prompt, mask=None, size="auto", background="auto"):
+    def _boom(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
         raise RuntimeError("Error code: 403 insufficient_user_quota")
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
     monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _boom)
@@ -1076,3 +1076,61 @@ def test_wizard_proposals_two_shot_scene_fallback(monkeypatch):
     d = default_scenes("T恤", 3)
     assert out[0]["scene1"] == d[0] and out[0]["scene2"] == d[1] and out[0]["scene3"] == d[2]
     assert len({d[0], d[1], d[2]}) == 3                   # 三拍场景各不相同(递进)
+
+
+# ---------- 单镜智能导向(L1/L2:把向导智能适配成单镜,不照搬 L3 分镜)----------
+def test_wizard_proposals_tier1_single_shot(monkeypatch):
+    # L1 产品向:单镜方案,无分镜(shot/scene1)、无 L2 的 scene;model=无模特
+    from app.services import video_wizard
+    fake = '[{"title":"产品大片","angle":"推近展印花","environment":"干净桌面","storyboard":"【0-5秒】镜头推近展示印花细节"}]'
+    monkeypatch.setattr(video_wizard, "_chat", lambda msgs: fake)
+    out = video_wizard.generate_proposals("杯子", "家居", "保温", seconds=10, n=1, tier=1)
+    assert out[0]["storyboard"].startswith("【0-5秒】") and out[0]["model"] == "无模特"
+    assert "shot1" not in out[0] and "scene1" not in out[0] and "scene" not in out[0]
+
+
+def test_wizard_proposals_tier2_result_has_scene(monkeypatch):
+    # L2 结果向:单镜 + 结果母帧场景 scene(卖"拥有后的样子")
+    from app.services import video_wizard
+    fake = '[{"title":"惬意午后","angle":"a","environment":"客厅","scene":"沙发上裹着这条毛毯","storyboard":"【0-10秒】温馨展示"}]'
+    monkeypatch.setattr(video_wizard, "_chat", lambda msgs: fake)
+    out = video_wizard.generate_proposals("毛毯", "家居", "柔软", seconds=10, n=1, tier=2)
+    assert out[0]["scene"] == "沙发上裹着这条毛毯" and "shot1" not in out[0]
+
+
+def test_auto_direction_one_call_looks_at_image(monkeypatch):
+    # 一键导向:一次 chat、消息里带 image_url(看图),返回单镜脚本
+    from PIL import Image
+
+    from app.services import video_wizard
+    seen = {}
+
+    def _fake(msgs):
+        seen["msgs"] = msgs
+        return "【0-3秒】推近展示\n【3-10秒】小幅环绕突出卖点"
+    monkeypatch.setattr(video_wizard, "_chat", _fake)
+    out = video_wizard.auto_direction(Image.new("RGB", (32, 32)), tier=2, seconds=10)
+    assert "【0-3秒】" in out
+    assert any(c.get("type") == "image_url" for c in seen["msgs"][0]["content"])   # 确实看了图
+
+
+def test_wizard_auto_endpoint_charges_title(client, auth_headers, monkeypatch, png):
+    # /wizard/auto:mock 看图 → 单镜脚本;扣 title=1
+    from app.services import video_wizard
+    monkeypatch.setattr(video_wizard, "auto_direction", lambda *a, **k: "【0-5秒】推近展示卖点")
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/wizard/auto", headers=auth_headers,
+                    data={"tier": "1", "seconds": "10"},
+                    files={"file": ("x.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    assert "【0-5秒】" in r.json()["description"]
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 1
+
+
+def test_wizard_auto_no_key_502_refunds(client, auth_headers, png):
+    # 无 openai key(conftest 清空)→ auto_direction 抛错 → 502 + 退点
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/wizard/auto", headers=auth_headers,
+                    data={"tier": "1"}, files={"file": ("x.png", png(), "image/png")})
+    assert r.status_code == 502
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0

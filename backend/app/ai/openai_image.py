@@ -123,7 +123,8 @@ class OpenAIImageClient:
     # ---- 图生图 / 改图 / 换装换背景 ----
     def edit(self, image: Image.Image, prompt: str,
              mask: Image.Image | None = None, size: str = "auto",
-             background: str = "auto") -> Image.Image:
+             background: str = "auto",
+             timeout: float | None = None, max_retries: int | None = None) -> Image.Image:
         image = _cap_for_edit(image)  # 缩到 ≤1024:省上传+网关耗时(输出本就≤1024,质量不变)
         kwargs = dict(
             model=self.model,
@@ -133,8 +134,17 @@ class OpenAIImageClient:
         if mask is not None:
             # mask 必须与图同尺寸(图缩了 mask 也要跟着缩);force_png:mask=alpha 区域,绝不能 JPEG
             kwargs["mask"] = _file_tuple(mask.resize(image.size, Image.LANCZOS), "mask", force_png=True)
+        # 调用方可覆盖单次超时/重试(如视频母帧:给慢中转更长的单次出图窗口 + 不做超时翻倍重试)。
+        client = self.client
+        if timeout is not None or max_retries is not None:
+            opts = {}
+            if timeout is not None:
+                opts["timeout"] = timeout
+            if max_retries is not None:
+                opts["max_retries"] = max_retries
+            client = self.client.with_options(**opts)
         with _API_GATE:  # 限并发,避免整批超时(图裂变 N 路并发→网关压不住→全超时)
-            resp = self.client.images.edit(**kwargs)
+            resp = client.images.edit(**kwargs)
         return self._decode(resp)
 
     # ---- 多图合成(产品照 + 设计 → 真实感套图)----

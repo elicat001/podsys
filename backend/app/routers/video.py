@@ -99,20 +99,53 @@ def wizard_proposals(
     seconds: int = Form(10),
     language: str = Form("葡萄牙语"),
     category: str = Form("通用"),
+    tier: int = Form(3),              # 出片层级:1/2 → 单镜智能导向(产品向/结果向);3 → L3 故事/分镜
     user: User = Depends(charge_for("title")),
     db: Session = Depends(get_db),
 ):
-    """智能向导 Step2:据商品简报 → 3 个不同方向的视频方案。同步,扣 title=1,失败退点。「换一批」=再调一次。"""
+    """智能向导 Step2:据商品简报 → 3 个不同方向的视频方案。同步,扣 title=1,失败退点。「换一批」=再调一次。
+    tier=1/2 时产出【单镜】方案(L1 产品向 / L2 结果向),不含分镜——把向导智能适配到单镜,不生硬照搬 L3。"""
     if seconds not in DURATIONS:
         seconds = 10
+    if tier not in (1, 2, 3):
+        tier = 3
     try:
         from ..services.video_wizard import generate_proposals
         proposals = generate_proposals(name[:200], audience[:300], selling_points[:600],
-                                       seconds=seconds, language=language, category=category, n=3)
+                                       seconds=seconds, language=language, category=category, n=3, tier=tier)
     except Exception as exc:  # noqa: BLE001
         refund(db, user, "title")
         raise HTTPException(status_code=502, detail="方案生成失败(作图 AI 服务未配置或调用失败)") from exc
     return {"proposals": proposals}
+
+
+@router.post("/wizard/auto")
+def wizard_auto(
+    file: UploadFile = File(...),
+    tier: int = Form(1),              # 1=产品向(L1)/ 2=结果向(L2)
+    seconds: int = Form(10),
+    language: str = Form("葡萄牙语"),
+    category: str = Form("通用"),
+    user: User = Depends(charge_for("title")),
+    db: Session = Depends(get_db),
+):
+    """L1/L2 一键智能导向:看商品图 → 一句【为这件商品定制的单镜方案】(填进「视频描述」)。同步,扣 title=1,失败退点。
+    走 chat 视觉接口(与坏掉的母帧 images.edit 无关);无 key/失败 → 502 + 退点。"""
+    img = read_image_or_refund(file.file.read(), db, user, "title")
+    if seconds not in DURATIONS:
+        seconds = 10
+    if tier not in (1, 2):
+        tier = 1
+    try:
+        from ..services.video_wizard import auto_direction
+        text = auto_direction(img, tier=tier, seconds=seconds, language=language, category=category)
+    except Exception as exc:  # noqa: BLE001
+        refund(db, user, "title")
+        raise HTTPException(status_code=502, detail="智能导向失败(作图 AI 服务未配置或调用失败)") from exc
+    if not text:
+        refund(db, user, "title")
+        raise HTTPException(status_code=502, detail="智能导向未返回内容,请重试")
+    return {"description": text[:2000]}
 
 
 @router.post("/ai-generate")
