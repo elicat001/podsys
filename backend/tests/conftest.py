@@ -84,6 +84,43 @@ from app.config import settings  # noqa: E402
 from app.db import Base, engine, init_db  # noqa: E402
 from app.main import app  # noqa: E402
 
+# ── 并发隔离:跨进程文件锁,串行化「占用测试库」──────────────────────────────
+# 同机多个 pytest 进程共用同一个 *_test 库时,各自在 session 开头 drop_all+create_all 会互相抢
+# MySQL 元数据锁 → 死锁/长时间卡住(历史踩坑:两个 pytest 同时跑,全卡死)。况且共用一个库本就
+# 不能真并行(会互相污染对方造的数据)。这里用一把**跨进程文件锁**把「占用测试库」串行化:
+# 同一时刻只有一个 pytest 进程持锁跑,后到的进程阻塞等待,前者整个 session 结束(进程退出)才释放。
+# 用 OS 级建议锁(msvcrt/fcntl),进程崩溃由 OS 自动释放,**无残留死锁**。
+# (要真并行——各进程独立库——可后续接 pytest-xdist + 每 worker 一个库;那是另一档优化,这里先根治死锁。)
+_DB_LOCK_FH = None
+
+
+def _acquire_shared_db_lock() -> None:
+    """阻塞直到拿到测试库的独占锁;持到本进程退出(不显式释放,靠 OS 在进程结束时回收)。"""
+    global _DB_LOCK_FH
+    import sys
+    import time
+    lock_path = Path(tempfile.gettempdir()) / "podsys_test_db.lock"
+    _DB_LOCK_FH = open(lock_path, "a+")  # noqa: SIM115 — 故意常开:持锁到进程退出
+    waited = 0.0
+    if sys.platform == "win32":
+        import msvcrt
+        _DB_LOCK_FH.seek(0)
+        while True:
+            try:
+                msvcrt.locking(_DB_LOCK_FH.fileno(), msvcrt.LK_LOCK, 1)  # 独占;单次最多等 ~10s 抛错
+                break
+            except OSError:
+                waited += 10
+                if waited and waited % 60 == 0:
+                    print(f"[conftest] 等待其它 pytest 进程释放测试库…已等 {int(waited)}s", flush=True)
+                time.sleep(0.5)
+    else:
+        import fcntl
+        fcntl.flock(_DB_LOCK_FH.fileno(), fcntl.LOCK_EX)  # 阻塞直到独占
+
+
+_acquire_shared_db_lock()
+
 # 干净起点:确认连的是 *_test 库后,重建全部表(drop+create),每次跑测试从空库开始,不污染真实库
 assert (engine.url.database or "").endswith("_test"), "拒绝在非 _test 库上重建表"
 try:
