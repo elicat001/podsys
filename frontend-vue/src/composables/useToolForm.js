@@ -60,12 +60,22 @@ export function useToolForm(toolRef) {
     }
   }
 
-  const fileInputs = computed(() => (toolRef.value?.inputs || []).filter((i) => i.type === 'file' || i.type === 'file2'))
-  const paramInputs = computed(() => (toolRef.value?.inputs || []).filter((i) => i.type !== 'file' && i.type !== 'file2'))
+  // 条件显隐:字段带 showWhen={key:value,...} 时,仅当 form 中这些键全部相等才显示(如「数量」仅商品图可选)。
+  function fieldVisible(f) {
+    if (!f.showWhen) return true
+    return Object.entries(f.showWhen).every(([k, v]) => form[k] === v)
+  }
+
+  const fileInputs = computed(() => (toolRef.value?.inputs || []).filter((i) => (i.type === 'file' || i.type === 'file2') && fieldVisible(i)))
+  const paramInputs = computed(() => (toolRef.value?.inputs || []).filter((i) => i.type !== 'file' && i.type !== 'file2' && fieldVisible(i)))
 
   const costHint = computed(() => {
     const t = toolRef.value
     if (!t) return ''
+    // costRule:当 form 命中 when 的全部键值时,用规则价覆盖(如商品图·一组打包 20 点)。
+    if (t.costRule && Object.entries(t.costRule.when).every(([k, v]) => form[k] === v)) {
+      return `扣 ${t.costRule.cost} 点`
+    }
     if (t.costPerN) {
       const n = t.costPerN === 'templates' ? (form.templates?.length || 0) : Number(form[t.costPerN] || 0)
       return n ? `约扣 ${t.cost * n} 点` : `每张 ${t.cost} 点`
@@ -78,6 +88,7 @@ export function useToolForm(toolRef) {
     const tool = toolRef.value
     const fd = {}
     for (const f of tool.inputs) {
+      if (!fieldVisible(f)) continue   // 被条件隐藏的字段不提交(避免发送过期的旧值,如印花时残留的 group=set)
       const v = form[f.key]
       if (f.type === 'file') {
         if (!v) throw new Error(`请上传「${f.label}」`)

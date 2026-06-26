@@ -133,13 +133,26 @@ def _source_preview_url(job_id: str, img: Image.Image, max_side: int = 640) -> s
 
 
 def _work_generate(job_id: str, job: Job, db: Session) -> dict:
-    from .services.generate import text_to_image
+    from .services.generate import generate_product_set, text_to_image
     p = job.params
-    img = text_to_image(p["prompt"], size=p.get("size", "1024x1024"))
+    size = p.get("size", "1024x1024")
+    orig = p.get("orig", "")
+    if p.get("is_set"):  # 商品图·一组:5 张分镜,产出 images 数组(任务中心按多图网格渲染)
+        urls = []
+        for slug, label, img in generate_product_set(p["prompt"], size=size):
+            name = f"{slug}.png"
+            img.save(storage.output_path(job_id, name), format="PNG")
+            url = storage.output_url(job_id, name)
+            urls.append(url)
+            if job.owner_id is not None:
+                save_as_asset(db, job.owner_id, img, f"商品图·{label}: {orig[:16]}", url, source="generated")
+        return {"images": urls, "prompt_used": p["prompt"], "hint": p.get("hint", "")}
+    # 单张(印花 / 商品图)
+    img = text_to_image(p["prompt"], size=size)
     img.save(storage.output_path(job_id, "generated.png"), format="PNG")
     url = storage.output_url(job_id, "generated.png")
     if job.owner_id is not None:
-        save_as_asset(db, job.owner_id, img, f"文生图: {p.get('orig', '')[:24]}", url, source="generated")
+        save_as_asset(db, job.owner_id, img, f"文生图: {orig[:24]}", url, source="generated")
     return {"image_url": url, "prompt_used": p["prompt"], "hint": p.get("hint", "")}
 
 
@@ -614,7 +627,7 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
 
 # kind → (work, refund_op, n_param)。n_param 非空时退点笔数 = job.params[n_param](如裂变按张扣)。
 TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
-    "generate": (_work_generate, "generate", None),
+    "generate": (_work_generate, "generate", "n"),  # 一组打包=4笔generate(20点),单张=1笔;按 n 退点
     "edit": (_work_edit, "edit", None),
     "variants": (_work_variants, "edit", "n"),
     "restyle": (_work_restyle, "edit", None),

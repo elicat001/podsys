@@ -41,11 +41,11 @@ from .routers import templates as templates_router
 from .routers import vectorize as vectorize_router
 from .routers import video as video_router
 from .routers import video_cases as video_cases_router
-from .services.billing import charge_for, refund
+from .services.billing import InsufficientCredits, charge, charge_for, cost_of, refund
 from .services.collectors import detect_platform, upgrade_to_hires
 from .services.export import export_production
 from .services.extract import extract_print
-from .services.generate import image_to_image, refine_prompt, text_to_image
+from .services.generate import image_to_image, refine_generate_prompt, text_to_image
 from .services.jobs import create_job, run_job
 from .services.library import save_as_asset
 from .services.mockup import list_templates, render_mockup
@@ -254,18 +254,48 @@ async def process_async(
     return JSONResponse({"job_id": jid, "status": "pending"})
 
 
+# 文生图「商品图·一组」(5 图)的打包优惠价(点)。须为 generate 单价的整数倍,便于折算成扣点笔数。
+SET_PACKAGE_CREDITS = 20
+
+
 @app.post("/api/generate")
 async def generate(background_tasks: BackgroundTasks,
                    prompt: str = Form(...), size: str = Form("1024x1024"),
-                   user: User = Depends(charge_for("generate")),
+                   gen_type: str = Form("print"),   # print=印花(透明印花稿)| product=商品图(实拍风)
+                   group: str = Form("single"),     # single=一张 | set=一组(5图,仅商品图)
+                   user: User = Depends(current_user),
                    db: Session = Depends(get_db)):
-    """文生图(gpt-image / image2)。对偏薄的描述温和补全并透明返回。"""
-    used_prompt, hint = refine_prompt(prompt)
-    if settings.openai_api_key:  # gpt-image 耗时 -> Celery 后台作业,前端轮询 /api/jobs/{id}
-        # 无输入图(纯文生图),只把 prompt/hint/size 传给 worker(见 tasks._work_generate)。
+    """文生图。两个维度:
+    - 类型:印花(transparent 印花稿)/ 商品图(白底/场景/穿着等实拍风)。
+    - 数量:一张 / 一组(仅商品图;一次出 白底/尺寸/场景/细节/穿着 5 图,打包价)。
+    计费:单张=5点;一组打包=20点(折算 4 笔 generate,任一失败按笔全退、笔数对齐)。
+    执行:一组 / 有 key 的单张一律走 Celery 后台(任务中心看结果);无 key 单张本地同步出图(沿用原契约)。"""
+    gen_type = gen_type if gen_type in ("print", "product") else "print"
+    is_set = gen_type == "product" and group == "set"   # 印花不支持一组(强制单张)
+    # 一组打包优惠价 20 点(折算成 generate 的笔数,便于复用扣点/退点原语,笔数对齐 reaper/worker);单张 5 点。
+    n = SET_PACKAGE_CREDITS // cost_of("generate") if is_set else 1
+
+    # 按 n 预扣(打包价),余额不足全退 + 402(P0-1)
+    charged = 0
+    try:
+        for _ in range(n):
+            charge(db, user, "generate")
+            charged += 1
+    except InsufficientCredits as exc:
+        for _ in range(charged):
+            refund(db, user, "generate")
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
+
+    used_prompt, hint = refine_generate_prompt(prompt, gen_type)
+
+    # 一组,或有 key 的单张 -> Celery 后台作业(前端轮询 /api/jobs/{id})
+    if is_set or settings.openai_api_key:
         return JSONResponse(submit_celery(
             run_tool, db, user, kind="generate", tool_id="generate", op="generate", raw=None,
-            params={"prompt": used_prompt, "orig": prompt, "hint": hint, "size": size}))
+            params={"prompt": used_prompt, "orig": prompt, "hint": hint, "size": size,
+                    "gen_type": gen_type, "is_set": is_set, "n": n}, n=n))
+
+    # 无 key 单张:本地程序化同步出图
     try:
         img = text_to_image(used_prompt, size=size)
     except Exception as exc:  # noqa: BLE001

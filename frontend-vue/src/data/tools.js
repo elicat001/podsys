@@ -30,9 +30,16 @@ export const TOOLS = [
   {
     id: 'generate', name: '文生图', icon: '✨', cat: '印花设计', ep: 'generate',
     async: true, result: 'image', cost: 5,
-    desc: '输入描述生成印花(主体 + 风格 + 背景),约 20~60 秒',
+    // 一组(商品图·5图)打包优惠价 20 点;其余单张 5 点(costRule 命中时覆盖 cost 展示)。
+    costRule: { when: { gen_type: 'product', group: 'set' }, cost: 20 },
+    desc: '输入描述生成印花稿,或生成商品图(白底/场景/穿着等实拍风)。商品图可一次出一组(白底·尺寸·场景·细节·穿着 5 图)。约 20~60 秒/张',
     inputs: [
-      { key: 'prompt', type: 'textarea', label: '描述', required: true, placeholder: '例:卡通柴犬骑士,扁平矢量,白底' },
+      { key: 'prompt', type: 'textarea', label: '描述', required: true, placeholder: '例:卡通柴犬骑士,扁平矢量,白底 / 牛仔外套' },
+      { key: 'gen_type', type: 'select', label: '类型', default: 'print',
+        options: [['print', '印花(透明 PNG 印花稿)'], ['product', '商品图(实拍风 · 可出一组)']] },
+      // 数量:仅商品图可选「一组」;印花只支持单张,故该项仅在类型=商品图时显示。
+      { key: 'group', type: 'select', label: '数量', default: 'single', showWhen: { gen_type: 'product' },
+        options: [['single', '一张'], ['set', '一组 · 5 图(白底/尺寸/场景/细节/穿着)']] },
       { key: 'size', type: 'select', label: '尺寸', default: '1024x1024',
         options: [['1024x1024', '正方 1:1'], ['1536x1024', '横版 3:2'], ['1024x1536', '竖版 2:3'], ['auto', '自动']] },
     ],
