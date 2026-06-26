@@ -28,7 +28,6 @@ export const SIDEBARS = {
   ],
   video: [
     { icon: '🎬', label: '图生视频', to: '/app/video/generate' },
-    { icon: '🎞️', label: '案例库', to: '/app/video/cases' },
   ],
   publish: [
     { icon: '🏪', label: '店铺', to: '/app/publish/shops' },

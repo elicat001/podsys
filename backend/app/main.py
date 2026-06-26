@@ -40,7 +40,6 @@ from .routers import team as team_router
 from .routers import templates as templates_router
 from .routers import vectorize as vectorize_router
 from .routers import video as video_router
-from .routers import video_cases as video_cases_router
 from .services.billing import InsufficientCredits, charge, charge_for, cost_of, refund
 from .services.collectors import detect_platform, upgrade_to_hires
 from .services.export import export_production
@@ -107,7 +106,6 @@ app.include_router(me_router.router)
 app.include_router(video_router.router)
 app.include_router(product_admin_router.router)
 app.include_router(space_router.router)
-app.include_router(video_cases_router.router)
 app.include_router(templates_router.router)
 app.include_router(print_extract_router.router)
 app.include_router(export_router.router)

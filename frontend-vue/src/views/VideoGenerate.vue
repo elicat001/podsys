@@ -202,7 +202,6 @@ onMounted(async () => {
   <div class="vg">
     <div class="head">
       <h2>🎬 图生视频</h2>
-      <router-link to="/app/video/cases" class="muted lnk">案例库 →</router-link>
     </div>
     <p class="muted sub">上传商品图 → 选时长与视频类型,一键生成 TikTok 风格电商短视频(默认无声;可开「旁白」加真人配音解说,葡/英/西/中)。</p>
     <div v-if="!aiReady" class="warn">⚠ 未配置 AI 视频服务(智谱 key),生成结果会是<strong>本地降级 GIF</strong>。配好 key 后即真视频。</div>
