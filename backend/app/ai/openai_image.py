@@ -6,7 +6,9 @@ Powers four tasks through one model:
   - 图生图/改图      -> images.edit (image + prompt)
   - 换装/换背景      -> images.edit (image [+ mask] + prompt)
 
-gpt-image-1 always returns base64 PNG (no url option), so we decode b64_json.
+gpt-image-1 returns base64 PNG; some OpenAI-compatible 中转网关 instead return a url
+(esp. for edit / background=transparent). `_decode` handles both (b64 优先,退而取 url),
+两者都没有就抛可定位的错误,而不是 base64.b64decode(None) 那种看不懂的 TypeError。
 NOTE: gpt-image-1 is NOT a super-resolution model — do not use it for 无损放大
 of print files (it regenerates pixels and will distort the design). Keep a real
 upscaler (Pillow/Real-ESRGAN) for production files. See README.
@@ -23,6 +25,9 @@ from ..config import settings
 
 # gpt-image-1 accepts these sizes (plus "auto")
 VALID_SIZES = {"1024x1024", "1536x1024", "1024x1536", "auto"}
+
+# 下载网关返回的图片 url 时的大小上限(防 OOM:超大响应不收)。
+_MAX_IMG_BYTES = 40 * 1024 * 1024
 
 # 全局限流:同时在飞的 gpt-image 网关调用数上限。本网关并发跑多张 gpt-image 会让每张都被拖过
 # 单次超时(250s)→ 整批 APITimeoutError(图裂变 4 路并发实测全超时)。这里把"同时在飞"的调用
@@ -103,8 +108,32 @@ class OpenAIImageClient:
         )
 
     def _decode(self, resp) -> Image.Image:
-        b64 = resp.data[0].b64_json
-        return Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGBA")
+        """把 gpt-image 响应解码成 RGBA 图,对网关返回形态差异做加固:
+        ① 有 b64_json → 直接 base64 解码(gpt-image-1 官方行为);
+        ② 没 b64 但有 url → 下载该图(部分 OpenAI 兼容中转对 edit / background=transparent 返 url 而非 b64,
+           历史上一键抠图智能运行因此抛 `base64.b64decode(None)` 的 TypeError);
+        ③ 两者都没有(或 data 为空)→ 抛**可定位**的错误,交由上层退点 + 502,而不是看不懂的 TypeError。"""
+        data = getattr(resp, "data", None) or []
+        item = data[0] if data else None
+        b64 = getattr(item, "b64_json", None) if item is not None else None
+        if b64:
+            return Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGBA")
+        url = getattr(item, "url", None) if item is not None else None
+        if url:
+            return self._fetch_image(url)
+        raise RuntimeError("图片网关未返回图像数据(b64_json 与 url 均为空);"
+                           "可能是网关超时、内容被拦截或返回了非标准响应")
+
+    @staticmethod
+    def _fetch_image(url: str) -> Image.Image:
+        """下载网关返回的图片 url → RGBA。带超时 + 大小上限(防 OOM:超大响应不收)。"""
+        import httpx  # 惰性(本就是 openai SDK 传递依赖,已在 requirements 显式登记)
+        with httpx.Client(timeout=settings.openai_timeout, follow_redirects=True) as c:
+            r = c.get(url)
+            r.raise_for_status()
+        if len(r.content) > _MAX_IMG_BYTES:
+            raise ValueError("网关返回的图片过大,超出上限")
+        return Image.open(io.BytesIO(r.content)).convert("RGBA")
 
     @staticmethod
     def _size(size: str) -> str:
