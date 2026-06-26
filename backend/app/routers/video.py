@@ -22,6 +22,20 @@ from ..web_utils import read_image_or_refund, submit_celery
 router = APIRouter(prefix="/api/video", tags=["video"])
 
 
+def _ai_fail_detail(prefix: str, exc: Exception) -> str:
+    """把作图 AI 调用失败的真因翻成友好中文(不再泛化吞错)。常见:余额不足→提示充值 / 超时 / 无 key / key 无效。"""
+    s = str(exc)
+    if "insufficient_user_quota" in s or "额度不足" in s or "余额不足" in s:
+        return f"{prefix}:作图 AI 账户余额不足,请充值后重试。"
+    if "未配置" in s or "API_KEY" in s.upper():
+        return f"{prefix}:作图 AI 未配置(缺 key)。"
+    if "timed out" in s or "Timeout" in s or "APITimeout" in s:
+        return f"{prefix}:作图 AI 网关超时,请稍后重试。"
+    if "PermissionDenied" in s or " 401" in s or " 403" in s:
+        return f"{prefix}:作图 AI key 无效或无权限。"
+    return f"{prefix}:{s[:140]}"
+
+
 @router.get("/options")
 def options(user: User = Depends(current_user)):
     # ai_ready=true 表示已配好真 AI 视频(否则后端会兜底成本地 GIF)。前端据此提示用户。
@@ -65,7 +79,7 @@ def smart_describe_endpoint(
                               category=category, selling_points=selling_points[:500])
     except Exception as exc:  # noqa: BLE001
         refund(db, user, "title")
-        raise HTTPException(status_code=502, detail="智能识别失败(作图 AI 服务未配置或调用失败)") from exc
+        raise HTTPException(status_code=502, detail=_ai_fail_detail("智能识别失败", exc)) from exc
     if not text:
         refund(db, user, "title")
         raise HTTPException(status_code=502, detail="智能识别未返回内容,请重试")
@@ -87,7 +101,7 @@ def wizard_brief(
         brief = describe_product(img, selling_points=selling_points[:500], language=language)
     except Exception as exc:  # noqa: BLE001
         refund(db, user, "title")
-        raise HTTPException(status_code=502, detail="商品信息识别失败(作图 AI 服务未配置或调用失败)") from exc
+        raise HTTPException(status_code=502, detail=_ai_fail_detail("商品信息识别失败", exc)) from exc
     return brief
 
 
@@ -115,7 +129,7 @@ def wizard_proposals(
                                        seconds=seconds, language=language, category=category, n=3, tier=tier)
     except Exception as exc:  # noqa: BLE001
         refund(db, user, "title")
-        raise HTTPException(status_code=502, detail="方案生成失败(作图 AI 服务未配置或调用失败)") from exc
+        raise HTTPException(status_code=502, detail=_ai_fail_detail("方案生成失败", exc)) from exc
     return {"proposals": proposals}
 
 
@@ -141,7 +155,7 @@ def wizard_auto(
         text = auto_direction(img, tier=tier, seconds=seconds, language=language, category=category)
     except Exception as exc:  # noqa: BLE001
         refund(db, user, "title")
-        raise HTTPException(status_code=502, detail="智能导向失败(作图 AI 服务未配置或调用失败)") from exc
+        raise HTTPException(status_code=502, detail=_ai_fail_detail("智能导向失败", exc)) from exc
     if not text:
         refund(db, user, "title")
         raise HTTPException(status_code=502, detail="智能导向未返回内容,请重试")

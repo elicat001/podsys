@@ -1134,3 +1134,13 @@ def test_wizard_auto_no_key_502_refunds(client, auth_headers, png):
                     data={"tier": "1"}, files={"file": ("x.png", png(), "image/png")})
     assert r.status_code == 502
     assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0
+
+
+def test_ai_fail_detail_maps_real_reasons():
+    # 502 文案不再泛化吞错:把真因翻成友好中文(余额不足→提示充值 / 超时 / 无 key / key 无效)。
+    from app.routers.video import _ai_fail_detail
+    quota = Exception("Error code: 403 - {'error': {'message': '用户额度不足', 'code': 'insufficient_user_quota'}}")
+    assert "余额不足" in _ai_fail_detail("智能导向失败", quota) and "充值" in _ai_fail_detail("x", quota)
+    assert "超时" in _ai_fail_detail("x", Exception("Request timed out."))
+    assert "缺 key" in _ai_fail_detail("x", RuntimeError("POD_OPENAI_API_KEY 未配置"))
+    assert "无效或无权限" in _ai_fail_detail("x", Exception("PermissionDenied 403"))
