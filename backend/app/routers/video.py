@@ -152,14 +152,14 @@ def wizard_auto(
         tier = 1
     try:
         from ..services.video_wizard import auto_direction
-        text = auto_direction(img, tier=tier, seconds=seconds, language=language, category=category)
+        result = auto_direction(img, tier=tier, seconds=seconds, language=language)
     except Exception as exc:  # noqa: BLE001
         refund(db, user, "title")
         raise HTTPException(status_code=502, detail=_ai_fail_detail("智能导向失败", exc)) from exc
-    if not text:
+    if not result.get("description"):
         refund(db, user, "title")
         raise HTTPException(status_code=502, detail="智能导向未返回内容,请重试")
-    return {"description": text[:2000]}
+    return result   # {description, scene} — scene 仅 L2 有值,L1 为空
 
 
 @router.post("/ai-generate")
@@ -173,7 +173,8 @@ def ai_generate(
     scene2: str = Form(""),          # 分镜②场景母帧描述
     scene3: str = Form(""),          # 分镜③场景母帧描述;给齐 + 开场景首帧 → per-shot 母帧(动作链)
     language: str = Form("葡萄牙语"),  # 配音/对白语言(默认葡语)
-    category: str = Form("通用"),     # 商品类目:L2 品类模板用它选使用场景母帧;也用作入库标题
+    category: str = Form("通用"),     # 商品类目:入库标题用;L2 母帧场景优先用 scene(向导产出),其次回退类目默认
+    scene: str = Form(""),            # L2 单镜结果母帧场景(智能导向产出):看图定制、任意商品通用、不靠固定清单
     tier: int = Form(1),              # 出片模式(三层体系):1=通用产品片(默认最稳)/ 2=品类模板 / 3=Hero真人
     scene_frame: bool = Form(False),  # 两步:先 gpt-image 生成场景首帧再生视频(缓解硬切;无 key 自动跳过)
     aspect: str = Form("portrait"),
@@ -243,8 +244,9 @@ def ai_generate(
         raw=img1, mask_raw=img2, n=n,
         params={"prompt": prompt[:2000], "prompt2": prompt2[:2000], "prompt3": prompt3[:2000],
                 "scene1": scene1[:500], "scene2": scene2[:500], "scene3": scene3[:500],
+                "scene": scene[:500],  # L2 单镜结果母帧场景(向导产出,看图定制任意商品;空→回退类目默认)
                 "two_shot": two_shot, "n": n, "language": language[:20],
-                "tier": tier, "template": template,   # tier=出片层级;template=universal(产品前置)/creative(人物行为)
+                "tier": tier, "template": template,
                 "category": category, "scene_frame": use_scene, "subtitle": bool(subtitle),
                 "native_sound": bool(native_sound), "voiceover": bool(voiceover),
                 "aspect": aspect, "resolution": resolution, "seconds": seconds, "frames2": bool(img2)},

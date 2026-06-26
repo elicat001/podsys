@@ -1099,7 +1099,7 @@ def test_wizard_proposals_tier2_result_has_scene(monkeypatch):
 
 
 def test_auto_direction_one_call_looks_at_image(monkeypatch):
-    # 一键导向:一次 chat、消息里带 image_url(看图),返回单镜脚本
+    # 一键导向:一次 chat、消息里带 image_url(看图),返回 {description, scene}(场景和方案同源、不打架)
     from PIL import Image
 
     from app.services import video_wizard
@@ -1107,23 +1107,31 @@ def test_auto_direction_one_call_looks_at_image(monkeypatch):
 
     def _fake(msgs):
         seen["msgs"] = msgs
-        return "【0-3秒】推近展示\n【3-10秒】小幅环绕突出卖点"
+        return '{"storyboard":"【0-3秒】推近展示","scene":"桌面温暖光下手拿起玩具"}'
     monkeypatch.setattr(video_wizard, "_chat", _fake)
     out = video_wizard.auto_direction(Image.new("RGB", (32, 32)), tier=2, seconds=10)
-    assert "【0-3秒】" in out
+    assert isinstance(out, dict)
+    assert "【0-3秒】" in out["description"]
+    assert "桌面" in out["scene"]             # L2 有场景
     assert any(c.get("type") == "image_url" for c in seen["msgs"][0]["content"])   # 确实看了图
+    # L1 不产 scene
+    out1 = video_wizard.auto_direction(Image.new("RGB", (32, 32)), tier=1, seconds=10)
+    assert out1["scene"] == ""
 
 
 def test_wizard_auto_endpoint_charges_title(client, auth_headers, monkeypatch, png):
-    # /wizard/auto:mock 看图 → 单镜脚本;扣 title=1
+    # /wizard/auto:mock 看图 → {description, scene};扣 title=1;L2 scene 透传
     from app.services import video_wizard
-    monkeypatch.setattr(video_wizard, "auto_direction", lambda *a, **k: "【0-5秒】推近展示卖点")
+    monkeypatch.setattr(video_wizard, "auto_direction",
+                        lambda *a, **k: {"description": "【0-5秒】推近展示卖点", "scene": "书桌温暖光下"})
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     r = client.post("/api/video/wizard/auto", headers=auth_headers,
-                    data={"tier": "1", "seconds": "10"},
+                    data={"tier": "2", "seconds": "10"},
                     files={"file": ("x.png", png(), "image/png")})
     assert r.status_code == 200, r.text
-    assert "【0-5秒】" in r.json()["description"]
+    body = r.json()
+    assert "【0-5秒】" in body["description"]
+    assert body["scene"] == "书桌温暖光下"    # 场景透传给前端
     assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 1
 
 

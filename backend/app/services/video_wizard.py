@@ -147,21 +147,32 @@ def _single_shot_proposals(tier: int, name: str, audience: str, selling_points: 
 
 
 def auto_direction(image: Image.Image, *, tier: int = 1, seconds: int = 10,
-                   language: str = "葡萄牙语", category: str = "通用") -> str:
-    """L1/L2 一键智能导向:看图 → 一句【为这件商品定制的单镜方案】(storyboard)。一次 chat、不依赖母帧。"""
+                   language: str = "葡萄牙语") -> dict:
+    """L1/L2 一键智能导向:看图 → {description(单镜脚本), scene(母帧场景,L1 为空)} 。
+    一次 chat,同时产出镜头脚本 + L2 结果母帧场景——两者同源不打架,且任意商品通用(不靠固定类目清单)。"""
     d = _TIER_DIRECTION.get(tier, _TIER_DIRECTION[1])
+    scene_field = (
+        '"scene":"母帧场景(把这件商品放进什么好看的结果/氛围里:具体描述场景+人物状态,20字内,如 桌面温暖光线下手拿起这个玩具旋转)"'
+        if tier == 2 else '"scene":""'
+    )
     text = (
-        f"你是 TikTok 跨境电商短视频【{d['role']}】。看这张商品图,为它设计【一个最佳的单镜 · 不分镜 · {seconds}秒】"
-        f"带货方案,聚焦{d['task']}。\n{d['rule']}\n"
-        f"投放市场/语言:{language};商品类目:{category}。\n"
-        f"只输出一句中文【单镜脚本】(按 {seconds}秒分时间轴,如【0-3秒】…:景别+运镜+如何突出这件商品的卖点),"
-        "不要解释、不要 JSON、不要 markdown。"
+        f"你是 TikTok 跨境电商短视频【{d['role']}】。仔细观察这张商品图,识别它是什么商品,为它设计"
+        f"【一个最佳的单镜 · 不分镜 · {seconds}秒】带货方案,聚焦{d['task']}。\n{d['rule']}\n"
+        f"投放市场/语言:{language}。\n"
+        f"只输出一个 JSON 对象(禁止任何解释/markdown),字段固定:\n"
+        f'{{"storyboard":"单镜脚本,按{seconds}秒分时间轴(如【0-3秒】…):景别+运镜+如何突出这件商品的卖点",{scene_field}}}'
     )
     msgs = [{"role": "user", "content": [
         {"type": "text", "text": text},
         {"type": "image_url", "image_url": {"url": _data_url(image)}},
     ]}]
-    return (_chat(msgs) or "").strip()[:2000]
+    raw = _loads_json(_chat(msgs) or "{}")
+    if not isinstance(raw, dict):
+        raw = {}
+    return {
+        "description": str(raw.get("storyboard") or raw.get("description") or "").strip()[:2000],
+        "scene": str(raw.get("scene") or "").strip()[:500] if tier == 2 else "",
+    }
 
 
 def generate_proposals(name: str, audience: str, selling_points: str, *, seconds: int = 10,

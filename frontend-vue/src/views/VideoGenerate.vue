@@ -27,6 +27,7 @@ const aiReady = ref(true)
 const smartReady = ref(false)
 const wizardOpen = ref(false)   // 智能方案向导弹窗(L1/L2 单镜 / L3 分镜)
 const autoing = ref(false)      // L1/L2 一键智能导向(看图定制单镜方案)进行中
+const autoScene = ref('')       // L2 单镜结果母帧场景(智能导向产出,看图定制,任意商品通用)
 
 // ── 三层出片体系(默认 L1)。优先从 options 拉文案,拉不到用静态兜底 ──────────
 const tier = ref(1)
@@ -114,6 +115,7 @@ function clearSlot(slot) {
 // 切换出片模式:L1/L2 不支持 15s → 落到 10s;清掉 L3 专用的脚本/向导状态
 function pickTier(id) {
   tier.value = id
+  autoScene.value = ''   // 切模式时清掉上次导向产出的场景(避免 L1 的场景串到 L2)
   if (id !== 3) {
     if (seconds.value === 15) seconds.value = 10
     selType.value = ''
@@ -163,9 +165,9 @@ async function autoDirect() {
     fd.append('tier', tier.value)
     fd.append('seconds', seconds.value || 10)
     fd.append('language', language.value)
-    if (tier.value === 2) fd.append('category', category.value)
     const d = (await api.post('/video/wizard/auto', fd)).data
     prompt.value = d.description || ''
+    autoScene.value = d.scene || ''   // L2:看图产出的母帧场景(和方案同源、不打架);L1 为空
     selType.value = 'smart'
     if (auth.refreshBalance) auth.refreshBalance()
     ElMessage.success('✅ 已按这件商品定制单镜方案,可编辑后点生成')
@@ -175,7 +177,7 @@ async function autoDirect() {
     autoing.value = false
   }
 }
-function onWizardApply({ storyboard, shot1, shot2, shot3, scene1: s1, scene2: s2, scene3: s3, generate, sound }) {
+function onWizardApply({ storyboard, shot1, shot2, shot3, scene1: s1, scene2: s2, scene3: s3, scene: sc, generate, sound }) {
   if (seconds.value === 15) {          // 三分镜:把三段分镜脚本分别填进 分镜①/②/③(动作链)
     prompt.value = shot1 || storyboard || ''
     prompt2.value = shot2 || ''
@@ -183,9 +185,11 @@ function onWizardApply({ storyboard, shot1, shot2, shot3, scene1: s1, scene2: s2
     scene1.value = s1 || ''
     scene2.value = s2 || ''
     scene3.value = s3 || ''
+    autoScene.value = ''
   } else {
     prompt.value = storyboard
     scene1.value = ''; scene2.value = ''; scene3.value = ''
+    autoScene.value = sc || ''   // L2 单镜:用向导方案里的结果母帧场景(看图产出,和方案同源)
   }
   selType.value = 'smart'
   if (sound) {
@@ -216,7 +220,7 @@ async function run() {
       fd.append('scene2', scene2.value)
       fd.append('scene3', scene3.value)
     }
-    if (tier.value === 2) fd.append('category', category.value)  // L2 品类模板用类目选使用场景母帧
+    if (tier.value === 2 && autoScene.value) fd.append('scene', autoScene.value)  // L2:向导看图产出的定制场景(和方案同源)
     fd.append('language', language.value)
     fd.append('scene_frame', tier.value === 3 ? (sceneFrame.value ? 'true' : 'false') : 'false')
     fd.append('native_sound', nativeSound.value ? 'true' : 'false')
@@ -293,13 +297,7 @@ onMounted(async () => {
             </button>
           </div>
 
-          <!-- L2:类目选择(决定使用场景母帧) -->
-          <template v-if="tier === 2">
-            <div class="clabel mt">商品类目 <span class="opt">决定使用场景(服装上身/杯子晨用…)</span></div>
-            <div class="chips">
-              <button v-for="c in categories" :key="c" class="chip" :class="{ on: category === c }" @click="category = c">{{ c }}</button>
-            </div>
-          </template>
+          <!-- L2:类目不再是场景来源(场景由智能导向看图产出,任意商品通用)。category 只作入库标题兜底,不展示 -->
 
           <!-- L3:视频类型 + 智能向导 -->
           <template v-if="tier === 3">

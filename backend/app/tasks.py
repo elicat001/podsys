@@ -511,8 +511,8 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
                     f"详情:{str(exc)[:160]}")
             return None
 
-    if use_scene and not per_shot_frames:   # 单镜 / 双分镜未给场景:一张共享母帧(类目默认场景),同原行为
-        shared = _scene_frame("")
+    if use_scene and not per_shot_frames:   # 单镜结果母帧:优先用向导产出的看图场景;空→回退类目默认(不写死)
+        shared = _scene_frame(p.get("scene", ""))
         if shared is not None:
             imgs[0] = shared
     # 视频音效(默认关)= CogVideoX 自带音频(with_audio=true,AI 音效非真人);默认无声;旁白开 = 无声再叠真人 AI 旁白。三者:默认无声 / 音效 / 旁白互斥。
