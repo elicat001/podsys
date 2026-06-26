@@ -156,6 +156,48 @@ def _uniform_bg_cutout(image: Image.Image, tol: int = 36, band: int = 70,
     return Image.fromarray(out, "RGBA")
 
 
+# ── 智能抠图(AI 识别主体并扣出)──────────────────────────────────────────────
+# prompt 工程刻意「通用、不写死具体品类」:不假设主体是衣服/陀螺/杯子,而是让模型自己判定
+# 「画面主体/主商品」,连背景**带无关元素**(手、手指、手臂、模特/人台、支架、道具、其他物体、
+# 阴影倒影)一起去掉,只留主体、干净边缘、透明底。可选 hint 用于消歧(如一图多物时指定
+# 「被手指按住的那个」)或针对难图补充线索——避免为某类图硬编码逻辑而引入回归 bug。
+_SUBJECT_PROMPT = (
+    "Identify the single main foreground subject of this photo — the primary product or object "
+    "the image is about — and isolate it cleanly. "
+    "Completely remove the background and every element that is not part of that subject, "
+    "including any hands, fingers, arms, mannequins, models, holders, stands, props, other "
+    "people or objects, and any cast shadows or reflections. "
+    "Keep the main subject whole and undistorted, preserving its exact shape, colors, textures "
+    "and fine details with crisp, accurate edges — do not redraw, restyle, beautify, crop or add "
+    "anything. Output only the extracted subject on a fully transparent background."
+)
+
+
+def build_subject_prompt(hint: str = "") -> str:
+    """组装智能抠图的 prompt:通用主体识别词 +(可选)用户补充提示。
+
+    hint 为空 → 纯通用词(模型自己挑最主要的主体);hint 非空 → 追加一句,用于一图多物消歧
+    或难图补充线索(如「only keep the spinning toy pressed by the finger, remove the hand」)。
+    用户中文也可,模型能理解;不在此对 hint 做品类判断/硬编码。"""
+    base = _SUBJECT_PROMPT
+    h = (hint or "").strip()
+    if h:
+        base += (" The user gives this additional instruction about which subject to keep and "
+                 f"what to exclude — follow it: {h}.")
+    return base
+
+
+def ai_subject_cutout(image: Image.Image, hint: str = "") -> Image.Image:
+    """智能抠图:用 gpt-image 识别主体并扣出(连手/道具/背景一起去掉),输出透明 PNG。
+
+    注:gpt-image 是生成式模型,会**重绘**主体像素(非 100% 保真),换来的是本地算法做不到的
+    『去掉手指/支架等遮挡与无关元素、自动判定主体』——与印花提取 AI 路径同款取舍(见 CLAUDE.md)。
+    无 key 时 OpenAIImageClient() 会抛错,交由上层退点 + 502。"""
+    from .openai_image import OpenAIImageClient
+    out = OpenAIImageClient().remove_background(image, prompt=build_subject_prompt(hint))
+    return out.convert("RGBA")
+
+
 def cutout_best(image: Image.Image) -> Image.Image:
     """通用「一键抠图」,按背景复杂度分两路:
     ① 纯色/极平背景(卡通、干净棚拍)→ 边缘洪水填充(硬边、实心、无半透明残留,最适合简单图);

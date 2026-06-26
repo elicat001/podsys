@@ -159,10 +159,10 @@ class OpenAIImageClient:
         return self._decode(resp)
 
     # ---- 抠图 / 去背景 ----
-    def remove_background(self, image: Image.Image) -> Image.Image:
-        return self.edit(
-            image,
-            prompt=("Remove the background completely. Keep only the main subject / "
-                    "design intact with clean edges. Output a transparent background."),
-            background="transparent",
-        )
+    _DEFAULT_BG_PROMPT = ("Remove the background completely. Keep only the main subject / "
+                          "design intact with clean edges. Output a transparent background.")
+
+    def remove_background(self, image: Image.Image, prompt: str | None = None) -> Image.Image:
+        """去背景 → 透明底。prompt 留空用通用去背景词;调用方可传更强的『主体识别+扣出』提示
+        (见 ai.matting.build_subject_prompt),prompt 工程留在 matting 域,客户端只负责执行。"""
+        return self.edit(image, prompt=prompt or self._DEFAULT_BG_PROMPT, background="transparent")

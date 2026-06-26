@@ -347,13 +347,24 @@ def _work_production(job_id: str, job: Job, db: Session) -> dict:
 
 
 def _work_matting(job_id: str, job: Job, db: Session) -> dict:
-    """一键抠图:去背景 → 透明 PNG。优先 rembg/u2net(干净),兜底 pillow。登记为素材(可回收/计存储)。"""
-    from .ai.matting import cutout_best
-    out = cutout_best(_load_input(job_id)).convert("RGBA")
+    """一键抠图:去背景 → 透明 PNG。双引擎:
+    - fast(快速,本地):rembg/u2net(干净),兜底 pillow——纯去背景、保真原像素。
+    - ai(智能):gpt-image 识别主体并扣出(连手/道具/无关元素一起去掉),非保真但能处理本地搞不定的图。
+    登记为素材(可回收/计存储)。"""
+    p = job.params
+    src = _load_input(job_id)
+    if p.get("engine") == "ai":
+        from .ai.matting import ai_subject_cutout
+        out = ai_subject_cutout(src, hint=p.get("prompt", "")).convert("RGBA")
+        name = "智能抠图"
+    else:
+        from .ai.matting import cutout_best
+        out = cutout_best(src).convert("RGBA")
+        name = "一键抠图"
     out.save(storage.output_path(job_id, "cutout.png"), format="PNG")
     url = storage.output_url(job_id, "cutout.png")
     if job.owner_id is not None:
-        save_as_asset(db, job.owner_id, out, "一键抠图", url, source="generated")
+        save_as_asset(db, job.owner_id, out, name, url, source="generated")
     return {"image_url": url}
 
 

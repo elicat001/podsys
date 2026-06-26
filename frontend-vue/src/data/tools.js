@@ -20,10 +20,12 @@ export const TOOLS = [
   },
   {
     id: 'matting', name: '一键抠图', icon: '🪄', cat: '印花提取', ep: 'matting',
-    async: true, result: 'image', cost: 2,
-    desc: '一键去背景,输出透明 PNG(智能抠图,边缘干净)',
+    async: true, result: 'image', cost: 2, dualEngine: true,
+    desc: '去背景输出透明 PNG。快速=本地保真去底(边缘干净);智能=AI 识别主体并扣出(连手指/支架/道具等无关元素一起去掉,适合本地搞不定的图)',
     inputs: [
       { key: 'file', type: 'file', label: '上传图片', required: true },
+      { key: 'prompt', type: 'text', label: '主体提示(可选,智能运行用)', default: '',
+        placeholder: '一图多物或难提取时填,例:只保留被手指按住的陀螺,去掉手' },
     ],
   },
   // ── 印花设计 ──────────────────────────────
