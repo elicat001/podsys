@@ -105,6 +105,29 @@ def test_ai_generate_two_frames_slideshow(client, auth_headers):
     assert job["result"]["video_url"].endswith(".gif")
 
 
+def test_two_frames_never_override_first_frame_with_mufra(client, auth_headers, monkeypatch, png):
+    # 【首尾帧铁律】给了尾帧(2 张图)+ 开了「场景首帧」+ 配了 key → 母帧绝不能触发(否则会把用户首帧掉包)。
+    # 回归此前真实 bug:首尾帧被母帧覆盖首帧 → 过渡稀烂。
+    from app.ai import openai_image
+    from app.config import settings
+    called = {"edit": 0}
+
+    def _fake_edit(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
+        called["edit"] += 1
+        from PIL import Image as _Img
+        return _Img.new("RGB", (64, 96))
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _fake_edit)
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "变形过渡", "scene_frame": "true", "seconds": "10", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png"),
+                           "file2": ("b.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert called["edit"] == 0    # 首尾帧模式:母帧被跳过,两端都用用户原图
+
+
 def test_ai_generate_requires_auth(client):
     r = client.post("/api/video/ai-generate", files={"file": ("x.png", _png(), "image/png")})
     assert r.status_code == 401
