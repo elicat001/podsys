@@ -129,9 +129,11 @@ class Settings(BaseSettings):
     vidu_provider: str = "local"            # local(兜底 GIF) | vidu(真 Vidu)
     vidu_api_key: str = ""                  # Vidu 开放平台 key(POD_VIDU_API_KEY);鉴权头 Authorization: Token <key>
     vidu_base_url: str = "https://api.vidu.cn"   # 国内域名;国际换 https://api.vidu.com
-    vidu_model: str = "viduq3"              # 只有 Q3 系列支持 1-16s 单次出片;可换 viduq3-turbo(快省)/viduq3-pro(顶质)
+    # ⚠ 两端点合法 Q3 模型名不同(否则 400):img2video=viduq3-pro/viduq3-turbo/viduq3-pro-fast;
+    #   reference2video=viduq3/viduq3-mix/viduq3-turbo。故各用一个配置项,默认取【优质】档。
+    vidu_model: str = "viduq3-pro"          # img2video(单图首帧锁定)用;换 viduq3-turbo=快省
+    vidu_ref_model: str = "viduq3"          # reference2video(多图参考)用;换 viduq3-mix/viduq3-turbo
     vidu_movement: str = "auto"             # 运动幅度 auto|small|medium|large(仅 viduq1/vidu2.0 生效,Q3 忽略)
-    vidu_bgm: bool = False                  # Vidu 自带背景音乐床(默认关)
     vidu_timeout: float = 900.0             # 轮询总超时(秒);Vidu 单次多镜头比 CogVideoX 三段快,给 15min
     vidu_poll_interval: float = 5.0
 

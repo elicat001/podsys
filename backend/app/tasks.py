@@ -638,16 +638,19 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
     """AI 图生视频(Vidu viduq3 / 本地兜底 GIF)—— 第二套引擎,与 CogVideoX 并存。
     与 _work_aivideo 的【本质区别】:Vidu 单次调用就出 15s 多镜头(无母帧链、无三段拼接、无 punchup),编排大幅简化。
     读 1~多张输入图(2+ 张=多图参考主体一致)→ compose_vidu_prompt(多镜头写在同一 prompt 内)→ provider → 存产物。"""
-    from .ai.vidu import _aspect_px, compose_vidu_prompt, fit_to_aspect, get_vidu_provider
-    from .config import settings
+    from .ai.vidu import _AUDIO_TYPE, _aspect_px, clamp_seconds, compose_vidu_prompt, fit_to_aspect, get_vidu_provider
     p = job.params
     cat = p.get("category", "通用")
     aspect = p.get("aspect", "portrait")
     resolution = p.get("resolution", "720p")
-    seconds = int(p.get("seconds") or 5)
+    seconds = clamp_seconds(p.get("seconds") or 5)
     lang = p.get("language", "葡萄牙语")
-    native_sound = bool(p.get("native_sound", False))
-    bgm = bool(p.get("bgm", settings.vidu_bgm))
+    # 声音模式(互斥):none/sfx/dialogue=Vidu 原生音画(audio+audio_type);voiceover=静音生成 + edge-tts 叠回。
+    sound_mode = p.get("sound_mode", "none")
+    dialogue_lang = p.get("dialogue_lang", "英文")
+    native_audio = sound_mode in ("sfx", "dialogue")          # 原生音效/音画同步 → 让 Vidu 出声
+    audio_type = _AUDIO_TYPE.get(sound_mode, "All")
+    do_voiceover = sound_mode == "voiceover"                  # edge-tts 旁白(补 Q3 不擅长的葡/西语)
     raw = [_load_input(job_id)]
     mpath = storage.upload_path(f"{job_id}_mask")   # 复用 mask 槽放第 2 张参考图
     if mpath.exists():
@@ -655,7 +658,8 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
     # 单图 img2video → 首帧锁定印花,故把首帧贴成目标画幅(防拉伸);多图 reference2video 由 aspect_ratio 控制,不贴。
     tw, th = _aspect_px(aspect)
     imgs = [fit_to_aspect(raw[0], tw, th)] + raw[1:] if len(raw) == 1 else list(raw)
-    prompt = compose_vidu_prompt(p.get("prompt", ""), language=lang, seconds=seconds)
+    prompt = compose_vidu_prompt(p.get("prompt", ""), language=lang, seconds=seconds,
+                                 sound_mode=sound_mode, dialogue_lang=dialogue_lang)
 
     warnings: list[str] = []
     # 【保证交付】provider 超时/失败/网关繁忙 → 降级兜底本地 GIF + 退回点数(对齐 CogVideoX 可靠性底座)。
@@ -663,7 +667,7 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
     try:
         out = get_vidu_provider().image_to_video(
             imgs, prompt, aspect=aspect, resolution=resolution, seconds=seconds,
-            with_audio=native_sound, bgm=bgm)
+            audio=native_audio, audio_type=audio_type)
     except Exception as exc:  # noqa: BLE001 — provider 失败 → 降级兜底,绝不挂死/白扣
         from .ai.vidu import LocalGifProvider
         out = LocalGifProvider().image_to_video(imgs, "", aspect=aspect, seconds=min(seconds, 10))
@@ -671,9 +675,9 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
             "Vidu 视频网关繁忙/超时,已用快速兜底版本(本地产品展示)交付,并已退回本次点数。"
             f"详情:{str(exc)[:160]}")
         degraded_fallback = True
-    # 旁白配音(best-effort):仅「旁白设置」开 + 真 mp4 才做。Vidu 自带音频是音效/bgm,真人解说仍靠这条补。
+    # 旁白配音(best-effort):仅 voiceover 模式 + 真 mp4 才做。补 Q3 原生音画不擅长的葡/西语市场。
     total_seconds = seconds
-    if p.get("voiceover") and out.get("ext") == "mp4":
+    if do_voiceover and out.get("ext") == "mp4":
         try:
             from .services.voiceover import add_voiceover
             new_bytes, script = add_voiceover(out["bytes"], raw[0], p.get("prompt", ""),

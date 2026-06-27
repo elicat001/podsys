@@ -1,20 +1,23 @@
 """图生视频 Provider —— Vidu(生数科技 viduq3 系列),与 CogVideoX 并存的【第二套引擎】。
 
 为什么单独一套(而非塞进 ai/video.py)?
-- Vidu Q3 单次最高 16s,且 reference2video 多图参考天然保持主体一致 → 【一次调用就出 15s 多分镜】,
-  不需要 CogVideoX 那套「拆 3 段 ×5s 并行 + ffmpeg 拼接 + per-shot 母帧」的复杂编排。
-- 提示词工程也不同:Vidu 把【多镜头切换写在同一条 prompt 里】(景别递进 + 运镜切换 + 场景递进),
-  靠模型自身的多镜头叙事能力;CogVideoX 是一镜一段。故这里是【借鉴思路、另写一套】,不照抄 ai/video.py。
+- Vidu Q3 单次最高 16s、24fps,且【原生音画同步】(一次推理同时出 对白口型 + 音效 + BGM),
+  reference2video 多图参考(1-7 张)天然保持主体一致 → 一次调用就出 15s 多镜头带声短片,
+  不需要 CogVideoX 那套「拆段并行 + ffmpeg 拼接 + per-shot 母帧」。
+- 提示词工程也不同:Vidu 把【多镜头 + 音频层】写在同一条 prompt 里(官方建议 50-150 字、音频层放末尾),
+  靠模型自身能力;CogVideoX 是一镜一段。故这里是【借鉴思路、另写一套】,不照抄 ai/video.py。
 
 可插拔:换厂商 = 再写一个 Provider;业务/前端不动。重依赖(httpx)方法内惰性 import,保持离线启动轻量。
 
-官方接口(platform.vidu.cn / api.vidu.cn,国际 api.vidu.com):
-- 建任务:POST {base}/ent/v2/img2video       —— 1 张图=首帧锁定(印花保真最好),prompt 描述多镜头
-        POST {base}/ent/v2/reference2video —— 多图(≤4)参考主体,跨镜一致(2 张图时用)
+官方接口(platform.vidu.cn / api.vidu.cn,国际 api.vidu.com)—— 参数以官方文档为准:
+- 建任务:POST {base}/ent/v2/img2video       —— 1 张图=首帧锁定(印花保真最好)。Q3 模型名:viduq3-pro / viduq3-turbo / viduq3-pro-fast
+        POST {base}/ent/v2/reference2video —— 1-7 张参考图,跨镜主体一致。Q3 模型名:viduq3 / viduq3-mix / viduq3-turbo
+  ⚠ 两端点的合法 Q3 模型名不同 → 按端点选对(否则 400)。故 img2video / reference2video 各用一个配置项。
 - 轮询:  GET  {base}/ent/v2/tasks/{task_id}/creations —— state ∈ created/queueing/processing/success/failed
 - 鉴权:  Authorization: Token {api_key}
-- 图片:  base64 data uri 或公网 url,≤50MB,png/jpeg/webp
-- Q3 时长 1-16s、分辨率 540p-1080p;movement_amplitude 对 Q2/Q3 不生效(只对 viduq1/vidu2.0)。
+- 时长:  Q3 = 1-16s(reference2video 3-16s);分辨率 540p/720p/1080p;aspect_ratio 9:16/3:4/1:1/4:3/16:9
+- 音频:  audio(bool,Q3 默认 true)+ audio_type(All / Speech_only / Sound-effect_only)+ voice_id(可选,默认自动)
+          对白语言由 prompt 文本控制(中/英支持最好);bgm 参数【对 Q3 无效】(Q3 原生出 BGM);movement_amplitude 对 Q3 无效。
 """
 from __future__ import annotations
 
@@ -27,7 +30,7 @@ from PIL import Image
 
 from ..config import settings
 
-# ── 画幅(与前端按钮一一对应)。Vidu 用 "9:16" 这种字符串;同时给一份像素比例用于 fit_to_aspect 防拉伸。──
+# ── 画幅(与前端按钮一一对应)。Vidu 用 "9:16" 字符串;同时给像素比例用于 fit_to_aspect 防拉伸。──
 ASPECT_RATIOS: dict[str, tuple[int, int]] = {
     "portrait":    (9, 16),
     "portrait34":  (3, 4),
@@ -35,50 +38,54 @@ ASPECT_RATIOS: dict[str, tuple[int, int]] = {
     "landscape43": (4, 3),
     "landscape":   (16, 9),
 }
-# Vidu aspect_ratio 取值(reference2video 用;img2video 由首帧画幅决定,不传)
 _VIDU_ASPECT: dict[str, str] = {
     "portrait": "9:16", "portrait34": "3:4", "square": "1:1",
     "landscape43": "4:3", "landscape": "16:9",
 }
-RESOLUTIONS: list[str] = ["720p", "1080p"]     # 前端可选;Q3 也支持 540p,但 POD 出片不暴露太低档
-DURATIONS: list[int] = [5, 10, 15]             # Q3 支持 1-16s,这里给 5/10/15;10/15s 触发多镜头叙事
-MULTISHOT_FROM: int = 10                        # ≥ 这个秒数 → 在同一条 prompt 里写多镜头分镜(Vidu 原生,不拼接)
+RESOLUTIONS: list[str] = ["720p", "1080p"]     # 前端可选(Q3 也支持 540p,POD 出片不暴露太低档)
+# 时长【连续可选】(Q3 支持 1-16s;POD 起步 5s,计费=秒数×2)。前端用滑块,不再是固定几档。
+DURATION_MIN: int = 5
+DURATION_MAX: int = 16
+MULTISHOT_FROM: int = 10                        # ≥ 这个秒数 → 在同一条 prompt 内写多镜头(Vidu 原生,不拼接)
 
-# 配音/对白语言(主打巴西=葡语)。「无对白」= 不加语言指令。
+# 声音模式(前端单选,互斥)→ 映射到 Vidu audio/audio_type 或 edge-tts 旁白:
+#   none      = 无声(audio=false)
+#   sfx       = 原生音效(audio=true, audio_type=Sound-effect_only,只环境音无人声)
+#   dialogue  = 原生音画同步(audio=true, audio_type=All,对白口型同步+音效+BGM;对白语言由 prompt 控制,中/英最佳)
+#   voiceover = 真人旁白(audio=false 静音生成 + edge-tts 叠回,多语言+字幕,补 Q3 对葡/西语支持)
+SOUND_MODES: list[str] = ["none", "sfx", "dialogue", "voiceover"]
+# audio_type 取值以官方 img2video 文档大小写为准(reference2video 文档为小写,实测若被拒按该端点大小写调这里即可)
+_AUDIO_TYPE = {"sfx": "Sound-effect_only", "dialogue": "All"}
+# 原生对白语言(Q3 原生音画同步支持最好的是中/英;葡/西走 voiceover 旁白)
+NATIVE_DIALOGUE_LANGS: list[str] = ["英文", "中文"]
+# edge-tts 旁白语言(补 Q3 不擅长的市场语言)
 LANGUAGES: list[str] = ["葡萄牙语", "英语", "西班牙语", "中文", "无对白"]
 
-# 地区 UGC 风格随语言变(别写死巴西)。Vidu 自己的一份(措辞与 ai/video.py 不同,按 Vidu 偏好精简)。
-_REGION_STYLE: dict[str, str] = {
-    "葡萄牙语": "巴西本地年轻人的真实生活气息,温暖的自然阳光,热情有活力,手机随手拍的社媒质感",
-    "英语": "欧美本地年轻人的日常生活感,自然光,自信松弛,真实社媒随手拍质感",
-    "西班牙语": "拉美/西语区年轻人的热情生活感,温暖明亮的光线,有感染力,真实社媒随手拍质感",
-    "中文": "本地年轻人的生活化日常,自然光,真实自然,随手拍的社媒质感",
+# 地区风格随语言变(别写死巴西);精简成短语(官方建议 prompt 别过长堆砌)。
+_REGION_HINT: dict[str, str] = {
+    "葡萄牙语": "巴西年轻人真实生活感、自然光、随手拍质感",
+    "英语": "欧美年轻人日常生活感、自然光、随手拍质感",
+    "西班牙语": "拉美年轻人热情生活感、自然光、随手拍质感",
+    "中文": "本地年轻人生活化日常、自然光、随手拍质感",
+    "英文": "自然光、真实生活感、随手拍质感",
 }
-
-# ── Vidu 提示词「电影化」块:景别 + 运镜 + 光影 + 氛围,品类无关、对任意 SKU 通用(不写死品类)。──
-# Vidu 词表:景别(远景/全景/中景/近景/特写)、运镜(推进 zoom in/拉远 zoom out/环绕/跟拍/平移/固定)、
-#           运动幅度(大动态/中等动态/小幅动态)。多镜头靠景别递进 + 运镜切换在同一 prompt 内表达。
-_CINEMA = (
-    "整体为干净、真实、有质感的电商种草短片:用柔和自然光真实还原商品的颜色与材质,"
-    "运镜专业克制(轻缓推进、平移或小幅环绕,不旋转翻转商品本体),景别在中景与近景特写之间自然过渡以突出图案细节,"
-    "中等偏小的运动幅度,画面稳定不糊。"
-)
-# 画面底线(POD 非协商:印花像素级一致;材质物理真实;连贯)。Vidu 措辞,正向为主。
-_GUARD = (
-    "商品上的图案、文字、颜色与设计细节自始至终保持一致、不被改样、不扭曲拉伸;"
-    "材质物理真实(布料柔软垂坠、不僵硬如纸板,硬物坚固,液体随容器晃荡);"
-    "动作遵循重力与接触、连贯不跳帧,镜头切换自然顺滑。"
-)
 
 
 def vidu_aspect(aspect: str) -> str:
-    """画幅 key → Vidu aspect_ratio 字符串(reference2video 用)。"""
     return _VIDU_ASPECT.get(aspect, "9:16")
 
 
+def clamp_seconds(seconds: int) -> int:
+    """把时长夹到 Q3 合法且 POD 允许的区间 [DURATION_MIN, DURATION_MAX]。"""
+    try:
+        s = int(seconds)
+    except (TypeError, ValueError):
+        s = DURATION_MIN
+    return max(DURATION_MIN, min(DURATION_MAX, s))
+
+
 def fit_to_aspect(im: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    """把图片按目标画幅等比 contain(不拉伸),其余用同图放大+模糊填充(自然不黑边)。
-    img2video 用它把首帧先贴成目标画幅,模型就不会按比例生硬拉伸商品。"""
+    """等比 contain 进目标画幅(不拉伸),其余用同图放大+模糊填充(自然不黑边)。img2video 贴首帧用。"""
     from PIL import ImageFilter, ImageOps
     im = im.convert("RGB")
     if abs(im.width / im.height - target_w / target_h) < 0.02:
@@ -91,61 +98,53 @@ def fit_to_aspect(im: Image.Image, target_w: int, target_h: int) -> Image.Image:
 
 
 def _aspect_px(aspect: str, short: int = 1024) -> tuple[int, int]:
-    """画幅 → 一个用于 fit_to_aspect 的像素尺寸(短边 short)。仅用于贴首帧,不决定输出分辨率。"""
     w, h = ASPECT_RATIOS.get(aspect, ASPECT_RATIOS["portrait"])
     if w <= h:
         return short, round(short * h / w)
     return round(short * w / h), short
 
 
-def compose_vidu_prompt(motion: str = "", language: str = "葡萄牙语", seconds: int = 5) -> str:
-    """把用户镜头脚本 + 地区风格 + 语言 + 电影化层 + 画面底线 → Vidu 最终 prompt。
+def _default_multishot(n: int) -> str:
+    """通用多镜头骨架(n=2/3),品类无关、产品为主角、精简(对齐 Vidu 50-150 字建议)。
+    ⚠ 不写死任何品类/人物属性(避免僵尸化与硬编码偏见);只规定镜头语言与节奏,内容随商品自适应。"""
+    if n >= 3:
+        return ("三个连续镜头、同一商品同一氛围:镜头一中景,商品在干净自然环境里出场、轻缓推近;"
+                "镜头二近景特写,小幅环绕突出图案与材质细节;镜头三中景跟拍,商品被自然使用/穿用收尾,切换顺滑。")
+    return ("两个连续镜头、氛围一致:镜头一中景商品出场、轻缓推近;"
+            "镜头二近景特写小幅环绕,突出图案与材质细节、落在被自然使用的状态,切换顺滑。")
 
-    与 CogVideoX 那套(一镜一段、靠母帧换场景)的【本质区别】:
-    - 时长 ≥ MULTISHOT_FROM(10/15s)且用户没写明分镜 → 这里【在同一条 prompt 内】给出多镜头叙事提示
-      (镜头一/二/三:景别递进 + 运镜切换 + 场景递进),交给 Vidu 原生多镜头能力一次出片,不做后期拼接。
-    - 用户自己写了脚本(motion)→ 尊重用户脚本,只补地区风格/语言/电影化/底线,不强塞分镜模板(避免覆盖用户意图)。
+
+def compose_vidu_prompt(motion: str = "", language: str = "葡萄牙语", seconds: int = 5, *,
+                        sound_mode: str = "none", dialogue_lang: str = "英文") -> str:
+    """按 Vidu Q3 官方结构组装 prompt(精简、结构化、音频层放末尾)。
+
+    官方公式:主体+动作 → 场景 → 运镜/景别 → 光影/氛围 → 音频层(SFX/BGM/对白)。官方建议 50-150 字,过长会分散注意力。
+    与 CogVideoX(一镜一段、靠母帧换场景)的本质区别:多镜头 + 音频【写在同一条 prompt 内】,Vidu 一次出片。
+
+    - 用户写了 motion(脚本)→ 尊重用户脚本,只补地区氛围 + 一致性底线 + 音频层,不强塞默认骨架。
+    - 没写且 ≥MULTISHOT_FROM → 给通用多镜头骨架;否则单镜头展示句。
+    - sound_mode:dialogue/sfx 时在末尾追加【音频层】(dialogue 用 dialogue_lang 说话、口型同步)。
     """
     parts: list[str] = []
     motion = (motion or "").strip()
     if motion:
         parts.append(motion)
     elif seconds >= MULTISHOT_FROM:
-        # 用户没写脚本且要长片 → 给一个【通用·品类无关】的多镜头分镜骨架(产品为主角、第一眼读懂在卖什么)。
-        n = 3 if seconds >= 15 else 2
-        parts.append(_default_multishot(n))
+        parts.append(_default_multishot(3 if seconds >= 15 else 2))
     else:
-        parts.append(
-            "镜头轻缓推近并平移展示这件商品(Ken-Burns 式),商品居中、清晰可辨、占据画面主要面积,"
-            "第一帧就让人一眼读懂这是什么商品、卖点是什么;最后自然落到它被真实使用的状态。"
-        )
-    region = _REGION_STYLE.get(language)
+        parts.append("商品居中、清晰可辨、占据画面主体,镜头轻缓推近并小幅平移,第一帧就读懂在卖什么,落在被自然使用的状态。")
+    region = _REGION_HINT.get(language)
     if region:
         parts.append(region + "。")
-    parts.append(_CINEMA)
-    parts.append(_GUARD)
-    if language and language != "无对白":
-        parts.append(f"如有文字或人声,使用{language}。")
+    # 印花一致底线(一句,简短 —— 官方忌负向堆砌)
+    parts.append("商品的图案、文字、颜色始终保持一致、不变形;材质物理真实、动作连贯。")
+    # 音频层(放末尾,Vidu 官方建议位置)
+    if sound_mode == "dialogue":
+        dl = dialogue_lang or "英文"
+        parts.append(f"音频:画面中的人用{dl}自然说出贴合商品卖点的简短话语、口型同步,搭配贴合场景的环境音效与轻背景音乐。")
+    elif sound_mode == "sfx":
+        parts.append("音频:只有贴合画面的真实环境音效,无人声。")
     return " ".join(parts)
-
-
-def _default_multishot(n: int) -> str:
-    """通用多镜头骨架(n=2 或 3),品类无关、产品为主角。每镜不同景别+运镜+场景递进,连成一条连续叙事。
-    ⚠ 不写死任何品类/人物属性(避免僵尸化与硬编码偏见);只规定镜头语言与节奏,内容随商品自适应。"""
-    if n >= 3:
-        return (
-            "一条由三个连续镜头组成的带货短片,商品始终是绝对主角、贯穿全片:"
-            "【镜头一·0–5秒】中景全貌,商品在一个干净自然的环境里出场,轻缓推近,第一眼读懂在卖什么;"
-            "【镜头二·5–10秒】切到近景特写,镜头小幅平移或环绕,突出图案、文字与材质细节,运动幅度中等;"
-            "【镜头三·10–15秒】切到商品被自然使用/穿用的真实生活场景,中景跟拍,落在「拥有后的样子」上收尾。"
-            "三个镜头是同一件商品、同一种氛围下的连续叙事,镜头切换自然顺滑。"
-        )
-    return (
-        "一条由两个连续镜头组成的带货短片,商品始终是绝对主角:"
-        "【镜头一·0–5秒】中景全貌,商品在干净自然的环境里出场、轻缓推近,第一眼读懂在卖什么;"
-        "【镜头二·5–10秒】切到近景特写并小幅环绕,突出图案与材质细节,落在被自然使用的状态上收尾。"
-        "两个镜头连续叙事、氛围一致,切换自然顺滑。"
-    )
 
 
 @runtime_checkable
@@ -153,9 +152,8 @@ class ViduVideoProvider(Protocol):
     name: str
 
     def image_to_video(self, images: list[Image.Image], prompt: str, *, aspect: str = "portrait",
-                       resolution: str = "720p", seconds: int = 5, with_audio: bool = False,
-                       bgm: bool = False) -> dict:
-        """images: 1~多张参考图。返回 {bytes, url, ext, meta}。"""
+                       resolution: str = "720p", seconds: int = 5, audio: bool = False,
+                       audio_type: str = "All", voice_id: str = "") -> dict:
         ...
 
 
@@ -171,8 +169,8 @@ class LocalGifProvider:
     name = "local"
 
     def image_to_video(self, images: list[Image.Image], prompt: str, *, aspect: str = "portrait",
-                       resolution: str = "720p", seconds: int = 5, with_audio: bool = False,
-                       bgm: bool = False) -> dict:
+                       resolution: str = "720p", seconds: int = 5, audio: bool = False,
+                       audio_type: str = "All", voice_id: str = "") -> dict:
         from ..services.video import make_showcase
         style = "slideshow" if len(images) > 1 else "kenburns"
         out = make_showcase(images[:2], style=style, aspect=aspect, fps=12, seconds=min(int(seconds or 5), 10))
@@ -194,13 +192,13 @@ class ViduProvider:
         if not settings.vidu_api_key:
             raise RuntimeError("POD_VIDU_API_KEY 未配置(Vidu 开放平台 key)")
         self.base = (settings.vidu_base_url or "https://api.vidu.cn").rstrip("/")
-        self.model = settings.vidu_model or "viduq3"
+        self.model = settings.vidu_model or "viduq3-pro"          # img2video 合法 Q3 名
+        self.ref_model = settings.vidu_ref_model or "viduq3"      # reference2video 合法 Q3 名
 
     def _headers(self) -> dict:
         return {"Authorization": "Token " + settings.vidu_api_key, "Content-Type": "application/json"}
 
     def _build_task(self, c, path: str, body: dict) -> str:
-        """提交任务 → task_id。网络抖动重试 3 次;4xx(鉴权/参数)带响应体不重试。"""
         import httpx
         for attempt in range(3):
             try:
@@ -224,10 +222,9 @@ class ViduProvider:
                 if attempt == 2:
                     raise
                 time.sleep(2 * (attempt + 1))
-        raise RuntimeError("Vidu 建任务失败")  # 兜底,不会到这
+        raise RuntimeError("Vidu 建任务失败")
 
     def _await_result(self, c, task_id: str) -> dict:
-        """轮询直到 success(下载并返回)。failed → _TaskFailed(可重建);超时 → TimeoutError(不重建)。"""
         import httpx
         deadline = time.monotonic() + float(settings.vidu_timeout)
         poll_fails = 0
@@ -259,37 +256,42 @@ class ViduProvider:
                         time.sleep(3 * (attempt + 1))
                 cover = (creations[0].get("cover_url") or "") if creations else ""
                 return {"bytes": data, "url": url, "ext": "mp4",
-                        "meta": {"engine": self.model, "task_id": task_id, "cover": cover}}
+                        "meta": {"engine": getattr(self, "_last_model", self.model),
+                                 "task_id": task_id, "cover": cover}}
             if st in ("failed", "fail", "error"):
                 raise _TaskFailed(str(d.get("err_code") or d.get("err") or d)[:160])
         raise TimeoutError("Vidu 视频生成超时(可调 POD_VIDU_TIMEOUT)")
 
     def image_to_video(self, images: list[Image.Image], prompt: str, *, aspect: str = "portrait",
-                       resolution: str = "720p", seconds: int = 5, with_audio: bool = False,
-                       bgm: bool = False) -> dict:
-        import httpx  # 惰性
+                       resolution: str = "720p", seconds: int = 5, audio: bool = False,
+                       audio_type: str = "All", voice_id: str = "") -> dict:
+        import httpx
         if not images:
             raise RuntimeError("图生视频至少需要 1 张图")
-        encoded = [_encode_data_uri(im) for im in images[:4]]   # Vidu 参考图最多 4 张
-        # 1 张 → img2video(首帧锁定,印花保真最好);2+ 张 → reference2video(多图参考主体)
+        encoded = [_encode_data_uri(im) for im in images[:7]]   # Vidu 参考图最多 7 张
+        # 1 张 → img2video(首帧锁定,印花保真最好);2+ 张 → reference2video(多图参考主体)。两端点模型名不同!
         if len(encoded) == 1:
             path = "/ent/v2/img2video"
-            body: dict = {"model": self.model, "images": encoded, "prompt": prompt or "",
-                          "duration": int(seconds), "resolution": resolution}
+            model = self.model
+            body: dict = {"model": model, "images": encoded, "prompt": prompt or "",
+                          "duration": clamp_seconds(seconds), "resolution": resolution}
         else:
             path = "/ent/v2/reference2video"
-            body = {"model": self.model, "images": encoded, "prompt": prompt or "",
-                    "duration": int(seconds), "resolution": resolution,
+            model = self.ref_model
+            body = {"model": model, "images": encoded, "prompt": prompt or "",
+                    "duration": clamp_seconds(seconds), "resolution": resolution,
                     "aspect_ratio": vidu_aspect(aspect)}
-        if bgm:
-            body["bgm"] = True
-        if with_audio:
-            body["audio"] = True
-        # movement_amplitude 只对 viduq1/vidu2.0 生效,Q2/Q3 不生效 → 仅老模型才发,避免无效字段
-        if self.model.startswith(("viduq1", "vidu2", "vidu1")):
+        # 音频:显式发 audio(覆盖 Q3 默认 true);开启时带 audio_type / 可选 voice_id。bgm 对 Q3 无效,不发。
+        body["audio"] = bool(audio)
+        if audio and audio_type:
+            body["audio_type"] = audio_type
+        if audio and voice_id:
+            body["voice_id"] = voice_id
+        # movement_amplitude 对 Q3 无效 → 仅老模型(viduq1/vidu2.0)才发
+        if model.startswith(("viduq1", "vidu2", "vidu1")):
             body["movement_amplitude"] = settings.vidu_movement or "auto"
+        self._last_model = model   # 记录实际用的模型,写进 meta.engine
 
-        # 任务级重试:Vidu 偶发把任务判 failed(让稍后重试)→ 退避后重建新任务,最多 3 个(重轮询同一 failed 无用)。
         last = "未知"
         for task_try in range(3):
             try:
