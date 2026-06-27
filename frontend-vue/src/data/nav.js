@@ -27,7 +27,8 @@ export const SIDEBARS = {
     ...TOOL_CATS.map((c) => ({ icon: CAT_ICON[c] || '•', label: c, to: { path: '/app/design', query: { cat: c } } })),
   ],
   video: [
-    { icon: '🎬', label: '图生视频', to: '/app/video/generate' },
+    { icon: '🎬', label: '图生视频CogVideoX-3', to: '/app/video/generate' },
+    { icon: '🎥', label: '图生视频Vidu', to: '/app/video/vidu' },
   ],
   publish: [
     { icon: '🏪', label: '店铺', to: '/app/publish/shops' },

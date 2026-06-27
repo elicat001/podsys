@@ -63,6 +63,10 @@ os.environ["POD_UPSCALE_PROVIDER"] = "pillow"
 # 否则 .env 里配了 POD_VIDEO_PROVIDER=cogvideox 时,视频测试会真去调智谱网关 / 因无 key 报错。
 os.environ["POD_VIDEO_PROVIDER"] = "local"
 os.environ["POD_VIDEO_API_KEY"] = ""
+# Vidu 引擎同理:强制本地兜底(出 GIF、不调 Vidu),清空 key —— 否则 .env 配了 POD_VIDU_PROVIDER=vidu 时
+# Vidu 测试会真去调 Vidu 网关 / 因无 key 报错。需要测真请求体的用例自行 monkeypatch settings(见 test_vidu.py)。
+os.environ["POD_VIDU_PROVIDER"] = "local"
+os.environ["POD_VIDU_API_KEY"] = ""
 # 关闭本地标题 OCR:避免测试依赖系统 tesseract 二进制 + 保持离线确定性/速度(标题走纯规则路径)
 os.environ["POD_TITLE_OCR"] = "false"
 # Celery 强制 eager:任务在测试进程内同步执行,**不连 Redis broker / 不起 worker**。

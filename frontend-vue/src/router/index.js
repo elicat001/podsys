@@ -22,6 +22,7 @@ const routes = [
       // 视频
       { path: 'video', redirect: '/app/video/generate' },
       { path: 'video/generate', component: () => import('../views/VideoGenerate.vue') },
+      { path: 'video/vidu', component: () => import('../views/ViduGenerate.vue') },
       // 上架
       { path: 'publish', redirect: '/app/publish/shops' },
       { path: 'publish/shops', component: () => import('../views/Shops.vue') },

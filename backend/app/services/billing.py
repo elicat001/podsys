@@ -22,7 +22,8 @@ class InsufficientCredits(Exception):
 
 # 各操作的点数定价
 # 注:title=1(走 AI 文本/识图,便宜);无 key/AI 失败时端点会退点 -> 本地兜底实际 0
-COST: dict[str, int] = {"process": 2, "generate": 5, "edit": 4, "asset": 1, "video": 3, "title": 1}
+# vidu=2/笔:Vidu 图生视频按【秒数×2】计费(单次出片,按 n=秒数 笔扣 2 点 → 5s=10/10s=20/15s=30,起步 10 点)
+COST: dict[str, int] = {"process": 2, "generate": 5, "edit": 4, "asset": 1, "video": 3, "title": 1, "vidu": 2}
 
 
 def cost_of(op: str) -> int:

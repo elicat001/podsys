@@ -123,6 +123,18 @@ class Settings(BaseSettings):
     # CogVideoX 只产音效不产语音,故旁白靠这条管线补。false=全局关(运维兜底);best-effort,失败保留原视频。
     voiceover_enabled: bool = True
 
+    # ── AI 图生视频(Vidu / 生数科技)。与 CogVideoX 并存的【第二套引擎】,前端独立页面。
+    # Vidu Q3 单次最高 16s + reference2video 多图参考主体一致 → 一次调用直接出 15s 多镜头,无需 CogVideoX 那套三段拼接。
+    # 默认 local=本地 GIF 兜底(无需 key);设 vidu + 填 vidu_api_key 即用,业务/前端不动(对齐可插拔范式)。
+    vidu_provider: str = "local"            # local(兜底 GIF) | vidu(真 Vidu)
+    vidu_api_key: str = ""                  # Vidu 开放平台 key(POD_VIDU_API_KEY);鉴权头 Authorization: Token <key>
+    vidu_base_url: str = "https://api.vidu.cn"   # 国内域名;国际换 https://api.vidu.com
+    vidu_model: str = "viduq3"              # 只有 Q3 系列支持 1-16s 单次出片;可换 viduq3-turbo(快省)/viduq3-pro(顶质)
+    vidu_movement: str = "auto"             # 运动幅度 auto|small|medium|large(仅 viduq1/vidu2.0 生效,Q3 忽略)
+    vidu_bgm: bool = False                  # Vidu 自带背景音乐床(默认关)
+    vidu_timeout: float = 900.0             # 轮询总超时(秒);Vidu 单次多镜头比 CogVideoX 三段快,给 15min
+    vidu_poll_interval: float = 5.0
+
     @property
     def upscale_realesrgan_path(self) -> Path:
         return _BACKEND_DIR / "models" / self.upscale_realesrgan_model

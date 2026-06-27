@@ -470,7 +470,10 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     # 两步生成(可选「场景首帧」):先用 gpt-image 把商品放进场景做第一帧 → 缓解首帧→场景的硬切。
     # 无 key / 失败 → 优雅降级,直接用原图首帧(不阻断)。
     lang = p.get("language", "葡萄牙语")
-    use_scene = bool(p.get("scene_frame") and settings.openai_api_key)
+    # 【首尾帧铁律】用户给了尾帧(2 张图)→ 两端都由用户定,绝不走「场景母帧」(否则母帧把首帧整个掉包,
+    # 首尾帧形同虚设、过渡稀烂——真实踩过的 bug)。母帧只服务「单图→让它动起来」那条路径。
+    two_frames = len(raw) > 1
+    use_scene = bool(p.get("scene_frame") and settings.openai_api_key) and not two_frames
     # 内容策划层(per-shot 母帧 + 动作链):多分镜每镜各自脚本(prompt/prompt2/prompt3…)+ 各自场景母帧
     # (scene1/scene2/scene3…)→ 镜头间真换场景、动作连续。段数由 MULTI_SHOT_PLAN 决定(当前 3×5s),不写死。
     from .ai.video import MULTI_SHOT_PLAN
@@ -631,6 +634,88 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             "warnings": warnings}   # 显式暴露降级原因(母帧/配音失败/provider 兜底等),前端在成片卡片上提示
 
 
+def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
+    """AI 图生视频(Vidu viduq3 / 本地兜底 GIF)—— 第二套引擎,与 CogVideoX 并存。
+    与 _work_aivideo 的【本质区别】:Vidu 单次调用就出 15s 多镜头(无母帧链、无三段拼接、无 punchup),编排大幅简化。
+    读 1~多张输入图(2+ 张=多图参考主体一致)→ compose_vidu_prompt(多镜头写在同一 prompt 内)→ provider → 存产物。"""
+    from .ai.vidu import _aspect_px, compose_vidu_prompt, fit_to_aspect, get_vidu_provider
+    from .config import settings
+    p = job.params
+    cat = p.get("category", "通用")
+    aspect = p.get("aspect", "portrait")
+    resolution = p.get("resolution", "720p")
+    seconds = int(p.get("seconds") or 5)
+    lang = p.get("language", "葡萄牙语")
+    native_sound = bool(p.get("native_sound", False))
+    bgm = bool(p.get("bgm", settings.vidu_bgm))
+    raw = [_load_input(job_id)]
+    mpath = storage.upload_path(f"{job_id}_mask")   # 复用 mask 槽放第 2 张参考图
+    if mpath.exists():
+        im2 = Image.open(mpath); im2.load(); raw.append(im2)
+    # 单图 img2video → 首帧锁定印花,故把首帧贴成目标画幅(防拉伸);多图 reference2video 由 aspect_ratio 控制,不贴。
+    tw, th = _aspect_px(aspect)
+    imgs = [fit_to_aspect(raw[0], tw, th)] + raw[1:] if len(raw) == 1 else list(raw)
+    prompt = compose_vidu_prompt(p.get("prompt", ""), language=lang, seconds=seconds)
+
+    warnings: list[str] = []
+    # 【保证交付】provider 超时/失败/网关繁忙 → 降级兜底本地 GIF + 退回点数(对齐 CogVideoX 可靠性底座)。
+    degraded_fallback = False
+    try:
+        out = get_vidu_provider().image_to_video(
+            imgs, prompt, aspect=aspect, resolution=resolution, seconds=seconds,
+            with_audio=native_sound, bgm=bgm)
+    except Exception as exc:  # noqa: BLE001 — provider 失败 → 降级兜底,绝不挂死/白扣
+        from .ai.vidu import LocalGifProvider
+        out = LocalGifProvider().image_to_video(imgs, "", aspect=aspect, seconds=min(seconds, 10))
+        warnings.append(
+            "Vidu 视频网关繁忙/超时,已用快速兜底版本(本地产品展示)交付,并已退回本次点数。"
+            f"详情:{str(exc)[:160]}")
+        degraded_fallback = True
+    # 旁白配音(best-effort):仅「旁白设置」开 + 真 mp4 才做。Vidu 自带音频是音效/bgm,真人解说仍靠这条补。
+    total_seconds = seconds
+    if p.get("voiceover") and out.get("ext") == "mp4":
+        try:
+            from .services.voiceover import add_voiceover
+            new_bytes, script = add_voiceover(out["bytes"], raw[0], p.get("prompt", ""),
+                                              lang, total_seconds, subtitle=bool(p.get("subtitle", True)))
+            out["bytes"] = new_bytes
+            if script:
+                out.setdefault("meta", {})["voiceover"] = script[:200]
+        except Exception as exc:  # noqa: BLE001 — 配音不阻断视频作业,显式记录降级
+            warnings.append(f"旁白配音失败,已输出无声视频。详情:{str(exc)[:160]}")
+    ext = out.get("ext", "mp4")
+    name = f"video.{ext}"
+    storage.output_path(job_id, name).write_bytes(out["bytes"])
+    url = storage.output_url(job_id, name)
+    meta = out.get("meta", {})
+    # 封面 = 用户上传的商品图(干净稳定、所见即所得),不用 Vidu 外链 cover(签名会过期)
+    cover = ""
+    try:
+        thumb = raw[0].convert("RGB"); thumb.thumbnail((640, 640))
+        thumb.save(storage.output_path(job_id, "cover.jpg"), format="JPEG", quality=85)
+        cover = storage.output_url(job_id, "cover.jpg")
+    except Exception:  # noqa: BLE001
+        cover = meta.get("cover", "")
+    # 降级兜底 → 退回本次全部点数(n=秒数 笔 × vidu=2 点)。统一由 run_job_in_worker commit,幂等护栏防重投重复退。
+    if degraded_fallback and job.owner_id is not None and db is not None:
+        try:
+            from .models_db import User
+            from .services.billing import refund
+            user = db.get(User, job.owner_id)
+            if user is not None:
+                for _ in range(int(p.get("n", 1) or 1)):
+                    refund(db, user, "vidu")
+        except Exception:  # noqa: BLE001 — 退点失败不阻断交付
+            pass
+    if job.owner_id is not None:
+        save_as_asset(db, job.owner_id, raw[0], f"Vidu 图生视频 {cat}", url, source="generated",
+                      size_bytes=len(out["bytes"]))
+    return {"video_url": url, "ext": ext, "voiceover": meta.get("voiceover", ""),
+            "cover": cover, "engine": meta.get("engine", ""),
+            "degraded": bool(meta.get("degraded")) or degraded_fallback,
+            "warnings": warnings}
+
+
 # kind → (work, refund_op, n_param)。n_param 非空时退点笔数 = job.params[n_param](如裂变按张扣)。
 TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
     "generate": (_work_generate, "generate", "n"),  # 一组打包=4笔generate(20点),单张=1笔;按 n 退点
@@ -652,6 +737,8 @@ TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
     "collect_sync": (_work_sync, None, None),
     # AI 图生视频(智谱 CogVideoX-3 / 本地兜底)。退点笔数=params["n"](单段=1;双分镜 15s=2,价格翻倍)
     "aivideo": (_work_aivideo, "video", "n"),
+    # AI 图生视频(Vidu viduq3 / 本地兜底)。单次出 15s 多镜头;退点 op=vidu(2 点/笔)、笔数=params["n"]=秒数
+    "viduvideo": (_work_viduvideo, "vidu", "n"),
 }
 
 
