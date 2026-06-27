@@ -124,6 +124,9 @@ function pickType(t) {
 
 function openWizard() {
   if (!img1.value) return ElMessage.warning('请先上传商品图片')
+  // 首尾帧(传了尾帧)与智能向导不兼容:向导只看单图、产出生活化故事,不会理解"首→尾"过渡。
+  // 首尾帧请直接在描述框写过渡(如:按钮按下→面板展开→开始旋转)。
+  if (img2.value) return ElMessage.warning('首尾帧模式请直接在「视频描述」里写两帧之间的过渡;智能向导仅用于单张商品图')
   if (!seconds.value) return ElMessage.warning('请先选择视频时长')
   if (!smartReady.value) return ElMessage.warning('未配置作图 AI key,「智能方案」暂不可用')
   wizardOpen.value = true
@@ -236,9 +239,9 @@ onMounted(async () => {
           </div>
 
           <div class="clabel mt">视频类型</div>
-          <button class="smart" :class="{ on: selType === 'smart' }" :disabled="!seconds" @click="openWizard">
+          <button class="smart" :class="{ on: selType === 'smart' }" :disabled="!seconds || !!img2" @click="openWizard">
             <span class="si">✨</span>
-            <span class="st"><b>智能方案向导</b><i>AI 看图填商品信息 → 出 3 个方案选用(每步扣 1 点)</i></span>
+            <span class="st"><b>智能方案向导</b><i>{{ img2 ? '首尾帧模式不可用,请在「视频描述」直接写过渡' : 'AI 看图填商品信息 → 出 3 个方案选用(每步扣 1 点)' }}</i></span>
           </button>
           <div class="types" :class="{ locked: !seconds }">
             <button v-for="t in TYPES" :key="t.id" class="type" :class="{ on: selType === t.id }" :disabled="!seconds" @click="pickType(t)">
