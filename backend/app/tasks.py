@@ -653,7 +653,10 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
     seconds = clamp_seconds(p.get("seconds") or 5)
     lang = p.get("language", "葡萄牙语")
     sound_mode = p.get("sound_mode", "none")
-    native_audio = sound_mode == "sfx"                # 原生音效 → 让 Vidu 出声(audio=true);none=无声
+    native_audio = sound_mode == "sfx"                # 原生音效 → Vidu 出声(audio=true);none=无声
+    # ⚠ 官方:audio=true 不指定 audio_type 默认 "All"=音效+人声(且只支持中/英) → 会给画面人配上中/英语音、与巴西场景人对不上。
+    # 故原生音效强制 "Sound-effect_only"=【只出环境/动作音效、绝不配人声】。葡/西/英/中口播只走 edge-tts 真人旁白。
+    audio_type = "Sound-effect_only" if native_audio else ""
     use_scene = bool(p.get("scene_frame") and settings.openai_api_key)   # 场景母帧需作图网关 key
     raw = _load_input(job_id)
     tw, th = _aspect_px(aspect)
@@ -683,7 +686,8 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
     degraded_fallback = False
     try:
         out = get_vidu_provider().image_to_video(
-            [first], prompt, aspect=aspect, resolution=resolution, seconds=seconds, audio=native_audio)
+            [first], prompt, aspect=aspect, resolution=resolution, seconds=seconds,
+            audio=native_audio, audio_type=audio_type)
     except Exception as exc:  # noqa: BLE001 — provider 失败 → 降级兜底,绝不挂死/白扣
         from .ai.vidu import LocalGifProvider
         out = LocalGifProvider().image_to_video([first], "", aspect=aspect, seconds=min(seconds, 10))

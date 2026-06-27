@@ -43,9 +43,10 @@ RESOLUTIONS: list[str] = ["720p", "1080p"]     # viduq2-pro-fast 支持 540/720/
 DURATION_MIN: int = 5
 DURATION_MAX: int = 10
 
-# 声音模式:none=无声(audio=false);sfx=原生音效(audio=true,Vidu 出环境音/动作音,与语言无关);
-#   voiceover=真人旁白(audio=false 静音生成 + edge-tts 按市场语言配音 + 字幕)——【葡/西语市场靠这个】,
-#   因为 Vidu 原生音频对葡语支持不好,口播仍走 edge-tts(免费、多语言、可烧字幕)。
+# 声音模式:none=无声(audio=false);sfx=原生音效(audio=true + audio_type=Sound-effect_only=【只出音效、绝不配人声】,
+#   见 tasks.py:否则默认 "All" 会让 Vidu 给画面人配中/英语音、与场景人对不上);
+#   voiceover=真人旁白(audio=false 静音生成 + edge-tts 按场景地区语言配音 + 字幕)——【葡/西语口播只能靠这个】,
+#   Vidu 本身不生成葡/西语人声(原生音频默认中/英)。
 SOUND_MODES: list[str] = ["none", "sfx", "voiceover"]
 
 # 目标市场 → 语言。决定【场景母帧里出现哪国人 + 氛围】+【真人旁白用什么语言】。主打巴西=葡语。

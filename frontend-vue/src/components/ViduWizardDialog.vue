@@ -27,8 +27,8 @@ const proposals = ref([])
 
 // 声音(向导内自洽):无声 / 原生音效(Vidu) / 真人旁白(edge-tts 按市场语言+字幕)。默认真人旁白=完整带货片。
 const SOUND_MODES = [
-  { id: 'voiceover', label: '🎙️ 真人旁白', hint: '看图写口播稿,edge-tts 按市场语言配音(推荐)' },
-  { id: 'sfx', label: '🌿 原生音效', hint: 'Vidu 出环境音/动作音(额外 +15 Vidu 积分)' },
+  { id: 'voiceover', label: '🎙️ 真人旁白', hint: '看图写口播稿,edge-tts 按场景地区语言配音(葡/西语靠这个,推荐)' },
+  { id: 'sfx', label: '🌿 原生音效', hint: '纯环境/动作音效,不含人声(+15 Vidu 积分)' },
   { id: 'none', label: '🔇 无声', hint: '纯画面' },
 ]
 const soundMode = ref('voiceover')

@@ -50,17 +50,17 @@ const RESOLUTIONS = [
   { id: '720p', label: '720P', hint: '默认·快' },
   { id: '1080p', label: '1080P', hint: '高清·慢' },
 ]
-// 目标市场(一个选择器,替代含糊的"地区/语言"):决定 ①场景里出现哪国人 ②真人旁白语言
+// 场景地区(决定视频里出现哪国人,= 场景母帧人物 + 旁白语言)。⚠ Vidu 本身不生成人声,葡/西语口播靠下方「真人旁白」(edge-tts)。
 const MARKETS = [
-  { id: '葡萄牙语', label: '🇧🇷 巴西·葡语' },
-  { id: '英语', label: '🇺🇸 欧美·英语' },
-  { id: '西班牙语', label: '🇲🇽 拉美·西语' },
-  { id: '中文', label: '🇨🇳 中国·中文' },
+  { id: '葡萄牙语', label: '🇧🇷 巴西' },
+  { id: '英语', label: '🇺🇸 欧美' },
+  { id: '西班牙语', label: '🇲🇽 拉美' },
+  { id: '中文', label: '🇨🇳 中国' },
 ]
 const SOUND_MODES = [
   { id: 'none', icon: '🔇', name: '无声', desc: '纯画面(最稳)' },
-  { id: 'sfx', icon: '🌿', name: '原生音效', desc: 'Vidu 出环境音/动作音(无人声;额外 +15 Vidu 积分)' },
-  { id: 'voiceover', icon: '🎙️', name: '真人旁白', desc: 'edge-tts 按市场语言配音 + 字幕(葡/西语靠这个)' },
+  { id: 'sfx', icon: '🌿', name: '原生音效', desc: '纯环境/动作音效,不含人声(Vidu;+15 Vidu 积分)' },
+  { id: 'voiceover', icon: '🎙️', name: '真人旁白', desc: 'edge-tts 按场景地区语言配音+字幕(巴西=葡语;Vidu 不说话,葡/西靠这个)' },
 ]
 
 const price = computed(() => seconds.value * pricePerSec.value)
@@ -212,7 +212,7 @@ onMounted(async () => {
         </div>
 
         <div class="field">
-          <span class="flabel">目标市场 <span class="opt">决定场景里出现哪国人 + 真人旁白用什么语言</span></span>
+          <span class="flabel">场景地区 <span class="opt">视频里出现哪国人(Vidu 不说话;口播靠下方「真人旁白」)</span></span>
           <div class="chips">
             <button v-for="m in MARKETS" :key="m.id" class="chip" :class="{ on: market === m.id }" @click="market = m.id">{{ m.label }}</button>
           </div>
@@ -230,7 +230,7 @@ onMounted(async () => {
         <label v-if="soundMode === 'voiceover'" class="toggle sub">
           <input type="checkbox" v-model="subtitle" />
           <span class="tg-box" />
-          <span class="tg-text"><b>📝 字幕</b><i>把旁白按目标市场语言烧进画面</i></span>
+          <span class="tg-text"><b>📝 字幕</b><i>把旁白按场景地区语言烧进画面</i></span>
         </label>
 
         <button class="btn-primary run" :disabled="submitting || !img1" @click="run">

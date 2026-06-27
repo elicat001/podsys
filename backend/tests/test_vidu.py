@@ -312,3 +312,35 @@ def test_vidu_duration_clamped_in_provider(monkeypatch):
     prov = vidu_mod.get_vidu_provider()
     prov.image_to_video([Image.open(_png())], "x", seconds=30)
     assert _FakeClient.captured["body"]["duration"] == 10
+
+
+def test_vidu_provider_sends_audio_type_sound_effect_only(monkeypatch):
+    """给了 audio_type 时 provider 必须发出去(防"默认 All=配人声"的 bug)。"""
+    from app.ai import vidu as vidu_mod
+    _setup(monkeypatch)
+    prov = vidu_mod.get_vidu_provider()
+    prov.image_to_video([Image.open(_png())], "x", audio=True, audio_type="Sound-effect_only")
+    body = _FakeClient.captured["body"]
+    assert body["audio"] is True and body["audio_type"] == "Sound-effect_only"
+
+
+def test_vidu_sfx_mode_forces_sound_effect_only(client, auth_headers, monkeypatch, tool_result):
+    """原生音效(sfx)→ worker 必须给 provider 传 audio_type=Sound-effect_only(只出音效、不配人声)。"""
+    from app.ai import vidu as vidu_mod
+    captured = {}
+
+    class _Fake:
+        name = "vidu"
+
+        def image_to_video(self, images, prompt, *, aspect="portrait", resolution="720p",
+                           seconds=5, audio=False, audio_type=""):
+            captured["audio"] = audio
+            captured["audio_type"] = audio_type
+            return {"bytes": b"\x00\x00\x00\x18ftypmp42X", "ext": "mp4", "url": "",
+                    "meta": {"engine": "viduq2-pro-fast"}}
+    monkeypatch.setattr(vidu_mod, "get_vidu_provider", lambda: _Fake())
+    r = client.post("/api/vidu/ai-generate", headers=auth_headers,
+                    data={"seconds": 5, "sound_mode": "sfx", "scene_frame": "false"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    tool_result(auth_headers, r)
+    assert captured["audio"] is True and captured["audio_type"] == "Sound-effect_only"
