@@ -1,15 +1,12 @@
 """Vidu 图生视频路由(第二套引擎,与 CogVideoX 的 /api/video 并存)。前缀 /api/vidu。
 
-与 /api/video 的区别:Vidu viduq3 单次调用就出 16s 多镜头【带原生音画同步】(无母帧链/无三段拼接),
-端点更薄、时长连续可选(5-16s)、计费按【秒数×2】。独立 router → 与他人维护的 video.py 物理隔离,零冲突。
+本版定位:单张商品图 →[场景母帧] 真人在生活场景里使用/把玩商品 → viduq2-pro-fast 出片。
+端点薄、时长连续 5-10s(q2-pro-fast 上限 10)、计费按【秒数×2】。独立 router → 与他人维护的 video.py 物理隔离。
 """
 from __future__ import annotations
 
-import io
-
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from fastapi import File as FastFile
-from PIL import Image
 from sqlalchemy.orm import Session
 
 from ..ai.vidu import (
@@ -17,7 +14,6 @@ from ..ai.vidu import (
     DURATION_MAX,
     DURATION_MIN,
     LANGUAGES,
-    NATIVE_DIALOGUE_LANGS,
     RESOLUTIONS,
     SOUND_MODES,
     clamp_seconds,
@@ -35,19 +31,16 @@ router = APIRouter(prefix="/api/vidu", tags=["vidu"])
 
 @router.get("/options")
 def options(user: User = Depends(current_user)):
-    """前端拉取可选项 + 计费规则。Vidu 单次出片,计费 = 秒数 × vidu(2 点/笔)。
-    时长连续(min..max);声音支持原生音画同步(Q3)。商品类目【已下线】(走智能识别,不再写死)。"""
+    """前端可选项 + 计费规则。计费 = 秒数 × vidu(2 点/笔)。时长连续 5-10s;声音 = 无声/原生音效。"""
     return {
         "aspects": list(ASPECT_RATIOS),
         "resolutions": RESOLUTIONS,
         "languages": LANGUAGES,
-        # 时长连续可选(前端用滑块):min..max,Q3 1-16s,POD 起步 5s。
         "duration": {"min": DURATION_MIN, "max": DURATION_MAX},
-        # 声音模式(原生音画同步是 Q3 招牌能力):none/sfx/dialogue(中英对白口型)/voiceover(edge-tts 多语言)
-        "sound_modes": SOUND_MODES,
-        "native_dialogue_langs": NATIVE_DIALOGUE_LANGS,
+        "sound_modes": SOUND_MODES,           # none / sfx
         "model": settings.vidu_model,
-        "price_per_second": cost_of("vidu"),   # 计费 = 秒数 × 单价(2)
+        "price_per_second": cost_of("vidu"),
+        # smart_ready=配了作图网关 key → 可用「智能识别」+「场景母帧」(都靠 gpt-image/视觉模型)
         "smart_ready": bool(settings.openai_api_key),
         "ai_ready": settings.vidu_provider != "local" and bool(settings.vidu_api_key),
     }
@@ -62,8 +55,8 @@ def smart_describe_endpoint(
     user: User = Depends(charge_for("title")),
     db: Session = Depends(get_db),
 ):
-    """智能识别:看商品图 + 卖点 → 自动写一条【Vidu 多镜头分镜】脚本(填进视频描述)。同步,扣 title=1,失败退点。
-    复用作图网关视觉模型(POD_OPENAI_API_KEY);无 key/失败 → 502 + 退点。类目下线 → 由 AI 看图自适应,不写死动作。"""
+    """智能识别:看商品图 → 判断它最自然的把玩/使用方式 → 写一条【真人上手互动】脚本(填进视频描述)。
+    同步,扣 title=1,失败退点。视觉自适应、不写死动作;无 key/失败 → 502 + 退点。"""
     img = read_image_or_refund(file.file.read(), db, user, "title")
     seconds = clamp_seconds(seconds)
     try:
@@ -82,42 +75,30 @@ def smart_describe_endpoint(
 @router.post("/ai-generate")
 def ai_generate(
     file: UploadFile = FastFile(...),
-    file2: UploadFile | None = FastFile(None),
     prompt: str = Form(""),
-    language: str = Form("葡萄牙语"),    # 旁白(voiceover)语言 + 地区风格
+    language: str = Form("葡萄牙语"),    # 地区/语言:影响场景母帧里的人 + 氛围
     aspect: str = Form("portrait"),
     resolution: str = Form("720p"),
-    seconds: int = Form(5),             # 连续 5-16s(后端 clamp)
-    sound_mode: str = Form("none"),     # none / sfx / dialogue / voiceover(互斥)
-    dialogue_lang: str = Form("英文"),   # 原生音画同步(dialogue)时的对白语言(中/英)
-    subtitle: bool = Form(True),        # voiceover 模式的字幕
+    seconds: int = Form(5),             # 连续 5-10s(后端 clamp)
+    sound_mode: str = Form("none"),     # none / sfx / voiceover
+    subtitle: bool = Form(True),        # 真人旁白(voiceover)模式的字幕开关
+    scene_frame: bool = Form(True),     # 场景母帧:gpt-image 把商品合成进"真人使用它"的场景做首帧(无 key 自动跳过)
     user: User = Depends(charge_for("vidu")),
     db: Session = Depends(get_db),
 ):
-    """Vidu 图生视频(viduq3):1 张图=首帧锁定多镜头 / 2+ 张=多图参考主体一致。单次出片含原生音画同步,无需拼接。
-    异步,计费 = 秒数 × 2 点(连续时长 5-16s),失败退点。
-    Provider 由 POD_VIDU_PROVIDER 决定:默认 local→兜底 GIF;设 vidu + 填 key→真 Vidu。"""
+    """Vidu 图生视频(viduq2-pro-fast):单张商品图 →[场景母帧] 真人上手使用/把玩商品 → 单次出片。
+    异步,计费 = 秒数 × 2 点(连续 5-10s),失败退点。Provider 由 POD_VIDU_PROVIDER 决定(默认 local→兜底 GIF)。"""
     img1 = file.file.read()
-    read_image_or_refund(img1, db, user, "vidu")   # 第 1 张必填;坏图自动退 1 笔 + 400(下方多扣还没发生)
-    img2 = None
-    if file2 is not None:
-        b = file2.file.read()
-        try:
-            Image.open(io.BytesIO(b)).verify()
-            img2 = b
-        except Exception:  # noqa: BLE001 — 第 2 张坏图忽略(降级单图,不阻断)
-            img2 = None
+    read_image_or_refund(img1, db, user, "vidu")   # 坏图自动退 1 笔 + 400(下方多扣还没发生)
     if aspect not in ASPECT_RATIOS:
         aspect = "portrait"
     if resolution not in RESOLUTIONS:
         resolution = "720p"
     if sound_mode not in SOUND_MODES:
         sound_mode = "none"
-    if dialogue_lang not in NATIVE_DIALOGUE_LANGS:
-        dialogue_lang = "英文"
-    seconds = clamp_seconds(seconds)   # 夹到 5-16
-    # 计费:秒数 × vidu(2 点/笔)。charge_for 已扣 1 笔;这里再补扣 seconds-1 笔 = 共 seconds 笔。
-    # 任一笔余额不足 → 退回【已扣的全部】+ 402。n=退点笔数(=秒数),贯穿所有退点路径(submit_celery/worker/reaper)。
+    seconds = clamp_seconds(seconds)   # 夹到 5-10
+    # 计费:秒数 × vidu(2 点/笔)。charge_for 已扣 1 笔;再补扣 seconds-1 笔 = 共 seconds 笔。
+    # 任一笔余额不足 → 退回【已扣的全部】+ 402。n=退点笔数(=秒数),贯穿所有退点路径。
     n = int(seconds)
     charged = 1
     for _ in range(n - 1):
@@ -129,9 +110,8 @@ def ai_generate(
             raise HTTPException(status_code=402, detail=str(exc)) from exc
     return submit_celery(
         run_tool, db, user, kind="viduvideo", tool_id="viduvideo", op="vidu",
-        raw=img1, mask_raw=img2, n=n,
+        raw=img1, n=n,
         params={"prompt": prompt[:2000], "language": language[:20], "category": "通用",
                 "aspect": aspect, "resolution": resolution, "seconds": seconds, "n": n,
-                "sound_mode": sound_mode, "dialogue_lang": dialogue_lang,
-                "subtitle": bool(subtitle), "frames2": bool(img2)},
+                "sound_mode": sound_mode, "subtitle": bool(subtitle), "scene_frame": bool(scene_frame)},
     )

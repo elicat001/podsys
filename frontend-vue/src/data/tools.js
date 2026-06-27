@@ -157,7 +157,9 @@ export const TOOLS = [
     ],
   },
   {
-    id: 'videogen', name: '图生视频', icon: '🎬', cat: '视频', ep: 'video/generate',
+    // CogVideoX 引擎(自有页面 /app/video/generate)。这里仅供「任务中心」给它的作业归类/展示。
+    // cat 即分组标题:与 Vidu 分开两类(用户要 cog 一类、vidu 一类);module='视频' → 归视频大模块。
+    id: 'videogen', name: '图生视频', icon: '🎬', cat: '图生视频 CogVideoX-3', module: '视频', ep: 'video/generate',
     async: false, result: 'video', cost: 3,
     desc: '1~2 张图 + 描述 → AI 生成短视频',
     inputs: [
@@ -167,6 +169,12 @@ export const TOOLS = [
       { key: 'style', type: 'dynamicSelect', label: '运镜风格', source: 'videoStyles', default: 'kenburns' },
       { key: 'text', type: 'text', label: '叠加文字(可选)', default: '' },
     ],
+  },
+  {
+    // Vidu 引擎(自有页面 /app/video/vidu)。这里仅供「任务中心」给 kind=viduvideo 的作业归类/展示(单独一类)。
+    id: 'viduvideo', name: '图生视频', icon: '🎥', cat: '图生视频 Vidu', module: '视频', ep: 'vidu/ai-generate',
+    async: true, result: 'video', cost: 10,
+    desc: 'Vidu 真人上手 + 场景母帧',
   },
 ]
 
@@ -200,7 +208,9 @@ export function jobLabel(job) {
 }
 
 // 工具所属「大模块」:视频类归「视频」,其余作图工具归「作图」。
+// 视频引擎(videogen=CogVideoX / viduvideo=Vidu)用 module:'视频' 标记 → 都归视频大模块,但各自 cat 分两类;
+// 兼容老数据:cat==='视频' 也算视频。
 export function moduleOfTool(tool) {
   if (!tool) return '其它'
-  return tool.cat === '视频' ? '视频' : '作图'
+  return (tool.module === '视频' || tool.cat === '视频') ? '视频' : '作图'
 }

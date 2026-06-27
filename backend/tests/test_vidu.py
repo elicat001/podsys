@@ -1,9 +1,9 @@
-"""Vidu 图生视频(/api/vidu)测试 —— 第二套引擎,与 CogVideoX 并存。
+"""Vidu 图生视频(/api/vidu)测试 —— 第二套引擎(viduq2-pro-fast,真人上手 + 场景母帧)。
 
-覆盖:options 形状 / 鉴权 / 计费=秒数×2(连续时长) / 时长 clamp / 本地兜底 GIF /
-     provider 失败降级退点 / 余额不足 402 退首笔 / 提示词(多镜头 + 音频层) /
+覆盖:options 形状 / 鉴权 / 计费=秒数×2 / 时长 clamp(5-10) / 本地兜底 GIF / 场景母帧无 key 降级 /
+     provider 失败降级退点 / 余额不足 402 / 提示词(动作 + 音效层) /
      provider 真实请求体形状(假 httpx:img2video vs reference2video、模型名、audio 参数、防硬编码 bug)。
-测试默认 provider=local(conftest 锁 POD_VIDU_PROVIDER=local)→ 离线确定性,不连 Vidu。
+测试默认 provider=local + 无作图 key(conftest)→ 离线确定性,不连 Vidu、不调 gpt-image 母帧。
 """
 from __future__ import annotations
 
@@ -27,13 +27,13 @@ def test_vidu_options_shape(client, auth_headers):
     r = client.get("/api/vidu/options", headers=auth_headers)
     assert r.status_code == 200, r.text
     d = r.json()
-    assert d["duration"] == {"min": 5, "max": 16}     # 连续时长
+    assert d["duration"] == {"min": 5, "max": 10}     # viduq2-pro-fast 上限 10
     assert d["resolutions"] == ["720p", "1080p"]
     assert d["price_per_second"] == 2
-    assert "dialogue" in d["sound_modes"] and "voiceover" in d["sound_modes"]
+    assert d["sound_modes"] == ["none", "sfx", "voiceover"]   # 无声/原生音效/真人旁白(葡西靠旁白)
+    assert d["model"] == "viduq2-pro-fast"
     assert d["ai_ready"] is False
-    assert "portrait" in d["aspects"]
-    assert "categories" not in d                        # 商品类目已下线
+    assert "categories" not in d                       # 商品类目已下线
 
 
 def test_vidu_options_requires_auth(client):
@@ -45,48 +45,57 @@ def test_vidu_ai_generate_requires_auth(client):
     assert r.status_code == 401
 
 
-# ---------- 计费 = 秒数 × 2(连续时长) ----------
+# ---------- 计费 = 秒数 × 2(连续时长 5-10) ----------
 def test_vidu_local_fallback_charges_seconds_x2(client, auth_headers, tool_result):
     bal0 = _bal(client, auth_headers)
     r = client.post("/api/vidu/ai-generate", headers=auth_headers,
-                    data={"prompt": "镜头推近展示商品", "aspect": "portrait", "seconds": 5},
+                    data={"prompt": "真人把玩商品", "seconds": 5, "scene_frame": "true"},
                     files={"file": ("x.png", _png(), "image/png")})
     res = tool_result(auth_headers, r)
-    assert res["ext"] == "gif" and res["video_url"].endswith(".gif")
-    assert res["engine"] == "local-gif" and res["degraded"] is True
-    assert _bal(client, auth_headers) == bal0 - 10     # 5s × 2 = 10
+    assert res["ext"] == "gif" and res["engine"] == "local-gif" and res["degraded"] is True
+    assert _bal(client, auth_headers) == bal0 - 10     # 5s × 2
 
 
 def test_vidu_continuous_duration_charges(client, auth_headers, tool_result):
-    """连续时长:7s → 14 点(证明不再是固定 5/10/15 档)。"""
     bal0 = _bal(client, auth_headers)
     r = client.post("/api/vidu/ai-generate", headers=auth_headers,
                     data={"seconds": 7}, files={"file": ("x.png", _png(), "image/png")})
     tool_result(auth_headers, r)
-    assert _bal(client, auth_headers) == bal0 - 14     # 7s × 2 = 14
-
-
-def test_vidu_15s_charges_30(client, auth_headers, tool_result):
-    bal0 = _bal(client, auth_headers)
-    r = client.post("/api/vidu/ai-generate", headers=auth_headers,
-                    data={"seconds": 15}, files={"file": ("x.png", _png(), "image/png")})
-    tool_result(auth_headers, r)
-    assert _bal(client, auth_headers) == bal0 - 30
+    assert _bal(client, auth_headers) == bal0 - 14     # 7s × 2
 
 
 def test_vidu_duration_clamped(client, auth_headers, tool_result):
-    """越界时长被夹到 [5,16]:3→5(扣10)、20→16(扣32)。"""
+    """越界时长夹到 [5,10]:3→5(扣10)、20→10(扣20)。"""
     bal0 = _bal(client, auth_headers)
     r = client.post("/api/vidu/ai-generate", headers=auth_headers,
                     data={"seconds": 3}, files={"file": ("x.png", _png(), "image/png")})
     tool_result(auth_headers, r)
-    assert _bal(client, auth_headers) == bal0 - 10     # clamp 到 5
+    assert _bal(client, auth_headers) == bal0 - 10
 
     bal1 = _bal(client, auth_headers)
     r = client.post("/api/vidu/ai-generate", headers=auth_headers,
                     data={"seconds": 20}, files={"file": ("x.png", _png(), "image/png")})
     tool_result(auth_headers, r)
-    assert _bal(client, auth_headers) == bal1 - 32     # clamp 到 16
+    assert _bal(client, auth_headers) == bal1 - 20     # clamp 到 10
+
+
+def test_vidu_scene_frame_without_key_degrades_gracefully(client, auth_headers, tool_result):
+    """场景母帧开启 + 无作图 key(conftest 清空)→ 不调 gpt-image,直接用原图首帧,正常交付。"""
+    r = client.post("/api/vidu/ai-generate", headers=auth_headers,
+                    data={"seconds": 5, "scene_frame": "true"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    res = tool_result(auth_headers, r)
+    assert res["video_url"] and "warnings" in res      # 不崩;无 key 不报母帧失败(没进母帧分支)
+    assert not any("母帧" in w for w in res["warnings"])
+
+
+def test_vidu_voiceover_mode_accepted(client, auth_headers, tool_result):
+    """真人旁白模式被接受并正常交付(本地兜底出 GIF 时 edge-tts 不触发=不崩;真 mp4 时才叠旁白)。"""
+    r = client.post("/api/vidu/ai-generate", headers=auth_headers,
+                    data={"seconds": 5, "sound_mode": "voiceover", "subtitle": "true", "language": "葡萄牙语"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    res = tool_result(auth_headers, r)
+    assert res["video_url"]                            # 不崩、正常出片
 
 
 def test_vidu_bad_image_refunds(client, auth_headers):
@@ -134,39 +143,24 @@ def test_vidu_insufficient_credits_402_refunds_charged(client, auth_headers, mon
     assert _bal(client, auth_headers) == bal0
 
 
-# ---------- 提示词组装:多镜头 + 音频层(与 CogVideoX 分段拼接不同) ----------
-def test_compose_vidu_prompt_15s_is_multishot():
+# ---------- 提示词组装 ----------
+def test_compose_vidu_prompt_default_is_real_person_action():
     from app.ai.vidu import compose_vidu_prompt
-    p = compose_vidu_prompt("", language="葡萄牙语", seconds=15)
-    assert "镜头三" in p and "镜头一" in p
-    assert "图案" in p
-
-
-def test_compose_vidu_prompt_5s_is_single_shot():
-    from app.ai.vidu import compose_vidu_prompt
-    p = compose_vidu_prompt("", language="无对白", seconds=5)
-    assert "镜头三" not in p
+    p = compose_vidu_prompt("", language="葡萄牙语", seconds=5)
+    assert "图案" in p              # 一致性底线
+    assert ("把玩" in p or "使用" in p)
 
 
 def test_compose_vidu_prompt_respects_user_script():
     from app.ai.vidu import compose_vidu_prompt
-    p = compose_vidu_prompt("我自己的镜头脚本ABC", language="英语", seconds=15)
-    assert "我自己的镜头脚本ABC" in p
-    assert "镜头三" not in p
-
-
-def test_compose_vidu_prompt_dialogue_audio_layer():
-    """音画同步:prompt 末尾追加音频层,含对白语言。"""
-    from app.ai.vidu import compose_vidu_prompt
-    p = compose_vidu_prompt("", language="英语", seconds=5, sound_mode="dialogue", dialogue_lang="中文")
-    assert "音频" in p and "中文" in p and "口型" in p
+    p = compose_vidu_prompt("我的专属按压旋转脚本ABC", language="英语", seconds=8)
+    assert "我的专属按压旋转脚本ABC" in p
 
 
 def test_compose_vidu_prompt_sfx_audio_layer():
     from app.ai.vidu import compose_vidu_prompt
     p = compose_vidu_prompt("", language="英语", seconds=5, sound_mode="sfx")
     assert "音频" in p and "音效" in p
-    # 无声模式不加音频层
     p2 = compose_vidu_prompt("", language="英语", seconds=5, sound_mode="none")
     assert "音频" not in p2
 
@@ -178,7 +172,7 @@ def test_vidu_billing_op_cost():
 
 def test_clamp_seconds():
     from app.ai.vidu import clamp_seconds
-    assert clamp_seconds(3) == 5 and clamp_seconds(20) == 16 and clamp_seconds(8) == 8
+    assert clamp_seconds(3) == 5 and clamp_seconds(20) == 10 and clamp_seconds(8) == 8
 
 
 # ---------- provider 真实请求体形状(假 httpx,不连网络;防硬编码 API bug) ----------
@@ -195,7 +189,6 @@ class _FakeResp:
 
 
 class _FakeClient:
-    """记录 post 的 path/body,模拟 建任务→轮询success→下载 三步。"""
     captured: dict = {}
 
     def __init__(self, *a, **k):
@@ -224,53 +217,50 @@ def _setup(monkeypatch):
     from app.config import settings
     monkeypatch.setattr(settings, "vidu_api_key", "k-test")
     monkeypatch.setattr(settings, "vidu_provider", "vidu")
-    monkeypatch.setattr(settings, "vidu_model", "viduq3-pro")
-    monkeypatch.setattr(settings, "vidu_ref_model", "viduq3")
+    monkeypatch.setattr(settings, "vidu_model", "viduq2-pro-fast")
+    monkeypatch.setattr(settings, "vidu_ref_model", "viduq2-pro-fast")
     monkeypatch.setattr(settings, "vidu_poll_interval", 0.0)
     monkeypatch.setattr(settings, "vidu_base_url", "https://api.vidu.cn")
     monkeypatch.setattr(httpx, "Client", _FakeClient)
 
 
 def test_vidu_provider_single_image_uses_img2video(monkeypatch):
-    """1 张图 → img2video,用 img2video 合法模型名 viduq3-pro;audio 显式发;Q3 不发 movement/bgm。"""
+    """1 张图 → img2video,用 viduq2-pro-fast;audio 显式发;q2 不发 movement;audio_type 默认不发。"""
     from app.ai import vidu as vidu_mod
     _setup(monkeypatch)
     prov = vidu_mod.get_vidu_provider()
     assert isinstance(prov, vidu_mod.ViduProvider)
-    img = Image.open(_png())
-    out = prov.image_to_video([img], "多镜头脚本", aspect="portrait", resolution="720p",
-                              seconds=15, audio=True, audio_type="All")
-    assert out["ext"] == "mp4" and out["bytes"].startswith(b"\x00\x00\x00\x18ftyp")
-    assert out["meta"]["engine"] == "viduq3-pro"
+    out = prov.image_to_video([Image.open(_png())], "真人按压旋转", aspect="portrait",
+                              resolution="720p", seconds=8, audio=True)
+    assert out["ext"] == "mp4" and out["meta"]["engine"] == "viduq2-pro-fast"
     cap = _FakeClient.captured
     assert cap["url"].endswith("/ent/v2/img2video")
     assert cap["headers"]["Authorization"] == "Token k-test"
     body = cap["body"]
-    assert body["model"] == "viduq3-pro" and body["duration"] == 15 and body["resolution"] == "720p"
-    assert body["images"][0].startswith("data:image/jpeg;base64,")
-    assert body["audio"] is True and body["audio_type"] == "All"
-    assert "movement_amplitude" not in body and "bgm" not in body and "voice_id" not in body
+    assert body["model"] == "viduq2-pro-fast" and body["duration"] == 8 and body["resolution"] == "720p"
+    assert body["audio"] is True and "audio_type" not in body       # 默认不发 audio_type
+    assert "movement_amplitude" not in body and "bgm" not in body
 
 
 def test_vidu_provider_two_images_uses_reference2video(monkeypatch):
-    """2 张图 → reference2video,用 reference 合法模型名 viduq3 + aspect_ratio;audio=false 不发 audio_type。"""
+    """2 张图 → reference2video(provider 仍支持);即便 audio=True 也【完全不含 audio】(对齐官方,防 400)。"""
     from app.ai import vidu as vidu_mod
     _setup(monkeypatch)
     prov = vidu_mod.get_vidu_provider()
     imgs = [Image.open(_png((200, 40, 40))), Image.open(_png((40, 200, 40)))]
-    out = prov.image_to_video(imgs, "脚本", aspect="square", resolution="1080p", seconds=10, audio=False)
-    assert out["ext"] == "mp4" and out["meta"]["engine"] == "viduq3"
+    out = prov.image_to_video(imgs, "脚本", aspect="square", resolution="1080p", seconds=10, audio=True)
+    assert out["ext"] == "mp4"
     cap = _FakeClient.captured
     assert cap["url"].endswith("/ent/v2/reference2video")
     body = cap["body"]
-    assert body["model"] == "viduq3" and len(body["images"]) == 2 and body["aspect_ratio"] == "1:1"
-    assert body["audio"] is False and "audio_type" not in body
+    assert body["model"] == "viduq2-pro-fast" and len(body["images"]) == 2 and body["aspect_ratio"] == "1:1"
+    assert "audio" not in body and "audio_type" not in body
 
 
 def test_vidu_duration_clamped_in_provider(monkeypatch):
-    """provider 内也夹时长:越界 30 → 16。"""
+    """provider 内也夹时长:越界 30 → 10。"""
     from app.ai import vidu as vidu_mod
     _setup(monkeypatch)
     prov = vidu_mod.get_vidu_provider()
     prov.image_to_video([Image.open(_png())], "x", seconds=30)
-    assert _FakeClient.captured["body"]["duration"] == 16
+    assert _FakeClient.captured["body"]["duration"] == 10

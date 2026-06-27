@@ -635,57 +635,71 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
 
 
 def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
-    """AI 图生视频(Vidu viduq3 / 本地兜底 GIF)—— 第二套引擎,与 CogVideoX 并存。
-    与 _work_aivideo 的【本质区别】:Vidu 单次调用就出 15s 多镜头(无母帧链、无三段拼接、无 punchup),编排大幅简化。
-    读 1~多张输入图(2+ 张=多图参考主体一致)→ compose_vidu_prompt(多镜头写在同一 prompt 内)→ provider → 存产物。"""
-    from .ai.vidu import _AUDIO_TYPE, _aspect_px, clamp_seconds, compose_vidu_prompt, fit_to_aspect, get_vidu_provider
+    """AI 图生视频(Vidu viduq2-pro-fast / 本地兜底 GIF)—— 第二套引擎,与 CogVideoX 并存。
+    定位:单张商品图 →[场景母帧] 真人在生活场景里使用/把玩商品 → img2video 让它动起来。
+    场景母帧:gpt-image 把商品合成进"真人正在使用它"的场景做首帧(无 key/失败自动降级回原图,不阻断)。"""
+    from .ai.vidu import (
+        _aspect_px,
+        clamp_seconds,
+        compose_vidu_prompt,
+        fit_to_aspect,
+        get_vidu_provider,
+    )
+    from .config import settings
     p = job.params
     cat = p.get("category", "通用")
     aspect = p.get("aspect", "portrait")
     resolution = p.get("resolution", "720p")
     seconds = clamp_seconds(p.get("seconds") or 5)
     lang = p.get("language", "葡萄牙语")
-    # 声音模式(互斥):none/sfx/dialogue=Vidu 原生音画(audio+audio_type);voiceover=静音生成 + edge-tts 叠回。
     sound_mode = p.get("sound_mode", "none")
-    dialogue_lang = p.get("dialogue_lang", "英文")
-    native_audio = sound_mode in ("sfx", "dialogue")          # 原生音效/音画同步 → 让 Vidu 出声
-    audio_type = _AUDIO_TYPE.get(sound_mode, "All")
-    do_voiceover = sound_mode == "voiceover"                  # edge-tts 旁白(补 Q3 不擅长的葡/西语)
-    raw = [_load_input(job_id)]
-    mpath = storage.upload_path(f"{job_id}_mask")   # 复用 mask 槽放第 2 张参考图
-    if mpath.exists():
-        im2 = Image.open(mpath); im2.load(); raw.append(im2)
-    # 单图 img2video → 首帧锁定印花,故把首帧贴成目标画幅(防拉伸);多图 reference2video 由 aspect_ratio 控制,不贴。
+    native_audio = sound_mode == "sfx"                # 原生音效 → 让 Vidu 出声(audio=true);none=无声
+    use_scene = bool(p.get("scene_frame") and settings.openai_api_key)   # 场景母帧需作图网关 key
+    raw = _load_input(job_id)
     tw, th = _aspect_px(aspect)
-    imgs = [fit_to_aspect(raw[0], tw, th)] + raw[1:] if len(raw) == 1 else list(raw)
-    prompt = compose_vidu_prompt(p.get("prompt", ""), language=lang, seconds=seconds,
-                                 sound_mode=sound_mode, dialogue_lang=dialogue_lang)
 
     warnings: list[str] = []
+    # 场景母帧:gpt-image 把商品合成进"真人正在使用它"的场景做视频首帧 → 缓解"白底图突然长出人/场景"的硬切。
+    # 失败【显式记录到 warnings】(否则用户拿到一段平铺产品片却不知为何);无 key 不进这里。
+    first = fit_to_aspect(raw, tw, th)
+    if use_scene:
+        from .ai.vidu import gptimage_size, scene_frame_prompt
+        src = raw
+        if max(src.size) > 1024:
+            src = src.copy(); src.thumbnail((1024, 1024), Image.LANCZOS)
+        try:
+            from .ai.openai_image import OpenAIImageClient
+            # 母帧用更长的单次超时(同 CogVideoX:image-edits 经慢中转很慢),不做翻倍重试(慢网关重试只会再慢一遍)
+            framed = OpenAIImageClient().edit(src, scene_frame_prompt(lang), size=gptimage_size(aspect),
+                                              timeout=settings.video_mufra_timeout)
+            first = fit_to_aspect(framed, tw, th)
+        except Exception as exc:  # noqa: BLE001 — 母帧失败不阻断,降级回原图首帧 + 告知
+            warnings.append("场景母帧生成失败,已退回原始商品图作首帧——成片少了真人使用场景。"
+                            f"常见:作图 AI 网关超时/未配 key/余额不足。详情:{str(exc)[:160]}")
+    prompt = compose_vidu_prompt(p.get("prompt", ""), language=lang, seconds=seconds, sound_mode=sound_mode)
+
     # 【保证交付】provider 超时/失败/网关繁忙 → 降级兜底本地 GIF + 退回点数(对齐 CogVideoX 可靠性底座)。
     degraded_fallback = False
     try:
         out = get_vidu_provider().image_to_video(
-            imgs, prompt, aspect=aspect, resolution=resolution, seconds=seconds,
-            audio=native_audio, audio_type=audio_type)
+            [first], prompt, aspect=aspect, resolution=resolution, seconds=seconds, audio=native_audio)
     except Exception as exc:  # noqa: BLE001 — provider 失败 → 降级兜底,绝不挂死/白扣
         from .ai.vidu import LocalGifProvider
-        out = LocalGifProvider().image_to_video(imgs, "", aspect=aspect, seconds=min(seconds, 10))
+        out = LocalGifProvider().image_to_video([first], "", aspect=aspect, seconds=min(seconds, 10))
         warnings.append(
             "Vidu 视频网关繁忙/超时,已用快速兜底版本(本地产品展示)交付,并已退回本次点数。"
             f"详情:{str(exc)[:160]}")
         degraded_fallback = True
-    # 旁白配音(best-effort):仅 voiceover 模式 + 真 mp4 才做。补 Q3 原生音画不擅长的葡/西语市场。
-    total_seconds = seconds
-    if do_voiceover and out.get("ext") == "mp4":
+    # 真人旁白(best-effort):仅 voiceover 模式 + 真 mp4 才做。Vidu 原生音频对葡/西语支持差,口播走 edge-tts(免费、按市场语言、可烧字幕)。
+    if sound_mode == "voiceover" and out.get("ext") == "mp4":
         try:
             from .services.voiceover import add_voiceover
-            new_bytes, script = add_voiceover(out["bytes"], raw[0], p.get("prompt", ""),
-                                              lang, total_seconds, subtitle=bool(p.get("subtitle", True)))
+            new_bytes, script = add_voiceover(out["bytes"], raw, p.get("prompt", ""), lang, seconds,
+                                              subtitle=bool(p.get("subtitle", True)))
             out["bytes"] = new_bytes
             if script:
                 out.setdefault("meta", {})["voiceover"] = script[:200]
-        except Exception as exc:  # noqa: BLE001 — 配音不阻断视频作业,显式记录降级
+        except Exception as exc:  # noqa: BLE001 — 配音不阻断,显式记录降级
             warnings.append(f"旁白配音失败,已输出无声视频。详情:{str(exc)[:160]}")
     ext = out.get("ext", "mp4")
     name = f"video.{ext}"
@@ -695,7 +709,7 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
     # 封面 = 用户上传的商品图(干净稳定、所见即所得),不用 Vidu 外链 cover(签名会过期)
     cover = ""
     try:
-        thumb = raw[0].convert("RGB"); thumb.thumbnail((640, 640))
+        thumb = raw.convert("RGB"); thumb.thumbnail((640, 640))
         thumb.save(storage.output_path(job_id, "cover.jpg"), format="JPEG", quality=85)
         cover = storage.output_url(job_id, "cover.jpg")
     except Exception:  # noqa: BLE001
@@ -712,9 +726,9 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
         except Exception:  # noqa: BLE001 — 退点失败不阻断交付
             pass
     if job.owner_id is not None:
-        save_as_asset(db, job.owner_id, raw[0], f"Vidu 图生视频 {cat}", url, source="generated",
+        save_as_asset(db, job.owner_id, raw, f"Vidu 图生视频 {cat}", url, source="generated",
                       size_bytes=len(out["bytes"]))
-    return {"video_url": url, "ext": ext, "voiceover": meta.get("voiceover", ""),
+    return {"video_url": url, "ext": ext,
             "cover": cover, "engine": meta.get("engine", ""),
             "degraded": bool(meta.get("degraded")) or degraded_fallback,
             "warnings": warnings}
