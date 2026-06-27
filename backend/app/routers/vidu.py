@@ -72,10 +72,52 @@ def smart_describe_endpoint(
     return {"description": text[:2000]}
 
 
+@router.post("/wizard/brief")
+def wizard_brief(
+    file: UploadFile = FastFile(...),
+    selling_points: str = Form(""),
+    language: str = Form("葡萄牙语"),
+    user: User = Depends(charge_for("title")),
+    db: Session = Depends(get_db),
+):
+    """智能向导 Step1:看商品图 → 结构化商品简报(产品名/受众/卖点)。同步,扣 title=1,失败退点。"""
+    img = read_image_or_refund(file.file.read(), db, user, "title")
+    try:
+        from ..services.vidu_wizard import describe_product
+        brief = describe_product(img, selling_points=selling_points[:500], language=language)
+    except Exception as exc:  # noqa: BLE001
+        refund(db, user, "title")
+        raise HTTPException(status_code=502, detail="商品信息识别失败(作图 AI 服务未配置或调用失败)") from exc
+    return brief
+
+
+@router.post("/wizard/proposals")
+def wizard_proposals(
+    name: str = Form(""),
+    audience: str = Form(""),
+    selling_points: str = Form(""),
+    seconds: int = Form(10),
+    language: str = Form("葡萄牙语"),
+    user: User = Depends(charge_for("title")),
+    db: Session = Depends(get_db),
+):
+    """智能向导 Step2:据商品简报 → 3 个方向不同的方案(每个=一个场景+一条连续动作链)。同步,扣 title=1,失败退点。"""
+    seconds = clamp_seconds(seconds)
+    try:
+        from ..services.vidu_wizard import generate_proposals
+        proposals = generate_proposals(name[:200], audience[:300], selling_points[:600],
+                                       seconds=seconds, language=language, n=3)
+    except Exception as exc:  # noqa: BLE001
+        refund(db, user, "title")
+        raise HTTPException(status_code=502, detail="方案生成失败(作图 AI 服务未配置或调用失败)") from exc
+    return {"proposals": proposals}
+
+
 @router.post("/ai-generate")
 def ai_generate(
     file: UploadFile = FastFile(...),
     prompt: str = Form(""),
+    scene: str = Form(""),              # 场景母帧指定场景(智能向导产出;留空则母帧看图自适应)
     language: str = Form("葡萄牙语"),    # 地区/语言:影响场景母帧里的人 + 氛围
     aspect: str = Form("portrait"),
     resolution: str = Form("720p"),
@@ -111,7 +153,7 @@ def ai_generate(
     return submit_celery(
         run_tool, db, user, kind="viduvideo", tool_id="viduvideo", op="vidu",
         raw=img1, n=n,
-        params={"prompt": prompt[:2000], "language": language[:20], "category": "通用",
+        params={"prompt": prompt[:2000], "scene": scene[:500], "language": language[:20], "category": "通用",
                 "aspect": aspect, "resolution": resolution, "seconds": seconds, "n": n,
                 "sound_mode": sound_mode, "subtitle": bool(subtitle), "scene_frame": bool(scene_frame)},
     )

@@ -6,6 +6,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client.js'
 import { useAuth } from '../stores/auth.js'
+import ViduWizardDialog from '../components/ViduWizardDialog.vue'
 
 const auth = useAuth()
 const img1 = ref(null); const img1Url = ref('')
@@ -20,7 +21,8 @@ const submitting = ref(false)
 const submitted = ref(false)
 const aiReady = ref(true)
 const smartReady = ref(false)
-const describing = ref(false)
+const wizardOpen = ref(false)    // 智能方案向导弹窗
+const wizardScene = ref('')      // 向导选中方案的母帧场景(随请求发给 scene_frame)
 const pricePerSec = ref(2)
 const model = ref('viduq2-pro-fast')
 const durMin = ref(5)
@@ -57,7 +59,7 @@ const MARKETS = [
 ]
 const SOUND_MODES = [
   { id: 'none', icon: '🔇', name: '无声', desc: '纯画面(最稳)' },
-  { id: 'sfx', icon: '🌿', name: '原生音效', desc: 'Vidu 出环境音/动作音(无人声)' },
+  { id: 'sfx', icon: '🌿', name: '原生音效', desc: 'Vidu 出环境音/动作音(无人声;额外 +15 Vidu 积分)' },
   { id: 'voiceover', icon: '🎙️', name: '真人旁白', desc: 'edge-tts 按市场语言配音 + 字幕(葡/西语靠这个)' },
 ]
 
@@ -76,28 +78,25 @@ function pickType(t) {
   selType.value = t.id
   prompt.value = t.text
   sceneFrame.value = t.scene
+  wizardScene.value = ''      // 手选预设 → 不带向导场景,母帧看图自适应
 }
 
-async function smartDescribe() {
+// 智能方案向导(主路径):看图→商品简报→3个方案(每个=场景+连续动作链)→选中带配置一键生成。
+function openWizard() {
   if (!img1.value) return ElMessage.warning('请先上传商品图片')
-  if (!smartReady.value) return ElMessage.warning('未配置作图 AI key,「智能识别」暂不可用')
-  describing.value = true
-  try {
-    const fd = new FormData()
-    fd.append('file', img1.value)
-    fd.append('seconds', seconds.value)
-    fd.append('language', market.value)
-    const d = (await api.post('/vidu/smart-describe', fd)).data
-    prompt.value = d.description || ''
-    selType.value = 'custom'
-    sceneFrame.value = true
-    if (auth.refreshBalance) auth.refreshBalance()
-    ElMessage.success('✅ 已按商品自动写好上手互动脚本,可自由修改')
-  } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.detail) || '智能识别失败')
-  } finally {
-    describing.value = false
+  if (!smartReady.value) return ElMessage.warning('未配置作图 AI key,「智能方案」暂不可用')
+  wizardOpen.value = true
+}
+function onWizardApply({ prompt: pp, scene, sound }) {
+  prompt.value = pp || ''
+  wizardScene.value = scene || ''     // 向导方案的母帧场景 → run() 透传给 scene_frame
+  selType.value = 'custom'
+  sceneFrame.value = true
+  if (sound) {
+    soundMode.value = sound.mode || 'voiceover'
+    subtitle.value = sound.subtitle !== false
   }
+  run()                                // 采用即生成(向导自洽:脚本+场景+声音都已带回)
 }
 
 async function run() {
@@ -107,6 +106,7 @@ async function run() {
     const fd = new FormData()
     fd.append('file', img1.value)
     fd.append('prompt', prompt.value)
+    fd.append('scene', wizardScene.value)
     fd.append('language', market.value)
     fd.append('aspect', aspect.value)
     fd.append('resolution', resolution.value)
@@ -169,9 +169,9 @@ onMounted(async () => {
           </div>
 
           <div class="clabel mt">视频类型</div>
-          <button class="smart" :disabled="describing" @click="smartDescribe">
-            <span class="si">{{ describing ? '⏳' : '✨' }}</span>
-            <span class="st"><b>{{ describing ? '识别中…' : '智能识别(推荐)' }}</b><i>AI 看图自动写"专属上手动作"(扣 1 点,不套模板)</i></span>
+          <button class="smart" @click="openWizard">
+            <span class="si">✨</span>
+            <span class="st"><b>智能方案向导(推荐)</b><i>看图出商品简报 → 3 个方案(场景+连续动作链)→ 选中即生成</i></span>
           </button>
           <div class="types">
             <button v-for="t in TYPES" :key="t.id" class="type" :class="{ on: selType === t.id }" @click="pickType(t)">
@@ -241,6 +241,14 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <ViduWizardDialog
+      v-model="wizardOpen"
+      :image="img1"
+      :seconds="seconds"
+      :market="market"
+      @apply="onWizardApply"
+    />
   </div>
 </template>
 

@@ -670,8 +670,9 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
         try:
             from .ai.openai_image import OpenAIImageClient
             # 母帧用更长的单次超时(同 CogVideoX:image-edits 经慢中转很慢),不做翻倍重试(慢网关重试只会再慢一遍)
-            framed = OpenAIImageClient().edit(src, scene_frame_prompt(lang), size=gptimage_size(aspect),
-                                              timeout=settings.video_mufra_timeout)
+            # scene:智能向导产出的指定场景(产品驱动);留空则母帧看图自适应。
+            framed = OpenAIImageClient().edit(src, scene_frame_prompt(lang, scene=p.get("scene", "")),
+                                              size=gptimage_size(aspect), timeout=settings.video_mufra_timeout)
             first = fit_to_aspect(framed, tw, th)
         except Exception as exc:  # noqa: BLE001 — 母帧失败不阻断,降级回原图首帧 + 告知
             warnings.append("场景母帧生成失败,已退回原始商品图作首帧——成片少了真人使用场景。"

@@ -175,6 +175,54 @@ def test_clamp_seconds():
     assert clamp_seconds(3) == 5 and clamp_seconds(20) == 10 and clamp_seconds(8) == 8
 
 
+def test_compose_vidu_prompt_has_direction_block():
+    """导演层:任务驱动 + 连续动作链 + 去僵硬,且尊重用户脚本。"""
+    from app.ai.vidu import compose_vidu_prompt
+    p = compose_vidu_prompt("拿起球按住顶部拨动让它旋转", seconds=10)
+    assert "拿起球按住顶部拨动让它旋转" in p
+    assert "动作链" in p and "僵硬" in p          # 去僵硬·连续动作链
+
+
+def test_scene_frame_prompt_uses_wizard_scene():
+    from app.ai.vidu import scene_frame_prompt
+    p = scene_frame_prompt("葡萄牙语", scene="年轻人坐在桌前正要拨动旋转球")
+    assert "年轻人坐在桌前正要拨动旋转球" in p     # 向导场景被带入
+    assert "巴西" in p                            # 地区随语言
+
+
+# ---------- 智能方案向导(brief / proposals) ----------
+def test_vidu_wizard_brief(client, auth_headers, monkeypatch):
+    from app.services import vidu_wizard
+    monkeypatch.setattr(vidu_wizard, "_chat",
+                        lambda msgs: '{"name":"减压旋转球","audience":"年轻人减压","selling_points":"按压旋转、彩色、解压"}')
+    r = client.post("/api/vidu/wizard/brief", headers=auth_headers,
+                    files={"file": ("x.png", _png(), "image/png")})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["name"] == "减压旋转球" and "解压" in d["selling_points"]
+
+
+def test_vidu_wizard_proposals_have_scene_and_storyboard(client, auth_headers, monkeypatch):
+    from app.services import vidu_wizard
+    fake = ('[{"title":"桌面解压","angle":"真人把玩","model":"年轻人","environment":"居家桌前",'
+            '"scene":"年轻人坐在桌前正要拨动旋转球","storyboard":"拿起球→按住顶部→拨动→高速旋转→看着笑"}]')
+    monkeypatch.setattr(vidu_wizard, "_chat", lambda msgs: fake)
+    r = client.post("/api/vidu/wizard/proposals", headers=auth_headers,
+                    data={"name": "减压旋转球", "seconds": 10})
+    assert r.status_code == 200, r.text
+    props = r.json()["proposals"]
+    assert len(props) == 1 and props[0]["scene"] and props[0]["storyboard"]
+
+
+def test_vidu_wizard_brief_no_key_502_refunds(client, auth_headers):
+    """conftest 清空作图 key → 简报识别抛错 → 502 + 退 title 点(失败必退点)。"""
+    bal0 = _bal(client, auth_headers)
+    r = client.post("/api/vidu/wizard/brief", headers=auth_headers,
+                    files={"file": ("x.png", _png(), "image/png")})
+    assert r.status_code == 502
+    assert _bal(client, auth_headers) == bal0
+
+
 # ---------- provider 真实请求体形状(假 httpx,不连网络;防硬编码 API bug) ----------
 class _FakeResp:
     def __init__(self, payload=None, content=b""):
