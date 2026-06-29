@@ -283,14 +283,15 @@ def _work_upscale(job_id: str, job: Job, db: Session) -> dict:
 
 
 def _work_gptedit(job_id: str, job: Job, db: Session) -> dict:
-    """扩图 / 去水印共用:gpt-image edit,prompt(含模板)在 params。"""
+    """扩图 / 去水印 / 图文替换共用:gpt-image edit,prompt(含模板)在 params。
+    入库素材名可由 params['asset_name'] 指定(便于在我的空间区分),默认「图案处理」。"""
     from .ai.openai_image import OpenAIImageClient
     p = job.params
     out = OpenAIImageClient().edit(_load_input(job_id), p["prompt"], size=p.get("size", "auto"))
     out.save(storage.output_path(job_id, "result.png"), format="PNG")
     url = storage.output_url(job_id, "result.png")
     if job.owner_id is not None:
-        save_as_asset(db, job.owner_id, out, "图案处理", url, source="generated")
+        save_as_asset(db, job.owner_id, out, p.get("asset_name", "图案处理"), url, source="generated")
     return {"image_url": url}
 
 
@@ -782,6 +783,7 @@ TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
     "meme": (_work_meme, "edit", None),
     "upscale": (_work_upscale, "process", None),
     "dewatermark": (_work_gptedit, "edit", None),
+    "imgreplace": (_work_gptedit, "edit", None),   # 图文替换:gpt-image 按需求改图(替换文字语言/改颜色/换元素等)
     "vectorize": (_work_vectorize, "process", None),
     "mockup": (_work_mockup, "asset", None),
     "mockup-replace": (_work_mockup_replace, "asset", "n"),

@@ -97,6 +97,16 @@ export const TOOLS = [
     ],
   },
   {
+    id: 'imgreplace', name: '图文替换', icon: '🔁', cat: '图案处理', ep: 'image-tools/replace',
+    async: true, result: 'image', cost: 4,
+    desc: '上传图 + 写需求,AI 按需求改图:替换图中文字/语言、改某物颜色、换元素等,保持其余不变。约 20~60 秒',
+    inputs: [
+      { key: 'file', type: 'file', label: '上传图片', required: true },
+      { key: 'prompt', type: 'textarea', label: '替换需求', required: true,
+        placeholder: '例:把图中所有文字翻译成葡萄牙语 / 把牛仔裤的颜色换成淡蓝色' },
+    ],
+  },
+  {
     id: 'vectorize', name: '转矢量图', icon: '📐', cat: '图案处理', ep: 'vectorize',
     async: true, result: 'svg', cost: 2,
     desc: '位图转 SVG,约 10~30 秒',

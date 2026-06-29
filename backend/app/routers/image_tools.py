@@ -1,4 +1,4 @@
-"""图案处理工具路由:图像提质(本地超分)/ 去水印(gpt-image edit)。
+"""图案处理工具路由:图像提质(本地超分)/ 去水印(gpt-image edit)/ 图文替换(gpt-image edit)。
 
 计费/错误范式同 main.py:charge_for 预扣 → 读图失败或 AI 失败 → refund + HTTPException。
 """
@@ -27,6 +27,20 @@ _DEWATERMARK_PROMPT = (
     "Cleanly reconstruct the underlying content so the result looks natural and "
     "watermark-free, keeping the main subject and style intact."
 )
+
+
+def _replace_prompt(req: str) -> str:
+    """图文替换 prompt 包装:把用户的自由需求(任意语言,如「把图中文字翻译成葡萄牙语」「把牛仔裤
+    换成淡蓝色」)框成「只改需求里说的,其余一律保持不变」的局部编辑指令,降低 gpt-image 把整图
+    重画跑偏的概率。用户原文照传(gpt-image 能读中文指令),只补英文的「保留其余元素」约束。"""
+    req = (req or "").strip()
+    return (
+        "Edit the attached image. Apply ONLY the change described in the user's request below, "
+        "and keep everything else — overall composition, layout, other objects, people, lighting, "
+        "background, and any unmentioned text or colors — exactly the same. Match the original style "
+        "so the edit blends in seamlessly. Produce a clean, photorealistic, consistent result.\n"
+        f"User's request: {req}"
+    )
 
 # 图像提质「目标分辨率」→ 目标长边像素。换算成放大倍数的事放在 router 做(此处已读图、知尺寸),
 # 下游 worker / 超分 provider 仍只吃 scale,不必改。4K=4096 同时是输出长边天花板(防超大)。
@@ -120,3 +134,29 @@ async def dewatermark(
                                           op="edit", raw=raw, params={"prompt": full_prompt, "size": size}))
     job_id = _edit_endpoint(raw, full_prompt, size, db, user, offline=_dw)
     return JSONResponse({"job_id": job_id, "image_url": storage.output_url(job_id, "result.png")})
+
+
+@router.post("/replace")
+async def replace(
+    file: UploadFile = File(...),
+    prompt: str = Form(...),        # 用户的替换需求(必填),如「把图中文字翻译成葡萄牙语」「把牛仔裤换成淡蓝色」
+    size: str = Form("auto"),
+    user: User = Depends(charge_for("edit")),
+    db: Session = Depends(get_db),
+):
+    """图文替换:上传图 + 写需求 → gpt-image 按需求改图(替换文字/语言、改某物颜色、换元素等),保持其余不变。
+
+    纯 AI 能力——自由指令编辑没有可靠的本地等价实现,故无 key → 502 + 退点(对齐 P0-2「失败必退点」)。
+    有 key → Celery 后台作业(gpt-image edit 耗时),前端轮询 /api/jobs/{id}。
+    """
+    raw = await file.read()
+    _read_image(raw, db, user, "edit")            # 读图失败 → 400 + 退点
+    if not (prompt or "").strip():                # 空需求无法编辑 → 400 + 退点
+        refund(db, user, "edit")
+        raise HTTPException(status_code=400, detail="请填写替换需求(例:把图中文字翻译成葡萄牙语)")
+    if not settings.openai_api_key:               # 无 key 没有本地兜底 → 502 + 退点
+        refund(db, user, "edit")
+        raise HTTPException(status_code=502, detail="图文替换需配置 AI key")
+    return JSONResponse(submit_celery(
+        run_tool, db, user, kind="imgreplace", tool_id="imgreplace", op="edit", raw=raw,
+        params={"prompt": _replace_prompt(prompt), "size": size, "asset_name": "图文替换"}))
