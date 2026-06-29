@@ -118,7 +118,8 @@ def ai_generate(
     file: UploadFile = FastFile(...),
     prompt: str = Form(""),
     scene: str = Form(""),              # 场景母帧指定场景(智能向导产出;留空则母帧看图自适应)
-    language: str = Form("葡萄牙语"),    # 地区/语言:影响场景母帧里的人 + 氛围
+    language: str = Form("葡萄牙语"),    # 场景地区:影响场景母帧里的人 + 区域氛围
+    vo_lang: str = Form(""),            # 旁白语言(仅 voiceover):edge-tts 配音语言;留空则用 language
     aspect: str = Form("portrait"),
     resolution: str = Form("720p"),
     seconds: int = Form(5),             # 连续 5-10s(后端 clamp)
@@ -153,7 +154,8 @@ def ai_generate(
     return submit_celery(
         run_tool, db, user, kind="viduvideo", tool_id="viduvideo", op="vidu",
         raw=img1, n=n,
-        params={"prompt": prompt[:2000], "scene": scene[:500], "language": language[:20], "category": "通用",
+        params={"prompt": prompt[:2000], "scene": scene[:500], "language": language[:20],
+                "vo_lang": (vo_lang or language)[:20], "category": "通用",
                 "aspect": aspect, "resolution": resolution, "seconds": seconds, "n": n,
                 "sound_mode": sound_mode, "subtitle": bool(subtitle), "scene_frame": bool(scene_frame)},
     )

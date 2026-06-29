@@ -31,7 +31,9 @@ const SOUND_MODES = [
   { id: 'sfx', label: '🌿 原生音效', hint: '纯环境/动作音效,不含人声(+15 Vidu 积分)' },
   { id: 'none', label: '🔇 无声', hint: '纯画面' },
 ]
+const VO_LANGS = ['葡萄牙语', '英语', '西班牙语', '中文']
 const soundMode = ref('voiceover')
+const voLang = ref('葡萄牙语')       // 旁白语言:默认跟随场景地区(props.market),可独立改
 const subtitle = ref(true)
 
 function refresh() { if (auth.refreshBalance) auth.refreshBalance() }
@@ -40,6 +42,7 @@ function close() { localOpen.value = false }
 watch(() => props.modelValue, (v) => {
   localOpen.value = v
   if (!v) return
+  voLang.value = props.market || '葡萄牙语'
   step.value = 1
   proposals.value = []
   soundMode.value = 'voiceover'
@@ -96,7 +99,7 @@ function choose(p) {
   // 采用 = 把动作链脚本(prompt)+ 母帧场景(scene)+ 声音设置 带回主页直接生成。
   emit('apply', {
     prompt: p.storyboard, scene: p.scene || '', title: p.title, generate: true,
-    sound: { mode: soundMode.value, subtitle: subtitle.value },
+    sound: { mode: soundMode.value, language: voLang.value, subtitle: subtitle.value },
   })
   close()
 }
@@ -136,7 +139,11 @@ function choose(p) {
               <span class="sb-label">声音</span>
               <button v-for="m in SOUND_MODES" :key="m.id" class="sb-btn" :class="{ on: soundMode === m.id }"
                       :title="m.hint" @click="soundMode = m.id">{{ m.label }}</button>
-              <label v-if="soundMode === 'voiceover'" class="sb-chk"><input type="checkbox" v-model="subtitle" /> 字幕</label>
+              <template v-if="soundMode === 'voiceover'">
+                <span class="sb-label">语言</span>
+                <select v-model="voLang" class="sb-sel"><option v-for="l in VO_LANGS" :key="l" :value="l">{{ l }}</option></select>
+                <label class="sb-chk"><input type="checkbox" v-model="subtitle" /> 字幕</label>
+              </template>
             </div>
             <div v-if="proposals.length" class="cards">
               <div v-for="(p, i) in proposals" :key="i" class="pcard">
@@ -196,6 +203,7 @@ function choose(p) {
 .sb-btn { border: 1px solid var(--line2); background: var(--panel); color: var(--mut); border-radius: 9px; padding: 5px 11px; font-size: 12.5px; cursor: pointer; }
 .sb-btn:hover { border-color: var(--brand); color: var(--fg); }
 .sb-btn.on { border-color: var(--brand); color: var(--fg); background: var(--panel2); }
+.sb-sel { background: var(--panel); border: 1px solid var(--line2); color: var(--fg); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 12.5px; }
 .sb-chk { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--fg); cursor: pointer; }
 .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .pcard { display: flex; flex-direction: column; border: 1px solid var(--line2); border-radius: 11px; padding: 13px; background: var(--bg2); }

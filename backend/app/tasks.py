@@ -699,7 +699,8 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
     if sound_mode == "voiceover" and out.get("ext") == "mp4":
         try:
             from .services.voiceover import add_voiceover
-            new_bytes, script = add_voiceover(out["bytes"], raw, p.get("prompt", ""), lang, seconds,
+            vo_lang = p.get("vo_lang") or lang   # 旁白语言(独立于场景地区);留空回退场景地区语言
+            new_bytes, script = add_voiceover(out["bytes"], raw, p.get("prompt", ""), vo_lang, seconds,
                                               subtitle=bool(p.get("subtitle", True)))
             out["bytes"] = new_bytes
             if script:

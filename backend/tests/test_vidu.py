@@ -324,6 +324,33 @@ def test_vidu_provider_sends_audio_type_sound_effect_only(monkeypatch):
     assert body["audio"] is True and body["audio_type"] == "Sound-effect_only"
 
 
+def test_vidu_voiceover_uses_vo_lang_independent_of_region(client, auth_headers, monkeypatch, tool_result):
+    """旁白语言(vo_lang)独立于场景地区(language):场景地区=葡语、旁白选英语 → edge-tts 用英语。"""
+    import app.services.voiceover as vo_mod
+    from app.ai import vidu as vidu_mod
+    captured = {}
+
+    class _Fake:
+        name = "vidu"
+
+        def image_to_video(self, images, prompt, *, aspect="portrait", resolution="720p",
+                           seconds=5, audio=False, audio_type=""):
+            return {"bytes": b"\x00\x00\x00\x18ftypmp42X", "ext": "mp4", "url": "",
+                    "meta": {"engine": "viduq2-pro-fast"}}
+    monkeypatch.setattr(vidu_mod, "get_vidu_provider", lambda: _Fake())
+
+    def _fake_add(video, img, prompt, language, seconds, subtitle=True):
+        captured["lang"] = language
+        return video, "稿"
+    monkeypatch.setattr(vo_mod, "add_voiceover", _fake_add)
+    r = client.post("/api/vidu/ai-generate", headers=auth_headers,
+                    data={"seconds": 5, "sound_mode": "voiceover", "language": "葡萄牙语",
+                          "vo_lang": "英语", "scene_frame": "false"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    tool_result(auth_headers, r)
+    assert captured["lang"] == "英语"      # 旁白用 vo_lang(英语),不是场景地区(葡语)
+
+
 def test_vidu_sfx_mode_forces_sound_effect_only(client, auth_headers, monkeypatch, tool_result):
     """原生音效(sfx)→ worker 必须给 provider 传 audio_type=Sound-effect_only(只出音效、不配人声)。"""
     from app.ai import vidu as vidu_mod

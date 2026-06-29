@@ -13,7 +13,8 @@ const img1 = ref(null); const img1Url = ref('')
 const seconds = ref(5)
 const aspect = ref('portrait')
 const resolution = ref('720p')
-const market = ref('葡萄牙语')   // 目标市场→语言:决定场景里出现哪国人 + 真人旁白用什么语言
+const market = ref('葡萄牙语')   // 场景地区:决定场景母帧里出现哪国人 + 区域氛围
+const voLang = ref('葡萄牙语')   // 旁白语言(仅真人旁白):edge-tts 配音语言,默认跟随场景地区、可独立改
 const sceneFrame = ref(true)
 const soundMode = ref('none')    // none / sfx / voiceover
 const subtitle = ref(true)
@@ -57,6 +58,13 @@ const MARKETS = [
   { id: '西班牙语', label: '🇲🇽 拉美' },
   { id: '中文', label: '🇨🇳 中国' },
 ]
+// 旁白语言(仅真人旁白用):edge-tts 支持的语言(含葡/西,Vidu 原生不支持的也能配)
+const VO_LANGS = [
+  { id: '葡萄牙语', label: '葡语' },
+  { id: '英语', label: '英语' },
+  { id: '西班牙语', label: '西语' },
+  { id: '中文', label: '中文' },
+]
 const SOUND_MODES = [
   { id: 'none', icon: '🔇', name: '无声', desc: '纯画面(最稳)' },
   { id: 'sfx', icon: '🌿', name: '原生音效', desc: '纯环境/动作音效,不含人声(Vidu;+15 Vidu 积分)' },
@@ -80,6 +88,7 @@ function pickType(t) {
   sceneFrame.value = t.scene
   wizardScene.value = ''      // 手选预设 → 不带向导场景,母帧看图自适应
 }
+function pickMarket(m) { market.value = m; voLang.value = m }   // 选场景地区 → 旁白语言默认跟随(之后可独立改)
 
 // 智能方案向导(主路径):看图→商品简报→3个方案(每个=场景+连续动作链)→选中带配置一键生成。
 function openWizard() {
@@ -95,6 +104,7 @@ function onWizardApply({ prompt: pp, scene, sound }) {
   if (sound) {
     soundMode.value = sound.mode || 'voiceover'
     subtitle.value = sound.subtitle !== false
+    if (sound.language) voLang.value = sound.language    // 向导选的旁白语言
   }
   run()                                // 采用即生成(向导自洽:脚本+场景+声音都已带回)
 }
@@ -108,6 +118,7 @@ async function run() {
     fd.append('prompt', prompt.value)
     fd.append('scene', wizardScene.value)
     fd.append('language', market.value)
+    fd.append('vo_lang', voLang.value)
     fd.append('aspect', aspect.value)
     fd.append('resolution', resolution.value)
     fd.append('seconds', seconds.value)
@@ -214,7 +225,7 @@ onMounted(async () => {
         <div class="field">
           <span class="flabel">场景地区 <span class="opt">视频里出现哪国人(Vidu 不说话;口播靠下方「真人旁白」)</span></span>
           <div class="chips">
-            <button v-for="m in MARKETS" :key="m.id" class="chip" :class="{ on: market === m.id }" @click="market = m.id">{{ m.label }}</button>
+            <button v-for="m in MARKETS" :key="m.id" class="chip" :class="{ on: market === m.id }" @click="pickMarket(m.id)">{{ m.label }}</button>
           </div>
         </div>
 
@@ -227,11 +238,19 @@ onMounted(async () => {
             </button>
           </div>
         </div>
-        <label v-if="soundMode === 'voiceover'" class="toggle sub">
-          <input type="checkbox" v-model="subtitle" />
-          <span class="tg-box" />
-          <span class="tg-text"><b>📝 字幕</b><i>把旁白按场景地区语言烧进画面</i></span>
-        </label>
+        <div v-if="soundMode === 'voiceover'" class="vo-panel">
+          <div class="field">
+            <span class="flabel">旁白语言 <span class="opt">edge-tts 配音语言(可与场景地区不同)</span></span>
+            <div class="chips">
+              <button v-for="l in VO_LANGS" :key="l.id" class="chip" :class="{ on: voLang === l.id }" @click="voLang = l.id">{{ l.label }}</button>
+            </div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" v-model="subtitle" />
+            <span class="tg-box" />
+            <span class="tg-text"><b>📝 字幕</b><i>把旁白按所选语言烧进画面</i></span>
+          </label>
+        </div>
 
         <button class="btn-primary run" :disabled="submitting || !img1" @click="run">
           {{ submitting ? '提交中…' : `生成 Vidu 视频(${seconds} 秒)· 扣 ${price} 点` }}
@@ -322,6 +341,7 @@ onMounted(async () => {
 .sound .kt b { font-size: 12.5px; color: var(--fg); font-weight: 600; }
 .sound .kt i { font-size: 10.5px; color: var(--mut); font-style: normal; line-height: 1.3; }
 
+.vo-panel { display: flex; flex-direction: column; gap: 11px; padding: 11px 12px; border: 1px dashed var(--line2); border-radius: 11px; background: rgba(64,158,255,.05); }
 .toggle { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; padding: 9px 12px; border: 1px solid var(--line2); border-radius: 11px; background: var(--bg2); }
 .toggle.sub { background: rgba(64,158,255,.05); border-style: dashed; }
 .toggle.disabled { cursor: not-allowed; opacity: .55; }
