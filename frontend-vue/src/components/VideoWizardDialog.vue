@@ -24,6 +24,7 @@ const step = ref(1)
 const loading = ref(false)
 const brief = ref({ name: '', audience: '', selling_points: '' })
 const proposals = ref([])
+const expandingIdx = ref(-1)   // 正在「详细扩展」的方案下标(-1=无),per-card loading,不阻塞整面
 
 // 声音设置(向导内自洽,不再依赖主页):默认「真人旁白 + 市场语言 + 字幕」,智能方案直接出有声完整带货视频
 const SOUND_MODES = [
@@ -122,6 +123,31 @@ function choose(p) {
   })
   close()
 }
+
+// 详细扩展:把该方案的【精简脚本】扩成【详细时间轴脚本】(保持原故事/动作/连续性),只填回卡片供审阅、不自动生成。
+// 一次 AI 调用,扣 1 点;失败后端自动退点。per-card loading,不阻塞其它卡片。
+async function expand(p, i) {
+  if (expandingIdx.value !== -1) return            // 已有扩展在跑 → 不并发
+  expandingIdx.value = i
+  try {
+    const fd = new FormData()
+    fd.append('seconds', props.seconds || 10)
+    fd.append('storyboard', p.storyboard || '')    // 5/10s 扩这条
+    fd.append('shot1', p.shot1 || ''); fd.append('shot2', p.shot2 || ''); fd.append('shot3', p.shot3 || '')  // 15s 扩这三拍
+    fd.append('story', p.story || '')
+    fd.append('name', brief.value.name || '')
+    fd.append('selling_points', brief.value.selling_points || '')
+    fd.append('language', props.language)
+    const data = (await api.post('/video/wizard/expand', fd)).data
+    proposals.value[i] = { ...p, ...data, _detailed: true }   // 原地更新该方案(保留 scene/story 等其余字段)
+    refresh()
+    ElMessage.success('已扩展为详细脚本,可直接生成或继续微调')
+  } catch (e) {
+    ElMessage.error((e.response && e.response.data && e.response.data.detail) || '详细扩展失败')
+  } finally {
+    expandingIdx.value = -1
+  }
+}
 </script>
 
 <template>
@@ -182,8 +208,11 @@ function choose(p) {
           <div class="pa">{{ p.angle }}</div>
           <div v-if="p.model" class="prow"><b>模特</b>{{ p.model }}</div>
           <div v-if="p.environment" class="prow"><b>环境</b>{{ p.environment }}</div>
-          <div class="psb">{{ p.storyboard }}</div>
+          <div class="psb" :class="{ detailed: p._detailed }">{{ p.storyboard }}</div>
           <button class="choose" @click="choose(p)">✅ 用此方案生成视频</button>
+          <button class="detail" :disabled="expandingIdx !== -1" @click="expand(p, i)">
+            {{ expandingIdx === i ? '⏳ 扩展中…' : (p._detailed ? '🔁 重新详细扩展(1点)' : '🔍 详细扩展(1点 · 展开成分镜时间轴脚本)') }}
+          </button>
         </div>
       </div>
       <p v-else-if="!loading" class="tip">暂无方案,点「换一批」重试。</p>
@@ -245,6 +274,10 @@ function choose(p) {
 .psb { flex: 1; font-size: 11.5px; line-height: 1.5; color: var(--fg); background: var(--panel); border-radius: 8px; padding: 8px 9px; margin: 4px 0 11px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
 .choose { width: 100%; padding: 8px; border: none; border-radius: 8px; background: var(--brand); color: #fff; font-weight: 600; font-size: 13px; cursor: pointer; }
 .choose:hover { opacity: .9; }
+.detail { width: 100%; margin-top: 6px; padding: 6px; border: 1px solid var(--line2); border-radius: 8px; background: transparent; color: var(--mut); font-size: 11.5px; cursor: pointer; }
+.detail:hover:not(:disabled) { border-color: var(--brand); color: var(--fg); }
+.detail:disabled { opacity: .5; cursor: default; }
+.psb.detailed { border: 1px solid var(--brand); }
 .footer { display: flex; align-items: center; gap: 8px; }
 .cost { font-size: 12px; color: var(--mut); }
 @media (max-width: 820px) { .cards { grid-template-columns: 1fr; } }

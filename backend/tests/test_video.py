@@ -479,6 +479,55 @@ def test_wizard_proposals_ok_charges_title(client, auth_headers, monkeypatch):
     assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 1
 
 
+def test_wizard_expand_5s10s_returns_detailed_storyboard(client, auth_headers, monkeypatch):
+    # 详细扩展(5/10s):精简 storyboard → 详细时间轴脚本;扣 title=1
+    from app.services import video_wizard
+    monkeypatch.setattr(video_wizard, "_chat",
+                        lambda msgs, **kw: '{"storyboard":"【0-3秒】镜头推近端起杯子。【3-7秒】喝一口、放松微笑。"}')
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/wizard/expand", headers=auth_headers,
+                    data={"seconds": "10", "storyboard": "端起杯子喝一口,放松。"})
+    assert r.status_code == 200, r.text
+    assert "【0-3秒】" in r.json()["storyboard"] and "shot1" not in r.json()   # 5/10s 只回 storyboard
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 1
+
+
+def test_wizard_expand_15s_returns_detailed_shots(client, auth_headers, monkeypatch):
+    # 详细扩展(15s 三分镜):分别扩 shot1/2/3 + 合成 storyboard(保连续性);扣 title=1
+    from app.services import video_wizard
+    monkeypatch.setattr(video_wizard, "_chat",
+                        lambda msgs, **kw: '{"shot1":"①详细","shot2":"②详细承接①","shot3":"③详细承接②"}')
+    r = client.post("/api/video/wizard/expand", headers=auth_headers,
+                    data={"seconds": "15", "shot1": "①", "shot2": "②", "shot3": "③", "story": "出门"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["shot1"] == "①详细" and d["shot2"] == "②详细承接①" and d["shot3"] == "③详细承接②"
+    assert "【分镜①·0-5s】①详细" in d["storyboard"] and "【分镜③·10-15s】" in d["storyboard"]
+
+
+def test_wizard_expand_no_key_502_refunds(client, auth_headers):
+    # 无 openai key(conftest 清空)→ 502 + 退点(失败必退点)
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/wizard/expand", headers=auth_headers,
+                    data={"seconds": "10", "storyboard": "x"})
+    assert r.status_code == 502
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0
+
+
+def test_wizard_proposals_5s10s_concise_default(monkeypatch):
+    # 5/10s 默认【精简】:prompt 明确不要分秒级时间轴、提示可「详细扩展」(治"10s比15s啰嗦"的不一致)
+    from app.services import video_wizard
+    seen = {}
+
+    def _cap(msgs, **kw):
+        seen["prompt"] = msgs[0]["content"]
+        return '[{"title":"t","storyboard":"端起杯子喝一口,放松。"}]'
+    monkeypatch.setattr(video_wizard, "_chat", _cap)
+    video_wizard.generate_proposals("杯子", "家居", "保温", seconds=10, n=1)
+    assert "精简" in seen["prompt"] and "详细扩展" in seen["prompt"]
+    assert "不要分秒级时间轴" in seen["prompt"]
+
+
 def test_wizard_proposals_no_key_502_refunds(client, auth_headers):
     # 真实 generate_proposals 无 key → 抛错 → 502 + 退点
     bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]

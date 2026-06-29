@@ -116,10 +116,11 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
         )
     else:
         time_rule = f"视频时长 {seconds} 秒(单镜头连续)。"
+        # 默认【精简版】:把完整故事 2~4 句说清、不缺内容,但不写分秒级时间轴(用户需要时点「详细扩展」再展开成详细脚本)。
         shot_fields = (
-            f'"storyboard":"完整分镜脚本,严格按 {seconds} 秒分时间轴(如【0-3秒】【3-7秒】…):写成【一个有创意但合理的真实生活小片段】'
-            "——人物为一个小目标/小情绪做一连串连贯动作,商品作为这件事里自然用到的道具被带出(不是平铺展示产品);"
-            "可有小转折/小惊喜,手持随手拍质感,紧扣核心卖点但别像硬广)\""
+            '"storyboard":"【一个有创意但合理的真实生活小片段】(精简版:用 2~4 句把完整故事说清楚、别缺内容):'
+            "人物为一个小目标/小情绪做一连串连贯动作,商品作为这件事里自然用到的道具被带出(不是平铺展示产品),"
+            "可有小转折/小惊喜;写成连贯的动作描述即可,【不要分秒级时间轴】(用户需要时会点「详细扩展」再展开),紧扣核心卖点但别像硬广)\""
         )
     prompt = (
         f"你是 TikTok 跨境电商短视频【内容导演】。根据下面的商品简报,设计 {n} 个【故事方向彼此明显不同】的带货短视频方案。\n"
@@ -194,3 +195,51 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
     if not out:
         raise RuntimeError("方案解析为空")
     return out
+
+
+def expand_proposal(*, seconds: int = 10, storyboard: str = "", shot1: str = "", shot2: str = "",
+                    shot3: str = "", story: str = "", name: str = "", selling_points: str = "",
+                    language: str = "葡萄牙语") -> dict:
+    """把一个【精简版】方案脚本扩展成【详细时间轴脚本】(分秒级 beat + 镜头语言 + 表情情绪)。
+    ⚠ 只把原脚本写得更细——【保持原故事/动作/情绪/场景与先后顺序不变,不换故事、不加新情节】。
+    - 5/10s:扩展单条 storyboard → 返回 {"storyboard": 详细时间轴}。
+    - 15s 三分镜:分别扩展 shot1/2/3(保持三拍承接、连续性不断)→ 返回 {shot1,shot2,shot3,storyboard(合成)}。
+    用较低 temperature(忠实扩写,不发散)。无 key / 解析失败 → 抛异常(端点降级退点)。"""
+    two_shot = seconds == 15
+    common = (
+        "你是 TikTok 带货短视频【分镜导演】。把下面这条【精简脚本】扩展成【更详细、可直接拍的时间轴脚本】:\n"
+        "硬性:① 严格【保持原故事、动作、情绪、场景与先后顺序不变】,只写得更细,绝不换故事、不加新情节、不改商品用法;\n"
+        "② 拆成分秒级 beat(如【0-2秒】【2-4秒】…),每个 beat 写清【镜头语言(景别/推拉摇移/手持)+ 人物动作 + 表情情绪】;\n"
+        "③ 动作贴合 AI 视频能力边界(简单稳妥、手与物体接触、符合重力,弱化开盖/拆封/穿脱等复杂物理变化);"
+        "商品图案/文字/颜色保持一致不被改样;\n"
+        f"④ 投放市场/语言:{language};商品:{name or '(见脚本)'};卖点:{selling_points or '(见脚本)'};全部用中文。\n"
+    )
+    if two_shot:
+        prompt = common + (
+            "本视频为【三分镜 · 共15秒】= ①0-5s ②5-10s ③10-15s,三拍是【同一件事的连续动作链】,"
+            "扩展后务必保持三拍承接、连续性不断(后拍从前拍延续点接演,不回到起始 pose)。\n"
+            f"分镜①(原):{shot1}\n分镜②(原):{shot2}\n分镜③(原):{shot3}\n故事主线:{story}\n"
+            '只输出一个 JSON 对象(禁止解释/标题/markdown):'
+            '{"shot1":"分镜①详细脚本(约5s,内部分 beat)","shot2":"分镜②详细脚本(承接①)",'
+            '"shot3":"分镜③详细脚本(承接②)"}'
+        )
+        data = _loads_json(_chat([{"role": "user", "content": prompt}], temperature=0.4))
+        if not isinstance(data, dict):
+            raise RuntimeError("详细扩展解析失败")
+        s1 = str(data.get("shot1") or data.get("分镜1") or shot1).strip()[:1500]
+        s2 = str(data.get("shot2") or data.get("分镜2") or shot2).strip()[:1500]
+        s3 = str(data.get("shot3") or data.get("分镜3") or shot3).strip()[:1500]
+        return {"shot1": s1, "shot2": s2, "shot3": s3,
+                "storyboard": f"【分镜①·0-5s】{s1}\n\n【分镜②·5-10s】{s2}\n\n【分镜③·10-15s】{s3}"}
+    prompt = common + (
+        f"视频时长 {seconds} 秒(单镜头连续)。\n精简脚本(原):{storyboard}\n"
+        f'只输出一个 JSON 对象(禁止解释/标题/markdown):'
+        f'{{"storyboard":"详细时间轴脚本(严格按 {seconds} 秒分 beat,如【0-3秒】【3-7秒】…)"}}'
+    )
+    data = _loads_json(_chat([{"role": "user", "content": prompt}], temperature=0.4))
+    if not isinstance(data, dict):
+        raise RuntimeError("详细扩展解析失败")
+    sb = str(data.get("storyboard") or data.get("分镜") or data.get("脚本") or storyboard).strip()[:2000]
+    if not sb:
+        raise RuntimeError("详细扩展返回为空")
+    return {"storyboard": sb}

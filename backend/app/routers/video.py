@@ -128,6 +128,36 @@ def wizard_proposals(
     return {"proposals": proposals}
 
 
+@router.post("/wizard/expand")
+def wizard_expand(
+    seconds: int = Form(10),
+    storyboard: str = Form(""),     # 5/10s 的精简脚本(扩展它)
+    shot1: str = Form(""),          # 15s 三分镜的三拍(分别扩展)
+    shot2: str = Form(""),
+    shot3: str = Form(""),
+    story: str = Form(""),          # 15s 故事主线(保连续性)
+    name: str = Form(""),
+    selling_points: str = Form(""),
+    language: str = Form("葡萄牙语"),
+    user: User = Depends(charge_for("title")),
+    db: Session = Depends(get_db),
+):
+    """详细扩展:把方案的【精简脚本】扩成【详细时间轴脚本】(保持原故事/动作/连续性,只写更细)。
+    5/10s 扩 storyboard;15s 扩 shot1/2/3(+合成 storyboard)。同步,扣 title=1,失败退点。"""
+    if seconds not in DURATIONS:
+        seconds = 10
+    try:
+        from ..services.video_wizard import expand_proposal
+        out = expand_proposal(seconds=seconds, storyboard=storyboard[:2000],
+                              shot1=shot1[:1500], shot2=shot2[:1500], shot3=shot3[:1500],
+                              story=story[:300], name=name[:200], selling_points=selling_points[:600],
+                              language=language)
+    except Exception as exc:  # noqa: BLE001
+        refund(db, user, "title")
+        raise HTTPException(status_code=502, detail=_ai_fail_detail("详细扩展失败", exc)) from exc
+    return out
+
+
 @router.post("/ai-generate")
 def ai_generate(
     file: UploadFile = File(...),
