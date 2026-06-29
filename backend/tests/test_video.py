@@ -320,6 +320,10 @@ def test_wizard_proposals_two_shot_returns_shots(monkeypatch):
     assert out[0]["shot1"] == "【0-5秒】看手机收到消息"
     assert out[0]["shot2"] == "【0-5秒】拿钥匙推门"
     assert out[0]["shot3"] == "【0-5秒】走在街头"     # 第三拍(动作链 payoff)
+    # 预览 storyboard 一律由三拍合成(固定格式),不再用模型自由发挥的 → 杜绝"有时带 0-x秒、有时一段话"的格式漂移
+    sb = out[0]["storyboard"]
+    assert sb.startswith("【分镜①·0-5s】") and "【分镜②·5-10s】" in sb and "【分镜③·10-15s】" in sb
+    assert "合并脚本" not in sb                        # 模型自由发挥的 storyboard 被丢弃,用合成的
     # 单段(10s)不产 shot1/shot2/shot3
     monkeypatch.setattr(video_wizard, "_chat",
                         lambda msgs: '[{"title":"t","storyboard":"【0-10秒】展示"}]')
