@@ -60,6 +60,8 @@
 ## 6. 一致性 & 可靠性(已攻克)
 
 - **场景首帧优化**(默认开):gpt-image 把商品合成进场景做视频第一帧,**印花像素级保留** → 开场即场景(治"开场平铺产品图")+ 跨镜头一致。
+- **母帧可靠性(2026-06-29 重构,治"三分镜母帧永远失败")**:per-shot 母帧从**并行**改为**串行逐张**(每张独占作图网关,不再 2 张挤 `_API_GATE`)+ **应用层重试** `video_mufra_attempts`(默认 2 次,覆盖 SDK 不会重试的"网关未返回图像数据"等快错),仅最后一次失败才降级原图。worst-case ≈ shots×attempts×`video_mufra_timeout`,需 < reap 阈值 40min。
+- **可见阶段**:worker 把"母帧合成中…/视频生成中…"写进 `job.result.stage`(running 态 jobs API 也下发)→ 我的空间卡片实时显示,长任务不像卡死(`tasks.py:_set_stage`,`_work_aivideo`/`_work_viduvideo` 共用)。
 - **provider 三层健壮性**(`ai/video.py` `ZhipuCogVideoProvider`):
   1. **网络层重试**:建任务/轮询/下载各自对 `httpx.TransportError`(WriteTimeout/ConnectTimeout/…)+ 5xx 重试;发图改 **JPEG**(体积小 5~10×,降发图写超时)。
   2. **任务级重试**:智谱偶发把任务判 FAIL(实测返回"网络错误,请稍后重试")→ 退避后**重建新任务**(最多 3 个)。重新轮询同一个 FAIL 任务无用,必须重建。
@@ -103,7 +105,7 @@
 
 - A = "同一个妹子在卧室站 15 秒"(精确复现了观感上的"呆板/重复");B = 卧室自拍→街头 OOTD,像刷到一条真 TikTok。
 - **同质化 ~80% 来自母帧复用**;CogVideoX "跟着母帧走"——换母帧=换内容,**不必跟模型要运动**。otter 骑士印花 A/B 全程没坏 → 一致性零牺牲。
-- **落地**:`tasks.py:_work_aivideo` 双分镜分支每镜按 `scene1`/`scene2` 各生成母帧(见 §3);向导/模板库产出场景;计费/退点不变(仍 video×2)。
+- **落地**:`tasks.py:_work_aivideo` 双分镜分支每镜按 `scene1`/`scene2` 各生成母帧(见 §3,**串行 + 应用层重试**,见 §6);向导/模板库产出场景;计费/退点不变(仍 video×2)。
 - **已知边界(主动接受)**:① 跨镜头可能换人(shot1 丸子头 / shot2 长直发)——硬切处像"真实 UGC 换机位",**先接受漂移更像 UGC**,全程同人是更难的另一个一致性问题;② 片内运动仍温和——但镜头间内容已变,**不重要了**。
 
 **下一跳(GPT P1,未做)**:从 2-shot 升到**事件弧 / 场景递进**(卧室→出门→街头→咖啡店),让商品在"发生了一件事"的故事里自然出现。`video_templates.py` 的 `beats` 结构已预留 3-shot 扩展位。
@@ -167,6 +169,7 @@ TikTok 的"活跃感"主要来自 **人物行为(Human Behavior),不是运镜**:
 | `POD_VIDEO_API_KEY` | 空 | cogvideox 必填 |
 | `POD_VIDEO_*`(model/quality/fps/seconds/with_audio/size/timeout/poll_interval) | 见 `.env.example` | 不暴露前端 |
 | `voiceover_enabled` | true | 旁白总开关(运维兜底) |
+| `POD_VIDEO_MUFRA_ATTEMPTS` | `2` | 母帧应用层尝试次数(总数,非额外重试):2=失败再试 1 次。母帧串行逐张,每张失败就重试,仅最后一次失败才降级原图(§6)。worst-case shots×attempts×mufra_timeout 须 < 40min 回收阈值 |
 | `POD_VIDEO_PUNCHUP` | **true** | 后期节奏快切:多景别循环切镜,加镜头密度(§7.3;离线已验证,默认开) |
 | `POD_VIDEO_MUSIC` | **false** | 背景音乐床(experimental,接线已注释) |
 

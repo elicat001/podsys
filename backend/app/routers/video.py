@@ -142,7 +142,7 @@ def ai_generate(
     category: str = Form("通用"),     # 商品类目:母帧场景 + 入库标题用
     scene_frame: bool = Form(False),  # 两步:先 gpt-image 生成场景首帧再生视频(缓解硬切;无 key 自动跳过)
     aspect: str = Form("portrait"),
-    resolution: str = Form("1080p"),
+    resolution: str = Form("720p"),   # 默认 720p(快/稳;1080p/4k 仍可选)
     seconds: int = Form(10),          # 视频时长(秒):5 / 10 / 15(15=双分镜=5s+10s 两段,价格翻倍)
     native_sound: bool = Form(False), # 视频音效:用 CogVideoX 自带音频(with_audio=AI 音效,非真人);默认关。与旁白互斥
     voiceover: bool = Form(False),    # 旁白设置:无声生成 + 叠 AI 旁白(看图写目标语言口播稿);默认关
@@ -166,7 +166,7 @@ def ai_generate(
     if aspect not in ASPECT_RATIOS:
         aspect = "portrait"
     if resolution not in RESOLUTION_SHORT:
-        resolution = "1080p"
+        resolution = "720p"
     if category not in CATEGORIES:
         category = "通用"
     if seconds not in DURATIONS:

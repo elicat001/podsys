@@ -14,7 +14,7 @@ const img1 = ref(null); const img1Url = ref('')
 const img2 = ref(null); const img2Url = ref('')
 const seconds = ref(null)        // 时长 5/10;null=未选 → 门控视频类型
 const aspect = ref('portrait')
-const resolution = ref('1080p')
+const resolution = ref('720p')   // 默认 720p(更快更稳;1080P/4K 仍可手动切)
 const language = ref('葡萄牙语')
 const sceneFrame = ref(true)   // 场景首帧:默认开、不再暴露开关(始终随请求发 true)
 const nativeSound = ref(false) // 视频音效:用视频自带 AI 音效(with_audio),默认关;非真人、与旁白互斥

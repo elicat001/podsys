@@ -963,6 +963,55 @@ def test_ai_generate_records_warning_when_scene_frame_fails(client, auth_headers
     assert any("场景母帧" in w for w in warns)           # 降级被显式记录 → 用户/运营能看见真因
 
 
+def test_scene_frame_retries_then_succeeds(client, auth_headers, monkeypatch, png):
+    # 母帧应用层重试:首次快错(SDK 不会自动重试的"网关未返回图像数据")→ 自动重试 → 第二次成功 →
+    # 不降级、不记 warning(治"三分镜母帧偶发快错就降级失败")。
+    from PIL import Image as _Img
+
+    from app.ai import openai_image
+    from app.config import settings
+    calls = {"n": 0}
+
+    def _flaky_edit(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("图片网关未返回图像数据")   # 首次快错
+        return _Img.new("RGB", (64, 96), (10, 20, 30))
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "video_mufra_attempts", 2)
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _flaky_edit)
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "单镜脚本", "seconds": "10", "scene_frame": "true", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert calls["n"] == 2                               # 重试了一次(共 2 次尝试)
+    assert not any("场景母帧" in w for w in (job["result"].get("warnings") or []))  # 重试成功 → 不降级
+
+
+def test_scene_frame_exhausts_attempts_then_degrades(client, auth_headers, monkeypatch, png):
+    # 重试用尽仍失败 → 降级原图 + 记 warning;尝试次数 = video_mufra_attempts(应用层可控重试,非 SDK)。
+    from app.ai import openai_image
+    from app.config import settings
+    calls = {"n": 0}
+
+    def _boom(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
+        calls["n"] += 1
+        raise RuntimeError("Error code: 502 bad gateway")
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "video_mufra_attempts", 2)
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _boom)
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "单镜脚本", "seconds": "10", "scene_frame": "true", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert calls["n"] == 2                               # 单镜母帧 1 张 × 2 次尝试
+    assert any("场景母帧" in w for w in (job["result"].get("warnings") or []))
+
+
 def test_wizard_proposals_two_shot_adds_scenes(monkeypatch):
     # 模型给了 scene1/scene2/story → 透传进方案(喂 per-shot 母帧)
     from app.services import video_wizard

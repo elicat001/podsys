@@ -89,6 +89,30 @@ def test_vidu_scene_frame_without_key_degrades_gracefully(client, auth_headers, 
     assert not any("母帧" in w for w in res["warnings"])
 
 
+def test_vidu_scene_frame_retries_then_succeeds(client, auth_headers, monkeypatch, tool_result):
+    """场景母帧应用层重试:首次快错 → 自动重试 → 第二次成功 → 不记母帧降级 warning。"""
+    from PIL import Image as _Img
+
+    from app.ai import openai_image
+    from app.config import settings
+    calls = {"n": 0}
+
+    def _flaky(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("图片网关未返回图像数据")
+        return _Img.new("RGB", (64, 96), (10, 20, 30))
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "video_mufra_attempts", 2)
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _flaky)
+    r = client.post("/api/vidu/ai-generate", headers=auth_headers,
+                    data={"seconds": 5, "scene_frame": "true"},
+                    files={"file": ("x.png", _png(), "image/png")})
+    res = tool_result(auth_headers, r)
+    assert calls["n"] == 2                               # 重试了一次
+    assert not any("母帧" in w for w in res["warnings"])  # 重试成功 → 不降级
+
+
 def test_vidu_voiceover_mode_accepted(client, auth_headers, tool_result):
     """真人旁白模式被接受并正常交付(本地兜底出 GIF 时 edge-tts 不触发=不崩;真 mp4 时才叠旁白)。"""
     r = client.post("/api/vidu/ai-generate", headers=auth_headers,

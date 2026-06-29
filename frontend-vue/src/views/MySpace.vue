@@ -426,6 +426,9 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
                       </el-tag>
                     </div>
                     <div class="job-meta muted">{{ timeAgo(job.created_at) }} · 用时 {{ liveDuration(job) }}</div>
+                    <!-- 处理中且 worker 写了当前阶段(母帧合成中/视频生成中)→ 实时显示,长任务不像卡死 -->
+                    <div v-if="job.status === 'running' && job.result && job.result.stage"
+                         class="job-stage" :title="job.result.stage">⏳ {{ job.result.stage }}</div>
                     <!-- 信息类结果(标题/侵权)直接把结果文字显示在卡片上,不必点开预览 -->
                     <div v-if="jobSummary(job)" class="job-summary" :title="jobSummary(job)">{{ jobSummary(job) }}</div>
                     <div v-if="job.status === 'error'" class="job-err" :title="job.error">{{ job.error }}</div>
@@ -1119,6 +1122,13 @@ onUnmounted(() => { clearInterval(tickTimer); clearInterval(refreshTimer) })
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.job-stage {
+  font-size: 12px;
+  color: var(--brand);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .job-err {
   font-size: 12px;

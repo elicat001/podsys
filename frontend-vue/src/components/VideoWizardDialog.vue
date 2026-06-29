@@ -39,10 +39,19 @@ const subtitle = ref(true)
 function refresh() { if (auth.refreshBalance) auth.refreshBalance() }
 function close() { localOpen.value = false }
 
-// 父级开关同步进本地 ref;打开时重置 + 自动识别商品信息
+// 幂等:记住"已为哪张图识别过"。同一张图(已出结果 / 正在识别中)重开 → 复用上次状态,绝不重复识别、重复扣点。
+const briefedToken = ref('')
+function imgToken(f) { return f ? `${f.name}|${f.size}|${f.lastModified}` : '' }
+
+// 父级开关同步进本地 ref;打开时:同图复用(幂等),换图 / 首次才重置 + 自动识别商品信息
 watch(() => props.modelValue, (v) => {
   localOpen.value = v
   if (!v) return
+  const tok = imgToken(props.image)
+  const hasResult = !!(brief.value.name || brief.value.selling_points || proposals.value.length)
+  // 同一张图且已有结果 / 正在识别中 → 直接展示上次状态(含进行中的 loading),不重置、不重发请求
+  if (tok && tok === briefedToken.value && (hasResult || loading.value)) return
+  briefedToken.value = tok                 // 换了图 / 首次 → 重置后识别一次
   step.value = 1
   proposals.value = []
   soundMode.value = 'voiceover'           // 默认真人旁白
@@ -53,7 +62,7 @@ watch(() => props.modelValue, (v) => {
 })
 
 async function runBrief() {
-  if (!props.image) return
+  if (!props.image || loading.value) return   // 并发护栏:正在识别中不重复发起(挡住 watch 重入双发)
   loading.value = true
   try {
     const fd = new FormData()
@@ -75,6 +84,7 @@ async function runBrief() {
 }
 
 async function runProposals() {
+  if (loading.value) return                    // 并发护栏:正在生成中不重复发起
   loading.value = true
   try {
     const fd = new FormData()
