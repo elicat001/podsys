@@ -10,6 +10,7 @@ import ViduWizardDialog from '../components/ViduWizardDialog.vue'
 
 const auth = useAuth()
 const img1 = ref(null); const img1Url = ref('')
+const fileRef = ref(null)   // 隐藏 file input 的 ref(显式 .click() 开对话框,不靠 label 转发)
 const seconds = ref(5)
 const aspect = ref('portrait')
 const resolution = ref('720p')
@@ -80,7 +81,13 @@ function pick(e) {
   if (!f.type.startsWith('image/')) return ElMessage.warning('请选择图片')
   img1.value = f; img1Url.value = URL.createObjectURL(f)
 }
-function clearImg() { img1.value = null; img1Url.value = '' }
+// 点击图槽 → 显式打开隐藏 input 的文件对话框。input.click() 冒泡回本 div(target=INPUT)→ 拦掉避免递归。
+function openPicker(e) {
+  if (e.target && e.target.tagName === 'INPUT') return
+  if (fileRef.value) fileRef.value.click()
+}
+// 清图同时清隐藏 input 的 value → 叉掉后重选(哪怕同一张图)仍能触发 change、正常上传
+function clearImg() { img1.value = null; img1Url.value = ''; if (fileRef.value) fileRef.value.value = '' }
 
 function pickType(t) {
   selType.value = t.id
@@ -164,12 +171,12 @@ onMounted(async () => {
       <div class="col">
         <div class="card">
           <div class="clabel">上传商品图 <span class="opt">单张</span></div>
-          <label class="slot" :class="{ filled: img1Url }">
-            <input type="file" accept="image/*" @change="pick($event)" hidden />
+          <div class="slot" :class="{ filled: img1Url }" @click="openPicker($event)">
+            <input ref="fileRef" type="file" accept="image/*" @change="pick($event)" hidden />
             <img v-if="img1Url" :src="img1Url" />
             <div v-else class="ph"><span class="up">⬆</span><span>点击上传 <i>必填</i></span><span class="ph-sub">作首帧 / 合成进真人场景</span></div>
-            <span v-if="img1Url" class="x" @click.prevent="clearImg">×</span>
-          </label>
+            <span v-if="img1Url" class="x" @click.stop="clearImg">×</span>
+          </div>
         </div>
 
         <div class="card">

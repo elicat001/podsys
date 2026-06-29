@@ -12,6 +12,7 @@ import VideoWizardDialog from '../components/VideoWizardDialog.vue'
 const auth = useAuth()
 const img1 = ref(null); const img1Url = ref('')
 const img2 = ref(null); const img2Url = ref('')
+const file1 = ref(null); const file2 = ref(null)   // 隐藏 file input 的 ref(显式 .click() 开对话框,不靠 label 转发)
 const seconds = ref(null)        // 时长 5/10;null=未选 → 门控视频类型
 const aspect = ref('portrait')
 const resolution = ref('720p')   // 默认 720p(更快更稳;1080P/4K 仍可手动切)
@@ -94,9 +95,16 @@ function pick(e, slot) {
   if (slot === 1) { img1.value = f; img1Url.value = url }
   else { img2.value = f; img2Url.value = url }
 }
+// 点击图槽 → 显式打开对应隐藏 input 的文件对话框。input.click() 会冒泡回本 div(target=INPUT)→ 拦掉避免递归。
+function openPicker(e, slot) {
+  if (e.target && e.target.tagName === 'INPUT') return
+  const el = slot === 1 ? file1.value : file2.value
+  if (el) el.click()
+}
 function clearSlot(slot) {
-  if (slot === 1) { img1.value = null; img1Url.value = '' }
-  else { img2.value = null; img2Url.value = '' }
+  // 清图同时把隐藏 input 的 value 也清掉 → 叉掉后重选(哪怕同一张图)仍能触发 change、正常上传
+  if (slot === 1) { img1.value = null; img1Url.value = ''; if (file1.value) file1.value.value = '' }
+  else { img2.value = null; img2Url.value = ''; if (file2.value) file2.value.value = '' }
 }
 
 // 填视频类型脚本:取该时长的 t5/t10(custom 留空给用户自写)。手动类型不带 per-shot 场景:
@@ -215,18 +223,18 @@ onMounted(async () => {
         <div class="card">
           <div class="clabel">上传商品图 <span class="opt">1 张=动起来 · 2 张=首尾帧</span></div>
           <div class="imgs">
-            <label class="slot" :class="{ filled: img1Url }">
-              <input type="file" accept="image/*" @change="pick($event, 1)" hidden />
+            <div class="slot" :class="{ filled: img1Url }" @click="openPicker($event, 1)">
+              <input ref="file1" type="file" accept="image/*" @change="pick($event, 1)" hidden />
               <img v-if="img1Url" :src="img1Url" />
               <div v-else class="ph"><span class="up">⬆</span><span>{{ isFrames2 ? '首帧' : '商品图' }} <i>必填</i></span></div>
-              <span v-if="img1Url" class="x" @click.prevent="clearSlot(1)">×</span>
-            </label>
-            <label class="slot" :class="{ filled: img2Url }">
-              <input type="file" accept="image/*" @change="pick($event, 2)" hidden />
+              <span v-if="img1Url" class="x" @click.stop="clearSlot(1)">×</span>
+            </div>
+            <div class="slot" :class="{ filled: img2Url }" @click="openPicker($event, 2)">
+              <input ref="file2" type="file" accept="image/*" @change="pick($event, 2)" hidden />
               <img v-if="img2Url" :src="img2Url" />
               <div v-else class="ph"><span class="up">⬆</span><span>尾帧 <i>可选</i></span></div>
-              <span v-if="img2Url" class="x" @click.prevent="clearSlot(2)">×</span>
-            </label>
+              <span v-if="img2Url" class="x" @click.stop="clearSlot(2)">×</span>
+            </div>
           </div>
         </div>
 
