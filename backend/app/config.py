@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     # worst-case 母帧阶段 ≈ budget;叠加视频生成仍 < reaper(50min,见 services/jobs.STUCK_MINUTES)。
     video_mufra_budget: float = 600.0
     video_mufra_attempts: int = 5
+    # 母帧【专用队列】并发(与批量作图的 openai_max_concurrency 分开,母帧自己排队、不与裂变/套图/文生图抢)。
+    # =1=严格串行(一个母帧请求出去、下一个排队等位):不把作图中转站【自己人挤爆】(实证 503「无可用账号」根因)。
+    # 关键:排队【等位时间不计入 video_mufra_budget】,轮到才发请求、才起算预算 → 多任务也不雪崩。可调 2 提吞吐。
+    video_mufra_concurrency: int = 1
     # 后期「节奏快切」(services/video_edit.punch_up):按 beat(~2s)切段、每段换景别/机位(多景别循环),
     # 把连续单镜在后期切出【多镜头密度感】——治"信息频率太低=呆板"(GPT 判定的真瓶颈)。
     # 不改时长/音轨/商品像素(一致性零风险);离线已验证(抽帧确认多景别)→ 默认开。

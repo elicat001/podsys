@@ -998,24 +998,75 @@ def test_ai_generate_single_shot_shared_mufra(client, auth_headers, monkeypatch,
     assert called["edit"] == 1                          # 单镜 → 一张共享母帧
 
 
-def test_ai_generate_records_warning_when_scene_frame_fails(client, auth_headers, monkeypatch, png):
-    # 母帧(gpt-image)失败(如额度不足/无 key)→ 不阻断、仍出片,但 Job 结果【显式记录降级 warning】,
-    # 不再静默吞掉(治"用户拿到平铺像砖块的成片却不知为何")。
+def test_scene_frame_total_failure_falls_back_to_kenburns_and_refunds(client, auth_headers, monkeypatch, png):
+    # 场景首帧优化(母帧)【整体失败】→ 不喂平铺图给视频模型出"生硬的图片变视频",
+    # 改本地【自然运镜】产品展示片(Ken-Burns)+ 退点 + 明确 warning(治"母帧失败就生硬")。
     from app.ai import openai_image
     from app.config import settings
 
     def _boom(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
-        raise RuntimeError("Error code: 403 insufficient_user_quota")
+        raise RuntimeError("Error code: 503 - {'message': 'No available compatible accounts'}")
+    monkeypatch.setattr("time.sleep", lambda *a, **k: None)
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "video_mufra_attempts", 2)
     monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _boom)
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
     r = client.post("/api/video/ai-generate", headers=auth_headers,
                     data={"prompt": "p", "seconds": "10", "scene_frame": "true", "aspect": "portrait"},
                     files={"file": ("a.png", png(), "image/png")})
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
-    assert job["status"] == "done", job                 # 母帧失败不阻断,仍用原图出片
+    assert job["status"] == "done", job
+    assert job["result"]["video_url"].endswith(".gif")        # 自然运镜片(Ken-Burns),非生硬静图视频
+    assert job["result"]["degraded"] is True
     warns = job["result"].get("warnings") or []
-    assert any("场景母帧" in w for w in warns)           # 降级被显式记录 → 用户/运营能看见真因
+    assert any("运镜" in w for w in warns)                     # 明确告知改用运镜片
+    assert not any("场景母帧" in w for w in warns)             # "退回平铺图"的误导文案已去掉
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0  # 退点(扣3退3)
+
+
+def test_two_shot_partial_mufra_success_keeps_provider(client, auth_headers, monkeypatch, png):
+    # 多镜母帧【部分成功】(至少一镜拿到场景)→ 不降级成运镜片,仍走视频生成(保留已成的场景镜)。
+    from PIL import Image as _Img
+
+    from app.ai import openai_image
+    from app.config import settings
+    calls = {"n": 0}
+
+    def _edit(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:                       # 第一个跑的镜失败(_MUFRA_GATE 串行,谁先跑不定但只挂 1 个)
+            raise RuntimeError("Error code: 503 - No available compatible accounts")
+        return _Img.new("RGB", (64, 96), (10, 20, 30))
+    monkeypatch.setattr("time.sleep", lambda *a, **k: None)
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "video_mufra_attempts", 1)   # 失败的镜不重试,直接判该镜失败
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _edit)
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "分镜1", "prompt2": "分镜2", "scene1": "卧室", "scene2": "街头",
+                          "seconds": "15", "scene_frame": "true", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert not any("运镜" in w for w in (job["result"].get("warnings") or []))  # 部分成功 → 不改运镜片(仍出视频)
+
+
+def test_mufra_with_backoff_holds_mufra_gate_queue(monkeypatch):
+    # 母帧专用队列:_mufra_with_backoff 执行 do_edit 期间【持有 _MUFRA_GATE】(排队位)→ 同一时刻只放一个母帧请求出去,
+    # 不把作图中转站自己人挤爆;且预算从【拿到位】才起算(等位不计预算)。
+    from app.ai import openai_image
+    from app import tasks
+    held = {}
+
+    def _do():
+        held["mufra_during"] = openai_image._MUFRA_GATE._value   # do_edit 执行瞬间队列剩余位
+        return "ok"
+    full = openai_image._MUFRA_GATE._value
+    out = tasks._mufra_with_backoff(_do)
+    assert out == "ok"
+    assert held["mufra_during"] == full - 1     # 执行时占住队列位(串行)
+    assert openai_image._MUFRA_GATE._value == full   # 结束后释放
 
 
 def test_scene_frame_retries_then_succeeds(client, auth_headers, monkeypatch, png):
@@ -1093,7 +1144,8 @@ def test_scene_frame_permanent_error_fails_fast_no_retry(client, auth_headers, m
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
     assert calls["n"] == 1 and slept["n"] == 0          # 永久错:不重试、不退避空等
-    assert any("场景母帧" in w for w in (job["result"].get("warnings") or []))
+    # 母帧整体失败 → 改自然运镜片(单镜母帧失败 = 整体失败),warning 是"运镜片"而非"退回平铺图"
+    assert any("运镜" in w for w in (job["result"].get("warnings") or []))
 
 
 def test_punch_up_failure_is_best_effort(client, auth_headers, monkeypatch, png):
@@ -1142,8 +1194,9 @@ def test_scene_frame_exhausts_attempts_then_degrades(client, auth_headers, monke
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
-    assert calls["n"] == 2                               # 单镜母帧 1 张 × 2 次尝试
-    assert any("场景母帧" in w for w in (job["result"].get("warnings") or []))
+    assert calls["n"] == 2                               # 单镜母帧 1 张 × 2 次尝试(退避重试用尽)
+    # 单镜母帧用尽仍失败 = 场景首帧优化整体失败 → 改自然运镜片(warning 是"运镜",非"退回平铺图")
+    assert any("运镜" in w for w in (job["result"].get("warnings") or []))
 
 
 def test_wizard_proposals_two_shot_adds_scenes(monkeypatch):

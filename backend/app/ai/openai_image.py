@@ -34,6 +34,11 @@ _MAX_IMG_BYTES = 40 * 1024 * 1024
 # 压到 settings.openai_max_concurrency。进程级:threads 池下=全局;prefork 下=每进程。
 _API_GATE = threading.Semaphore(max(1, settings.openai_max_concurrency))
 
+# 视频【场景母帧】专用队列(与 _API_GATE 分开):母帧自己排队、不与批量作图(裂变/套图/文生图)抢,
+# 也不把作图中转站【自己人挤爆】(实证 503「无可用账号」根因)。调用方(tasks._mufra_with_backoff)持锁期间
+# 做退避重试,并让"排队等位时间"不计入母帧预算 → 多任务也不雪崩。并发由 video_mufra_concurrency 控(默认 1=串行)。
+_MUFRA_GATE = threading.Semaphore(max(1, settings.video_mufra_concurrency))
+
 
 def _png_bytes(img: Image.Image) -> bytes:
     buf = io.BytesIO()
@@ -153,7 +158,8 @@ class OpenAIImageClient:
     def edit(self, image: Image.Image, prompt: str,
              mask: Image.Image | None = None, size: str = "auto",
              background: str = "auto",
-             timeout: float | None = None, max_retries: int | None = None) -> Image.Image:
+             timeout: float | None = None, max_retries: int | None = None,
+             use_gate: bool = True) -> Image.Image:
         image = _cap_for_edit(image)  # 缩到 ≤1024:省上传+网关耗时(输出本就≤1024,质量不变)
         kwargs = dict(
             model=self.model,
@@ -172,7 +178,11 @@ class OpenAIImageClient:
             if max_retries is not None:
                 opts["max_retries"] = max_retries
             client = self.client.with_options(**opts)
-        with _API_GATE:  # 限并发,避免整批超时(图裂变 N 路并发→网关压不住→全超时)
+        # use_gate=False:调用方(母帧)自己用 _MUFRA_GATE 排队管并发,这里不再叠 _API_GATE(否则双重排队/串错池)。
+        if use_gate:
+            with _API_GATE:  # 限并发,避免整批超时(图裂变 N 路并发→网关压不住→全超时)
+                resp = client.images.edit(**kwargs)
+        else:
             resp = client.images.edit(**kwargs)
         return self._decode(resp)
 
