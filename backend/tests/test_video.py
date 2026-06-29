@@ -515,7 +515,8 @@ def test_wizard_expand_no_key_502_refunds(client, auth_headers):
 
 
 def test_wizard_proposals_5s10s_concise_default(monkeypatch):
-    # 5/10s 默认【精简】:prompt 明确不要分秒级时间轴、提示可「详细扩展」(治"10s比15s啰嗦"的不一致)
+    # 5/10s 默认【精简】:与 15s 同逻辑——靠"一两句·一镜到底·像15s分镜一拍"的正向框定自然精简,
+    # 【不靠强行禁止时间轴】(负向易让模型乱、是上一版的 bug)。详细时间轴留给「详细扩展」。
     from app.services import video_wizard
     seen = {}
 
@@ -524,8 +525,9 @@ def test_wizard_proposals_5s10s_concise_default(monkeypatch):
         return '[{"title":"t","storyboard":"端起杯子喝一口,放松。"}]'
     monkeypatch.setattr(video_wizard, "_chat", _cap)
     video_wizard.generate_proposals("杯子", "家居", "保温", seconds=10, n=1)
-    assert "精简" in seen["prompt"] and "详细扩展" in seen["prompt"]
-    assert "不要分秒级时间轴" in seen["prompt"]
+    assert "精简" in seen["prompt"] and "一两句" in seen["prompt"]   # 正向长度框定(像 15s 一拍)
+    assert "一镜到底" in seen["prompt"]
+    assert "不要分秒级时间轴" not in seen["prompt"]                  # 不再用强硬负向
 
 
 def test_wizard_proposals_no_key_502_refunds(client, auth_headers):
