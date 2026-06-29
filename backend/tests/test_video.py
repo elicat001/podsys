@@ -508,19 +508,21 @@ def test_wizard_expand_no_key_502_refunds(client, auth_headers):
 
 
 def test_wizard_proposals_5s10s_concise_default(monkeypatch):
-    # 5/10s 默认【精简】:与 15s 同逻辑——靠"一两句·一镜到底·像15s分镜一拍"的正向框定自然精简,
-    # 【不靠强行禁止时间轴】(负向易让模型乱、是上一版的 bug)。详细时间轴留给「详细扩展」。
+    # 5/10s 默认【精简】:与 15s 完全同逻辑——不向模型要 freeform storyboard(它会甩 0-x秒 时间轴),
+    # 而是要【每拍一句连贯动作】shot1/shot2,后端合成 storyboard → 默认必然精简。详细时间轴留给「详细扩展」。
     from app.services import video_wizard
     seen = {}
 
     def _cap(msgs, **kw):
         seen["prompt"] = msgs[0]["content"]
-        return '[{"title":"t","storyboard":"端起杯子喝一口,放松。"}]'
+        return '[{"title":"t","shot1":"端起杯子喝一口","shot2":"放松靠回椅背"}]'
     monkeypatch.setattr(video_wizard, "_chat", _cap)
-    video_wizard.generate_proposals("杯子", "家居", "保温", seconds=10, n=1)
-    assert "精简" in seen["prompt"] and "一两句" in seen["prompt"]   # 正向长度框定(像 15s 一拍)
-    assert "一镜到底" in seen["prompt"]
-    assert "不要分秒级时间轴" not in seen["prompt"]                  # 不再用强硬负向
+    out = video_wizard.generate_proposals("杯子", "家居", "保温", seconds=10, n=1)
+    assert '"shot1"' in seen["prompt"] and '"shot2"' in seen["prompt"]   # 10s 改要每拍一句(非 freeform storyboard)
+    assert "别写 0-x 秒" in seen["prompt"]                               # 同 15s 的去时间戳约束
+    sb = out[0]["storyboard"]                                            # 后端合成的预览:固定分镜格式
+    assert sb.startswith("【分镜①·0-5s】") and "【分镜②·5-10s】" in sb
+    assert "shot1" not in out[0]                                        # 5/10s 输出契约:只有 storyboard,不暴露 shot
 
 
 def test_wizard_proposals_no_key_502_refunds(client, auth_headers):
@@ -1251,19 +1253,19 @@ def test_wizard_proposals_prompt_pushes_diversity_and_temperature(monkeypatch):
 
 
 def test_wizard_proposals_5s10s_creative_storyboard(monkeypatch):
-    # 5s/10s 也要给【有创意但合理的真实生活小片段】脚本(非单纯产品展示),且享受更高 temperature
+    # 5s/10s 也享受跨方案多样化 + 更高 temperature;且与 15s 同逻辑(每拍一句、后端合成,默认精简)
     from app.services import video_wizard
     seen = {}
 
     def _cap(msgs, **kw):
         seen["prompt"] = msgs[0]["content"]
         seen["temperature"] = kw.get("temperature")
-        return '[{"title":"t","storyboard":"【0-5秒】真人生活片段"}]'
+        return '[{"title":"t","shot1":"真人端起杯子喝一口","shot2":"放松靠回去"}]'
     monkeypatch.setattr(video_wizard, "_chat", _cap)
     for secs in (5, 10):
         seen.clear()
         out = video_wizard.generate_proposals("杯子", "家居", "保温", seconds=secs, n=3)
-        assert "生活小片段" in seen["prompt"]              # 5/10s 也走创意生活片段(非产品展示页)
         assert "生活情境" in seen["prompt"]                # 跨方案多样化对 5/10s 同样生效
+        assert "别写 0-x 秒" in seen["prompt"]             # 与 15s 同款去时间戳约束(每拍一句)
         assert seen["temperature"] and seen["temperature"] >= 0.8
-        assert "shot1" not in out[0]                       # 5/10s 仍是单镜,不产三拍
+        assert "shot1" not in out[0]                       # 5/10s 输出契约:只有 storyboard,不暴露 shot
