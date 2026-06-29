@@ -61,11 +61,12 @@
 
 - **场景首帧优化**(默认开):gpt-image 把商品合成进场景做视频第一帧,**印花像素级保留** → 开场即场景(治"开场平铺产品图")+ 跨镜头一致。
 - **母帧可靠性(2026-06-29,治"三分镜母帧总失败")—— 实证根因 = 作图中转站拥塞**:线上抓取失败任务 + 直连探测中转站确认:① 中转站偶发 `503 No available compatible accounts`(全局账号池被多任务/多客户挤爆);② 同一 edit 调用延迟 **40s~7min 剧烈抖动**,慢尾(~424s)超过母帧单次超时(360s)→ `Request timed out`。**两者都是瞬时拥塞,不是本地并发问题**(探测 N=4 并发全成功)——所以调高/调低本地并发都治不了。
-  - **修法① = 专用队列(`_MUFRA_GATE`,2026-06-29 强化,治"光加时长约束不够")**:母帧走【独立信号量队列】(`openai_image._MUFRA_GATE`,与批量作图的 `_API_GATE` 分开;并发 `video_mufra_concurrency` 默认 **1=串行**)。同一时刻只放**一个**母帧请求出去 → **不把中转站自己人挤爆**(根治"多任务一起冲 → 全 503/超时")。关键:**排队等位时间不计入 `video_mufra_budget`**——`tasks.py:_mufra_with_backoff` 先 `with _MUFRA_GATE` 拿位、**拿到位才起算预算**;否则 N 个任务同时进 600s 预算、即便加长也不够用(老大原话)。母帧 `edit(use_gate=False)`(并发已由 `_MUFRA_GATE` 管,不再叠 `_API_GATE`)。
-  - **修法② = 退避重试熬过拥塞**(`_mufra_with_backoff`):拿到位后,瞬时错(503/超时/5xx/连接/"网关未返回图像数据")按**指数退避**(8→16→32→60s)重试,受 `video_mufra_budget`(默认 600s)约束;**永久错**(401/403/余额不足/400,`_mufra_permanent`)立即放弃不空等。母帧线程池 `n_shots`,由 `_MUFRA_GATE` 串行化。reaper 阈值 50min(见下)。
-  - **诚实天花板**:队列 + 退避治【瞬时】拥塞(绝大多数);若中转站【持续】高负载超预算,母帧仍会失败 → 见下「母帧失败 → 自然运镜片」。根治需中转站扩容/换更稳的作图通道。
-- **母帧整体失败 → 自然运镜片(非生硬静图视频,2026-06-29)**:场景首帧优化(母帧)**全失败**时(`scene_ok=False`),**不喂平铺图给视频模型**(那会出"生硬的图片变视频"),改用本地 `make_showcase` 的 **Ken-Burns 运镜**(平移缩放)出自然运镜的产品展示片 + **退点** + 明确 warning。CogVideoX/Vidu 共用;多镜**部分成功**(≥1 镜拿到场景)→ 仍走视频生成(保留已成的场景镜),不降级。
-  - **预算与 reaper 的协调(2026-06-29 强化,经审计)**:① 母帧由 `_MUFRA_GATE` **串行排队**,等位不计预算、拿到位才起算(见上「专用队列」);② **reaper 改按 `started_at` 算 running 作业的龄**(原按 `created_at` → broker 排队时间被算进工作预算,高峰排队会误杀刚开跑的长视频);pending 仍按 `created_at`。worst-case 工作时长 ≈ 母帧(串行,但单张 ~40-60s 健康时;退避预算封顶)+ 视频(3 段并行,~25-28min;CogVideoX provider 超时是【视频开始时】才起算、与母帧耗时无关)< **50min** reaper。③ 视频 provider 的 `video_timeout` 是 fresh-per-task,母帧再久也不缩短视频自己的预算。
+  - **修法① = 全局自适应并发限流(`_AdaptiveLimiter`,2025 最新;治"光加时长约束/固定并发都不行")**:**所有 gpt-image 作图**(裂变/套图/文生图/改图/抠图/印花 + 视频母帧)共用一个**自适应限流器**(`openai_image._API_GATE`,替换原固定信号量)。按中转站【实际可用并发】动态调:`acquire()` 排队等位;`report(成功)` → limit+1(还有余量、往上爬,逼近真实可用并发,封顶 `openai_adaptive_max`=6);`report(503/429 容量满)` → limit-1(往下退、别再挤,封底 1);`report(非容量错)` → limit 不变。**既不挤爆(503)、又用满**。母帧:`tasks.py:_mufra_with_backoff` 自己 `acquire()`/`report()`(`edit(use_gate=False)`),且**预算从「拿到队列位」才起算**(等位不计入 `video_mufra_budget`)——否则 N 个任务同时进 600s 预算、即便加长也不够用(老大原话)。bulk 作图走 `_API_GATE.run(...)`。
+  - **修法② = 退避重试熬过拥塞**(`_mufra_with_backoff`):拿到位后,瞬时错(503/超时/5xx/连接/"网关未返回图像数据")按**指数退避**(8→16→32→60s)重试,受 `video_mufra_budget`(默认 600s)约束;**永久错**(401/403/余额不足/400,`_mufra_permanent`)立即放弃不空等。
+  - **诚实天花板**:自适应限流 + 退避治【瞬时】拥塞(绝大多数);若中转站【持续】高负载超预算,母帧仍会失败 → 退回原图喂 CogVideoX(见下)。根治需中转站扩容/换更稳的作图通道。
+- **母帧失败 → 退回原图喂 CogVideoX(它的首帧优化;非 GIF,2025 最新)**:场景首帧优化(gpt-image 母帧)失败时,**退回原始商品图作首帧、喂给视频模型**(CogVideoX/Vidu 自己的 img2video 让它动起来)——**不出 GIF**(老大:GIF 根本不能用;"首帧优化"指 CogVideoX 做的)。母帧失败仍记 warning 诚实告知。
+- **已删 GIF 兜底(2025 最新)**:AI 视频路径里的两处 GIF 兜底(provider 失败→GIF、母帧失败→运镜 GIF)**全删**。provider(CogVideoX/Vidu)内部已重试(网络层+任务级重建 3 次)仍失败 → 作业 **error + 退点**(`run_job_in_worker` 按 `params["n"]` 退),不再降级出 GIF。**保留** `LocalGifProvider`/`make_showcase`:仅用于 `POD_VIDEO_PROVIDER=local` 离线/无 key/测试模式 + `/api/video/generate` 显式 GIF 端点。
+  - **预算与 reaper 的协调(经审计)**:① 母帧由全局自适应限流器排队,等位不计预算、拿到位才起算;② **reaper 按 `started_at` 算 running 作业的龄**(broker 排队时间不算进工作预算);pending 仍按 `created_at`。worst-case 工作时长 < **50min** reaper。③ 视频 provider 的 `video_timeout` 是 fresh-per-task,母帧再久也不缩短视频自己的预算。
 - **后期特效 best-effort(经审计补强)**:`punch_up`(节奏快切)失败必须**回退原片**(try/except),绝不让一个后期特效 bug 把已生成好的整单判 error+退点。
 - **可见阶段**:worker 把"母帧合成中…/视频生成中…"写进 `job.result.stage`(running 态 jobs API 也下发)→ 我的空间卡片实时显示,长任务不像卡死(`tasks.py:_set_stage`,`_work_aivideo`/`_work_viduvideo` 共用)。
 - **provider 三层健壮性**(`ai/video.py` `ZhipuCogVideoProvider`):
@@ -177,7 +178,8 @@ TikTok 的"活跃感"主要来自 **人物行为(Human Behavior),不是运镜**:
 | `voiceover_enabled` | true | 旁白总开关(运维兜底) |
 | `POD_VIDEO_MUFRA_BUDGET` | `600` | 母帧【退避重试】总预算(秒):瞬时拥塞(503/超时)指数退避(8→16→32→60s)重试熬过它,预算内仍失败才降级(§6)。worst-case 母帧阶段≈budget,叠加视频生成须 < reaper(50min) |
 | `POD_VIDEO_MUFRA_ATTEMPTS` | `5` | 退避重试最多尝试次数(配合 budget 双重上限,防病态死循环) |
-| `POD_VIDEO_MUFRA_CONCURRENCY` | `1` | 母帧【专用队列】并发(与 openai_max_concurrency 分开)。1=串行:同一时刻只放一个母帧请求,不挤爆中转站;等位不计预算(§6)。可调 2 提吞吐 |
+| `POD_OPENAI_MAX_CONCURRENCY` | `2` | gpt-image 全局【自适应限流】的**起始**并发(所有作图+母帧共用)。成功爬升、503/429 回退(§6) |
+| `POD_OPENAI_ADAPTIVE_MAX` | `6` | 自适应并发**上限**(成功最多爬到这);下限恒 1。探测确认中转站能并发吃 ≥4 |
 | `POD_VIDEO_PUNCHUP` | **true** | 后期节奏快切:多景别循环切镜,加镜头密度(§7.3;离线已验证,默认开) |
 | `POD_VIDEO_MUSIC` | **false** | 背景音乐床(experimental,接线已注释) |
 

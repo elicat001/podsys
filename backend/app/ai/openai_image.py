@@ -29,15 +29,70 @@ VALID_SIZES = {"1024x1024", "1536x1024", "1024x1536", "auto"}
 # 下载网关返回的图片 url 时的大小上限(防 OOM:超大响应不收)。
 _MAX_IMG_BYTES = 40 * 1024 * 1024
 
-# 全局限流:同时在飞的 gpt-image 网关调用数上限。本网关并发跑多张 gpt-image 会让每张都被拖过
-# 单次超时(250s)→ 整批 APITimeoutError(图裂变 4 路并发实测全超时)。这里把"同时在飞"的调用
-# 压到 settings.openai_max_concurrency。进程级:threads 池下=全局;prefork 下=每进程。
-_API_GATE = threading.Semaphore(max(1, settings.openai_max_concurrency))
+def _is_capacity_error(exc: Exception | None) -> bool:
+    """异常是否=作图中转站【并发/容量满】(应回退并发):503 无可用账号 / 429 限流 / overloaded。
+    其它(超时/连接/坏图/鉴权)不是容量问题,不据此回退并发。"""
+    if exc is None:
+        return False
+    code = getattr(exc, "status_code", None)
+    if code in (429, 503):
+        return True
+    s = str(exc).lower()
+    return any(k in s for k in (
+        "no available compatible accounts", "overloaded", "rate limit",
+        " 429", " 503", "code: 429", "code: 503",
+    ))
 
-# 视频【场景母帧】专用队列(与 _API_GATE 分开):母帧自己排队、不与批量作图(裂变/套图/文生图)抢,
-# 也不把作图中转站【自己人挤爆】(实证 503「无可用账号」根因)。调用方(tasks._mufra_with_backoff)持锁期间
-# 做退避重试,并让"排队等位时间"不计入母帧预算 → 多任务也不雪崩。并发由 video_mufra_concurrency 控(默认 1=串行)。
-_MUFRA_GATE = threading.Semaphore(max(1, settings.video_mufra_concurrency))
+
+class _AdaptiveLimiter:
+    """gpt-image 中转站【自适应并发限流】(进程级单例,所有作图共用)。
+    固定信号量要么压太死、要么挤爆中转站(503「无可用账号」)。这里按中转站【实际可用并发】动态调:
+    - acquire():排队等位(in_flight < limit 才放行),这是队列;
+    - report(成功):说明中转站还有余量 → limit += 1(往上爬,逼近真实可用并发),封顶 max;
+    - report(容量满 503/429):中转站满了 → limit -= 1(往下退,别再挤),封底 1;该请求随后等一个在飞的完成再重试;
+    - report(其它错):非容量问题 → limit 不变。
+    既不挤爆、又用满中转站可用并发。threads 池下=全局;acquire↔report 必须一一配平(防 in_flight 泄漏)。"""
+
+    def __init__(self, start: int, max_limit: int) -> None:
+        self._max = max(1, int(max_limit))
+        self._limit = max(1, min(int(start), self._max))
+        self._in_flight = 0
+        self._cv = threading.Condition()
+
+    def acquire(self) -> None:
+        with self._cv:
+            while self._in_flight >= self._limit:
+                self._cv.wait()
+            self._in_flight += 1
+
+    def report(self, success: bool, exc: Exception | None = None) -> None:
+        with self._cv:
+            self._in_flight -= 1
+            if success:
+                self._limit = min(self._max, self._limit + 1)
+            elif _is_capacity_error(exc):
+                self._limit = max(1, self._limit - 1)
+            self._cv.notify_all()
+
+    def run(self, fn):
+        """acquire → 调 fn → report(成败)。bulk 作图(单次调用)用它一站式管并发。"""
+        self.acquire()
+        try:
+            out = fn()
+        except Exception as exc:  # noqa: BLE001 — 失败也要 report,保证配平 + 反馈容量
+            self.report(False, exc)
+            raise
+        self.report(True)
+        return out
+
+    def snapshot(self) -> tuple[int, int]:
+        with self._cv:
+            return self._limit, self._in_flight
+
+
+# 全局自适应限流器:起始=openai_max_concurrency(保守),上限=openai_adaptive_max,下限=1。
+# 母帧(tasks._mufra_with_backoff)自己 acquire/report(预算拿位后才起算);bulk 作图走 _API_GATE.run(...)。
+_API_GATE = _AdaptiveLimiter(start=settings.openai_max_concurrency, max_limit=settings.openai_adaptive_max)
 
 
 def _png_bytes(img: Image.Image) -> bytes:
@@ -147,11 +202,10 @@ class OpenAIImageClient:
     # ---- 文生图 ----
     def generate(self, prompt: str, size: str = "1024x1024",
                  quality: str = "auto", background: str = "auto") -> Image.Image:
-        with _API_GATE:  # 限并发,避免整批超时
-            resp = self.client.images.generate(
-                model=self.model, prompt=prompt, n=1,
-                size=self._size(size), quality=quality, background=background,
-            )
+        resp = _API_GATE.run(lambda: self.client.images.generate(  # 自适应限流:按中转站可用并发动态调
+            model=self.model, prompt=prompt, n=1,
+            size=self._size(size), quality=quality, background=background,
+        ))
         return self._decode(resp)
 
     # ---- 图生图 / 改图 / 换装换背景 ----
@@ -178,10 +232,10 @@ class OpenAIImageClient:
             if max_retries is not None:
                 opts["max_retries"] = max_retries
             client = self.client.with_options(**opts)
-        # use_gate=False:调用方(母帧)自己用 _MUFRA_GATE 排队管并发,这里不再叠 _API_GATE(否则双重排队/串错池)。
+        # use_gate=False:调用方(母帧 _mufra_with_backoff)自己 acquire/report 全局限流器(预算拿位后才起算),
+        # 这里不再叠一层(否则双重 acquire / in_flight 计数错)。其余作图 use_gate=True → 自适应限流器一站式管。
         if use_gate:
-            with _API_GATE:  # 限并发,避免整批超时(图裂变 N 路并发→网关压不住→全超时)
-                resp = client.images.edit(**kwargs)
+            resp = _API_GATE.run(lambda: client.images.edit(**kwargs))
         else:
             resp = client.images.edit(**kwargs)
         return self._decode(resp)
@@ -192,9 +246,9 @@ class OpenAIImageClient:
         """多张输入图一起送 gpt-image edit(如 [产品照, 新设计]):模型按 prompt 把它们融合。
         input_fidelity=high 尽量保留输入细节(设计忠实)。用于商品套图『把设计真实地印到产品上』。"""
         files = [_file_tuple(_cap_for_edit(im), f"img{i}") for i, im in enumerate(images)]
-        with _API_GATE:  # 限并发,避免整批超时
-            resp = self.client.images.edit(model=self.model, image=files, prompt=prompt,
-                                           n=1, size=self._size(size), input_fidelity=input_fidelity)
+        resp = _API_GATE.run(lambda: self.client.images.edit(  # 自适应限流
+            model=self.model, image=files, prompt=prompt,
+            n=1, size=self._size(size), input_fidelity=input_fidelity))
         return self._decode(resp)
 
     # ---- 抠图 / 去背景 ----

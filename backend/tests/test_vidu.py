@@ -132,7 +132,8 @@ def test_vidu_bad_image_refunds(client, auth_headers):
 
 
 # ---------- provider 失败 → 兜底 GIF + 退回全部点数 ----------
-def test_vidu_provider_failure_falls_back_to_gif_and_refunds(client, auth_headers, monkeypatch, tool_result):
+def test_vidu_provider_failure_errors_and_refunds(client, auth_headers, monkeypatch):
+    # 已删 GIF 兜底:Vidu provider 失败(内部已重试)→ 作业 error + 退回全部点数(秒数×2),不出 GIF。
     from app.ai import vidu as vidu_mod
 
     def _boom():
@@ -141,10 +142,10 @@ def test_vidu_provider_failure_falls_back_to_gif_and_refunds(client, auth_header
     bal0 = _bal(client, auth_headers)
     r = client.post("/api/vidu/ai-generate", headers=auth_headers,
                     data={"seconds": 10}, files={"file": ("x.png", _png(), "image/png")})
-    res = tool_result(auth_headers, r)
-    assert res["video_url"].endswith(".gif") and res["degraded"] is True
-    assert res["warnings"] and any("兜底" in w for w in res["warnings"])
-    assert _bal(client, auth_headers) == bal0          # 扣 20 退 20
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "error", job               # provider 真挂 → error(无 GIF 兜底)
+    assert _bal(client, auth_headers) == bal0          # 扣 20(10s×2)、error 退 20
 
 
 # ---------- 余额不足:补扣第 N 笔失败 → 退回已扣的全部 + 402 ----------

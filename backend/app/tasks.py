@@ -159,31 +159,36 @@ def _mufra_permanent(exc: Exception) -> bool:
 
 
 def _mufra_with_backoff(do_edit):
-    """母帧 gpt-image 调用:【专用队列 _MUFRA_GATE 排队 + 拿位后退避重试】。
-    ① 先排队等位(`_MUFRA_GATE`,默认串行 1)——同一时刻只放一个母帧请求出去,不把作图中转站【自己人挤爆】
-       (实证 503「无可用账号」根因)。【等位时间不计入预算】:多任务排队也不雪崩。
-    ② 轮到(拿到位)才起算 video_mufra_budget,做指数退避重试(8→16→32→60s)熬过【他人造成的】瞬时拥塞;
-       永久错(鉴权/余额/坏请求)立即放弃。持位期间不放别人进来一起挤。
-    do_edit 内部应以 use_gate=False 调 edit(并发已由 _MUFRA_GATE 管,别再叠 _API_GATE)。
-    返回结果;预算/次数耗尽则抛最后异常(已出队后再抛,不占位)。"""
+    """母帧 gpt-image 调用:走【全局自适应并发限流器】(与所有作图共用一个队列)+ 拿位后退避重试。
+    ① 每次尝试先 `_API_GATE.acquire()` 排队等位(限流器按中转站可用并发动态放行;【等位不计入预算】)——
+       不把作图中转站【自己人挤爆】(实证 503「无可用账号」根因)。
+    ② 【首次拿到位】才起算 video_mufra_budget;拿到位才发请求;成功/失败都 `report`(限流器据此升/降并发)。
+    ③ 瞬时错指数退避重试(8→16→32→60s,受预算约束)熬过【他人造成的】拥塞;永久错(鉴权/余额/坏请求)立即放弃。
+    do_edit 内部应以 use_gate=False 调 edit(并发已由这里 acquire/report 管,别再叠一层)。
+    返回结果;预算/次数耗尽则抛最后异常(已 report 出队后再抛)。"""
     import time as _t
 
-    from .ai.openai_image import _MUFRA_GATE
+    from .ai.openai_image import _API_GATE
     from .config import settings
     last_exc: Exception | None = None
-    with _MUFRA_GATE:                                       # 排队等位 —— 不计入预算
-        deadline = _t.monotonic() + float(settings.video_mufra_budget)   # 预算从【拿到位】才起算
-        delay = 8.0
-        attempts = max(1, int(settings.video_mufra_attempts))
-        for i in range(attempts):
-            try:
-                return do_edit()
-            except Exception as exc:  # noqa: BLE001 — 瞬时拥塞退避重试;永久错/末次/超预算立即放弃
-                last_exc = exc
-                if _mufra_permanent(exc) or i + 1 >= attempts or _t.monotonic() + delay >= deadline:
-                    break
-                _t.sleep(delay)
-                delay = min(delay * 2, 60.0)
+    deadline: float | None = None
+    delay = 8.0
+    attempts = max(1, int(settings.video_mufra_attempts))
+    for i in range(attempts):
+        _API_GATE.acquire()                                # 排队等位(不计入预算)
+        if deadline is None:
+            deadline = _t.monotonic() + float(settings.video_mufra_budget)   # 预算从【首次拿到位】起算
+        try:
+            result = do_edit()
+            _API_GATE.report(True)                         # 进了且成功 → 限流器往上爬
+            return result
+        except Exception as exc:  # noqa: BLE001 — 失败也 report(配平 + 反馈容量:503→限流器回退)
+            _API_GATE.report(False, exc)
+            last_exc = exc
+            if _mufra_permanent(exc) or i + 1 >= attempts or _t.monotonic() + delay >= deadline:
+                break
+            _t.sleep(delay)
+            delay = min(delay * 2, 60.0)
     raise last_exc if last_exc is not None else RuntimeError("母帧生成失败")
 
 
@@ -578,77 +583,48 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
 
     if use_scene:                           # 进入母帧阶段:我的空间显示"母帧合成中…"(长任务不像卡死)
         _set_stage(db, job, _STAGE_MUFRA)
-    # 母帧在 try 之前完成。scene_ok = 场景首帧优化是否拿到 ≥1 张;否则后面改出【自然运镜片】而非生硬静图视频。
-    scene_ok = not use_scene                # 没开场景优化 → 不触发"母帧全败→运镜片"(用户本就要平铺图动)
+    # 母帧在视频生成前完成。母帧失败(_scene_frame 返回 None)→ 退回原始商品图作首帧,由 CogVideoX 自己的
+    # 首帧优化(img2video)让它动起来——【不出 GIF】(老大:GIF 根本不能用)。母帧失败仍记 warning 诚实告知。
     seg_imgs: list | None = None
-    if per_shot_frames:                     # 多分镜每镜独立母帧:并行提交(_MUFRA_GATE 串行+退避熬拥塞);失败的镜降级回共享 imgs
+    if per_shot_frames:                     # 多分镜每镜独立母帧:并行提交(全局自适应限流器排队+退避熬拥塞);失败的镜退回原图
         with ThreadPoolExecutor(max_workers=n_shots) as ex:
             frames = list(ex.map(_scene_frame, scenes[:n_shots]))
         seg_imgs = [[f] if f is not None else imgs for f in frames]
-        scene_ok = any(f is not None for f in frames)
     elif use_scene:                         # 单镜 / 双分镜未给场景:一张共享母帧(类目默认场景)
         shared = _scene_frame("")
         if shared is not None:
             imgs[0] = shared
-            scene_ok = True
     # 视频音效(默认关)= CogVideoX 自带音频(with_audio=true,AI 音效非真人);默认无声;旁白开 = 无声再叠真人 AI 旁白。三者:默认无声 / 音效 / 旁白互斥。
     native_sound = bool(p.get("native_sound", False))
-    # 提示词工程:镜头脚本 + 地区风格(随语言)+ 语言 + 一致性/防拉伸 + 负向(动作交给用户脚本,不按类目追加)
-    # 【保证交付】provider(智谱)超时/失败/网关繁忙 → 不让作业挂死或报错,降级兜底【本地产品展示 GIF】
-    # (瞬时、离线、100% 成功、任意 SKU)并退回点数。实测瓶颈=provider 产能 + 链式依赖(gpt-image×N→CogVideoX×N),
-    # 这层兜底是视频功能"能基本使用"的可靠性底座:用户永远拿到可用结果,绝不再 25min 挂起后失败白扣。
-    degraded_fallback = False
-    try:
-        if use_scene and not scene_ok:
-            # 场景首帧优化【整体失败】(gpt-image 整体不可用)→ 别喂平铺图给 CogVideoX 出"生硬的图片变视频",
-            # 改用本地【自然运镜】产品展示片(make_showcase 的 Ken-Burns 平移缩放)+ 退点(同 degraded 路径)。
-            from .ai.video import LocalGifProvider
-            _set_stage(db, job, _STAGE_VIDEO)
-            sec = int(p.get("seconds") or settings.video_seconds) or 10
-            out = LocalGifProvider().image_to_video(imgs, "", size=size, seconds=min(sec, 10))
-            total_seconds = min(sec, 10)
-            degraded_fallback = True
-            warnings[:] = [w for w in warnings if not w.startswith("场景母帧")]   # 去掉"退回平铺图"误导文案(已改运镜片)
-            warnings.append(
-                "场景首帧优化(把商品放进真实场景)多次重试仍失败,为避免生硬的静图视频,"
-                "已改用自然运镜的产品展示片交付,并退回本次点数。")
-        elif p.get("two_shot"):
-            # 多分镜 15s:单段模型最多 10s,故拆 N 段(当前 3×5s)【并行】生成,再首尾拼接=15s。母帧已在 try 前生成好。
-            from .services.video_concat import concat_videos
-            prov = get_video_provider()
-            if seg_imgs is None:             # 双分镜未给场景(非 per_shot):各镜共用 imgs(可能含共享母帧)
-                seg_imgs = [imgs for _ in range(n_shots)]
-            _set_stage(db, job, _STAGE_VIDEO)   # 母帧阶段完 → 进视频生成(我的空间显示"视频生成中…")
-            plan = [(seg_imgs[i], prompt_fn(prompts[i] or prompts[0], language=lang), MULTI_SHOT_PLAN[i])
-                    for i in range(n_shots)]
+    # 【已删 GIF 兜底】provider(CogVideoX)内部已重试(网络层 + 任务级重建 3 次)仍失败 → 异常【向上抛】→
+    # run_job_in_worker 统一标 error + 按 refund_n(=params["n"])退点。不再降级出 GIF(老大:GIF 根本不能用)。
+    _set_stage(db, job, _STAGE_VIDEO)       # 母帧阶段完 → 进视频生成(我的空间显示"视频生成中…")
+    if p.get("two_shot"):
+        # 多分镜 15s:单段模型最多 10s,故拆 N 段(当前 3×5s)【并行】生成,再首尾拼接=15s。母帧已生成好。
+        from .services.video_concat import concat_videos
+        prov = get_video_provider()
+        if seg_imgs is None:                # 双分镜未给场景(非 per_shot):各镜共用 imgs(可能含共享母帧)
+            seg_imgs = [imgs for _ in range(n_shots)]
+        plan = [(seg_imgs[i], prompt_fn(prompts[i] or prompts[0], language=lang), MULTI_SHOT_PLAN[i])
+                for i in range(n_shots)]
 
-            def _seg(item: tuple) -> dict:
-                shot_imgs, sp, sec = item
-                return prov.image_to_video(shot_imgs, sp, size=size, seconds=sec, with_audio=native_sound)
+        def _seg(item: tuple) -> dict:
+            shot_imgs, sp, sec = item
+            return prov.image_to_video(shot_imgs, sp, size=size, seconds=sec, with_audio=native_sound)
 
-            with ThreadPoolExecutor(max_workers=n_shots) as ex:
-                segs = list(ex.map(_seg, plan))   # 保序;任一段抛错 → 跳到 except 兜底
-            ext0 = segs[0].get("ext", "mp4")
-            merged = concat_videos([s["bytes"] for s in segs], ext0, keep_audio=native_sound)
-            out = {"bytes": merged, "ext": ext0,
-                   "meta": {**segs[-1].get("meta", {}), "two_shot": True, "shots": n_shots,
-                            "shot_seconds": list(MULTI_SHOT_PLAN)}}
-            total_seconds = sum(MULTI_SHOT_PLAN)
-        else:
-            _set_stage(db, job, _STAGE_VIDEO)   # 单镜:母帧(若有)完 → 进视频生成
-            prompt = prompt_fn(p.get("prompt", ""), language=lang)
-            out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"),
-                                                      with_audio=native_sound)
-            total_seconds = int(p.get("seconds") or settings.video_seconds)
-    except Exception as exc:  # noqa: BLE001 — provider 超时/失败/网关繁忙 → 降级兜底,绝不挂死/白扣
-        from .ai.video import LocalGifProvider
-        sec = int(p.get("seconds") or settings.video_seconds) or 10
-        out = LocalGifProvider().image_to_video(imgs, "", size=size, seconds=min(sec, 10))
-        total_seconds = min(sec, 10)
-        warnings.append(
-            "AI 视频网关繁忙/超时,已用快速兜底版本(本地产品展示)交付,并已退回本次点数。"
-            f"详情:{str(exc)[:160]}")
-        degraded_fallback = True
+        with ThreadPoolExecutor(max_workers=n_shots) as ex:
+            segs = list(ex.map(_seg, plan))   # 保序;任一段抛错 → 向上抛 → 整单 error + 退点
+        ext0 = segs[0].get("ext", "mp4")
+        merged = concat_videos([s["bytes"] for s in segs], ext0, keep_audio=native_sound)
+        out = {"bytes": merged, "ext": ext0,
+               "meta": {**segs[-1].get("meta", {}), "two_shot": True, "shots": n_shots,
+                        "shot_seconds": list(MULTI_SHOT_PLAN)}}
+        total_seconds = sum(MULTI_SHOT_PLAN)
+    else:
+        prompt = prompt_fn(p.get("prompt", ""), language=lang)
+        out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"),
+                                                  with_audio=native_sound)
+        total_seconds = int(p.get("seconds") or settings.video_seconds)
     # 后期节奏快切(默认开):按 beat 切段、全景/推近交替,治"呆板"。在旁白/字幕【之前】做 → 不裁字幕。
     # 不改时长/音轨/商品像素(一致性零风险)。【best-effort:失败必须回退原片,绝不阻断已生成好的视频】
     # (否则一个后期特效的 bug 会让整单 error+退点、用户白丢已出好的成片)。
@@ -694,27 +670,16 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
         cover = storage.output_url(job_id, "cover.jpg")
     except Exception:  # noqa: BLE001 — 缩略图失败不影响视频交付
         cover = meta.get("cover", "")
-    # 降级兜底交付(GIF 代替 AI 视频)→ 退回本次点数:交付了较低规格产物,不按 AI 视频原价收费。
-    # 由 run_job_in_worker 在 work 返回后统一 commit(同失败退点路径);幂等护栏防 broker 重投重复退。
-    if degraded_fallback and job.owner_id is not None and db is not None:
-        try:
-            from .models_db import User
-            from .services.billing import refund
-            user = db.get(User, job.owner_id)
-            if user is not None:
-                for _ in range(int(p.get("n", 1) or 1)):
-                    refund(db, user, "video")
-        except Exception:  # noqa: BLE001 — 退点失败不阻断交付(宁可少退也先把视频给到用户)
-            pass
+    # 注:已删 GIF 兜底 → provider 真失败直接抛错(run_job_in_worker 标 error + 退点),不再在此降级退点。
     if job.owner_id is not None:  # 入库(用首帧做查重源,size 用视频字节)→ 删任务时可进回收站,不再成幽灵
         save_as_asset(db, job.owner_id, imgs[0], f"图生视频 {cat}", url, source="generated",
                       size_bytes=len(out["bytes"]))
     return {"video_url": url, "ext": ext, "voiceover": meta.get("voiceover", ""),
             "cover": cover, "engine": meta.get("engine", ""),
             "two_shot": bool(meta.get("two_shot")),
-            "degraded": bool(meta.get("degraded")) or degraded_fallback,
+            "degraded": bool(meta.get("degraded")),   # local provider(离线/无 key)出 GIF 时为 True;真 provider 出片为 False
             # 并行母帧多线程 append warnings 可能产生重复条目(良性竞态)→ 去重(保序),前端在成片卡片上提示
-            "warnings": list(dict.fromkeys(warnings))}   # 显式暴露降级原因(母帧/配音失败/provider 兜底等)
+            "warnings": list(dict.fromkeys(warnings))}   # 显式暴露降级原因(母帧失败/配音失败等)
 
 
 def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
@@ -746,8 +711,7 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
 
     warnings: list[str] = []
     # 场景母帧:gpt-image 把商品合成进"真人正在使用它"的场景做视频首帧 → 缓解"白底图突然长出人/场景"的硬切。
-    # 失败【显式记录到 warnings】(否则用户拿到一段平铺产品片却不知为何);无 key 不进这里。
-    scene_ok = not use_scene                # 场景首帧优化是否拿到(否则改出自然运镜片,不出生硬静图视频)
+    # 母帧失败 → 退回原始商品图作首帧,由 Vidu 自己的 img2video 让它动起来(【不出 GIF】);失败记 warning 诚实告知。
     first = fit_to_aspect(raw, tw, th)
     if use_scene:
         _set_stage(db, job, _STAGE_MUFRA)   # 进入母帧阶段:我的空间显示"母帧合成中…"
@@ -756,42 +720,24 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
         if max(src.size) > 1024:
             src = src.copy(); src.thumbnail((1024, 1024), Image.LANCZOS)
         from .ai.openai_image import OpenAIImageClient
-        # 走 _mufra_with_backoff:专用队列排队(等位不计预算)+ 拿位后退避重试熬中转站瞬时拥塞(503/超时);
+        # 走 _mufra_with_backoff:全局自适应限流器排队(等位不计预算)+ 拿位后退避重试熬中转站瞬时拥塞(503/超时);
         # 永久错立即放弃。对齐 CogVideoX 母帧策略。
         try:
             framed = _mufra_with_backoff(lambda: OpenAIImageClient().edit(
                 src, scene_frame_prompt(lang, scene=p.get("scene", "")),
                 size=gptimage_size(aspect), timeout=settings.video_mufra_timeout,
-                max_retries=0, use_gate=False))   # 并发由 _MUFRA_GATE 管,别叠 _API_GATE
+                max_retries=0, use_gate=False))   # 并发由 _mufra_with_backoff 的 acquire/report 管,别叠
             first = fit_to_aspect(framed, tw, th)
-            scene_ok = True
-        except Exception as exc:  # noqa: BLE001 — 母帧失败不阻断,降级回原图首帧 + 告知
+        except Exception as exc:  # noqa: BLE001 — 母帧失败不阻断,退回原图首帧(喂 Vidu 自己动)+ 告知
             warnings.append("场景母帧生成失败,已退回原始商品图作首帧——成片少了真人使用场景。"
                             f"常见:作图 AI 网关繁忙(中转站 503 无可用账号)/超时/未配 key/余额不足。详情:{str(exc)[:160]}")
     prompt = compose_vidu_prompt(p.get("prompt", ""), language=lang, seconds=seconds, sound_mode=sound_mode)
     _set_stage(db, job, _STAGE_VIDEO)   # 母帧(若有)完 → 进视频生成
 
-    # 【保证交付】provider 超时/失败/网关繁忙 → 降级兜底本地 GIF + 退回点数(对齐 CogVideoX 可靠性底座)。
-    degraded_fallback = False
-    try:
-        if use_scene and not scene_ok:
-            # 场景首帧优化整体失败 → 别喂平铺图给 Vidu 出生硬静图视频,改本地【自然运镜】展示片 + 退点。
-            from .ai.vidu import LocalGifProvider
-            out = LocalGifProvider().image_to_video([first], "", aspect=aspect, seconds=min(seconds, 10))
-            degraded_fallback = True
-            warnings[:] = [w for w in warnings if not w.startswith("场景母帧")]   # 去掉"退回平铺图"误导文案
-            warnings.append("场景首帧优化多次重试仍失败,为避免生硬的静图视频,已改用自然运镜的产品展示片交付,并退回本次点数。")
-        else:
-            out = get_vidu_provider().image_to_video(
-                [first], prompt, aspect=aspect, resolution=resolution, seconds=seconds,
-                audio=native_audio, audio_type=audio_type)
-    except Exception as exc:  # noqa: BLE001 — provider 失败 → 降级兜底,绝不挂死/白扣
-        from .ai.vidu import LocalGifProvider
-        out = LocalGifProvider().image_to_video([first], "", aspect=aspect, seconds=min(seconds, 10))
-        warnings.append(
-            "Vidu 视频网关繁忙/超时,已用快速兜底版本(本地产品展示)交付,并已退回本次点数。"
-            f"详情:{str(exc)[:160]}")
-        degraded_fallback = True
+    # 【已删 GIF 兜底】provider(Vidu)内部已重试仍失败 → 异常【向上抛】→ run_job_in_worker 标 error + 按 n 退点。
+    out = get_vidu_provider().image_to_video(
+        [first], prompt, aspect=aspect, resolution=resolution, seconds=seconds,
+        audio=native_audio, audio_type=audio_type)
     # 真人旁白(best-effort):仅 voiceover 模式 + 真 mp4 才做。Vidu 原生音频对葡/西语支持差,口播走 edge-tts(免费、按市场语言、可烧字幕)。
     if sound_mode == "voiceover" and out.get("ext") == "mp4":
         try:
@@ -817,24 +763,14 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
         cover = storage.output_url(job_id, "cover.jpg")
     except Exception:  # noqa: BLE001
         cover = meta.get("cover", "")
-    # 降级兜底 → 退回本次全部点数(n=秒数 笔 × vidu=2 点)。统一由 run_job_in_worker commit,幂等护栏防重投重复退。
-    if degraded_fallback and job.owner_id is not None and db is not None:
-        try:
-            from .models_db import User
-            from .services.billing import refund
-            user = db.get(User, job.owner_id)
-            if user is not None:
-                for _ in range(int(p.get("n", 1) or 1)):
-                    refund(db, user, "vidu")
-        except Exception:  # noqa: BLE001 — 退点失败不阻断交付
-            pass
+    # 注:已删 GIF 兜底 → provider 真失败直接抛错(run_job_in_worker 标 error + 退点),不再在此降级退点。
     if job.owner_id is not None:
         save_as_asset(db, job.owner_id, raw, f"Vidu 图生视频 {cat}", url, source="generated",
                       size_bytes=len(out["bytes"]))
     return {"video_url": url, "ext": ext,
             "cover": cover, "engine": meta.get("engine", ""),
-            "degraded": bool(meta.get("degraded")) or degraded_fallback,
-            "warnings": warnings}
+            "degraded": bool(meta.get("degraded")),   # local provider(离线/无 key)出 GIF 时为 True
+            "warnings": list(dict.fromkeys(warnings))}
 
 
 # kind → (work, refund_op, n_param)。n_param 非空时退点笔数 = job.params[n_param](如裂变按张扣)。

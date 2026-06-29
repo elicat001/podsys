@@ -79,7 +79,8 @@ class Settings(BaseSettings):
     openai_text_stream: bool = True           # 本网关 chat 接口需 stream=true 才吐内容(不流式返回空)。官方 OpenAI 置 false 也可
     openai_timeout: float = 250.0             # 单次调用超时(秒)。本网关 gpt-image 慢且波动,太紧会被掐断→静默回退本地算法(浅色主体被腐蚀=用户报的"白底/像本地")。放宽到 250s 让 AI 真正出图
     openai_max_retries: int = 1               # 重试次数。该网关失败时是"挂满整个超时"型,重试会成倍堆时间;1 次(共2次尝试)覆盖瞬时抖动。需更稳可在 .env 调 POD_OPENAI_MAX_RETRIES=2
-    openai_max_concurrency: int = 2           # 同时在飞的 gpt-image 网关调用数上限(进程级信号量)。也用作**商品套图多图并发度**(一个套图任务里同时处理几张)。本网关并发跑多张会让每张都拖过单次超时→整批 APITimeoutError(图裂变 4 路并发实测全挂),故 2=保守(中转站限并发时);若中转站不限并发,可在 .env 调 POD_OPENAI_MAX_CONCURRENCY=10 提速;仍超时可调 1
+    openai_max_concurrency: int = 2           # gpt-image【自适应并发限流】的【起始值】(进程级单例,所有作图共用,见 ai/openai_image._AdaptiveLimiter)。也用作商品套图多图并发度的起点。从这里起步,成功就往上爬(逼近中转站真实可用并发)、撞 503/429 就回退,既不挤爆又用满。保守起 2;中转站很稳可调大
+    openai_adaptive_max: int = 6              # 自适应并发【上限】:成功时 limit 最多爬到这。探测确认中转站能并发吃 ≥4,给 6;过高会更易撞 503(会自动回退,但浪费一轮)。下限恒 1(永远至少放一个)
 
     # print extraction
     autocrop_padding: int = 8                # px padding around detected content
@@ -116,10 +117,8 @@ class Settings(BaseSettings):
     # worst-case 母帧阶段 ≈ budget;叠加视频生成仍 < reaper(50min,见 services/jobs.STUCK_MINUTES)。
     video_mufra_budget: float = 600.0
     video_mufra_attempts: int = 5
-    # 母帧【专用队列】并发(与批量作图的 openai_max_concurrency 分开,母帧自己排队、不与裂变/套图/文生图抢)。
-    # =1=严格串行(一个母帧请求出去、下一个排队等位):不把作图中转站【自己人挤爆】(实证 503「无可用账号」根因)。
-    # 关键:排队【等位时间不计入 video_mufra_budget】,轮到才发请求、才起算预算 → 多任务也不雪崩。可调 2 提吞吐。
-    video_mufra_concurrency: int = 1
+    # 注:母帧并发不再单独配置——已并入 gpt-image 全局自适应限流器(openai_max_concurrency/openai_adaptive_max),
+    # 母帧与所有作图共用一个队列;_mufra_with_backoff 自己 acquire/report(预算"拿到队列位后"才起算)。
     # 后期「节奏快切」(services/video_edit.punch_up):按 beat(~2s)切段、每段换景别/机位(多景别循环),
     # 把连续单镜在后期切出【多镜头密度感】——治"信息频率太低=呆板"(GPT 判定的真瓶颈)。
     # 不改时长/音轨/商品像素(一致性零风险);离线已验证(抽帧确认多景别)→ 默认开。
