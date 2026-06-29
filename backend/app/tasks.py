@@ -148,6 +148,38 @@ def _set_stage(db: Session, job: Job, text: str) -> None:
         db.rollback()
 
 
+def _mufra_permanent(exc: Exception) -> bool:
+    """母帧错误是否【永久/重试无用】:鉴权/额度/坏请求 → True(立即放弃,别空等退避);
+    其余(503「无可用账号」/超时/连接/5xx/网关抖动)→ False(瞬时拥塞,退避重试熬过它)。"""
+    s = str(exc).lower()
+    return any(k in s for k in (
+        "invalid_api_key", "incorrect api key", "unauthorized", "permission",
+        "余额", "insufficient", "quota", " 401", " 403", "code: 400", "400 -", "未配置",
+    ))
+
+
+def _mufra_with_backoff(do_edit):
+    """母帧 gpt-image 调用【指数退避重试】,熬过作图中转站【瞬时拥塞】(503 无可用账号 / 请求超时——
+    实证根因:多任务挤爆中转站账号池)。立即重试只会再撞,故退避 8→16→32→60s,受 video_mufra_budget 总预算约束
+    (留时间给视频生成,不触发 reaper)。永久错(鉴权/余额/坏请求)立即放弃。返回结果,预算/次数耗尽则抛最后异常。"""
+    import time as _t
+
+    from .config import settings
+    deadline = _t.monotonic() + float(settings.video_mufra_budget)
+    delay = 8.0
+    last_exc: Exception | None = None
+    for _ in range(max(1, int(settings.video_mufra_attempts))):
+        try:
+            return do_edit()
+        except Exception as exc:  # noqa: BLE001 — 瞬时拥塞退避重试;永久错立即放弃
+            last_exc = exc
+            if _mufra_permanent(exc) or _t.monotonic() + delay >= deadline:
+                break
+            _t.sleep(delay)
+            delay = min(delay * 2, 60.0)
+    raise last_exc if last_exc is not None else RuntimeError("母帧生成失败")
+
+
 def _work_generate(job_id: str, job: Job, db: Session) -> dict:
     from .services.generate import generate_product_set, text_to_image
     p = job.params
@@ -519,27 +551,22 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
 
     def _scene_frame(scene: str):
         """gpt-image 把商品合成进 scene 做母帧并贴合画幅;失败返回 None(调用方降级原图首帧)。
-        【应用层重试 video_mufra_attempts 次】:母帧逐张【串行】调用(每张独占作图网关→显著降失败率),
-        每次失败(含 5xx/连接重置/SDK 不会重试的"网关未返回图像数据"/超时)就重试,仅【最后一次】失败才
-        降级原图 + 记 warning(显式降级,不静默——母帧才是 3D 物理的关键)。SDK 层 max_retries=0(超时由
-        应用层这层重试可控掌握,不在 SDK 再翻倍)。"""
+        走 _mufra_with_backoff:中转站偶发 503「无可用账号」/超时是【瞬时拥塞】,指数退避重试熬过它
+        (受 video_mufra_budget 约束);永久错(鉴权/余额)立即放弃。预算内仍失败 → 降级原图 + 记 warning
+        (显式降级,不静默——母帧才是 3D 物理的关键)。"""
         from .ai.openai_image import OpenAIImageClient
-        attempts = max(1, int(settings.video_mufra_attempts))
-        last_exc: Exception | None = None
-        for _attempt in range(attempts):
-            try:
-                framed = OpenAIImageClient().edit(_frame_src, scene_frame_prompt(cat, lang, scene=scene),
-                                                  size=gptimage_size(aspect),
-                                                  timeout=settings.video_mufra_timeout, max_retries=0)
-                return fit_to_aspect(framed, tw, th)
-            except Exception as exc:  # noqa: BLE001 — 捕获所有(快错/超时),重试到 attempts 用尽
-                last_exc = exc
-        if not any(w.startswith("场景母帧") for w in warnings):   # 去重(per-shot 每段各调一次)
-            warnings.append(
-                "场景母帧生成失败,已退回原始平铺商品图作首帧——成片的立体感/物理真实度会明显变差"
-                "(衣物可能像砖块般僵硬)。常见原因:作图 AI(gpt-image)网关超时 / 未配 key / 余额不足。"
-                f"详情:{str(last_exc)[:160]}")
-        return None
+        try:
+            framed = _mufra_with_backoff(lambda: OpenAIImageClient().edit(
+                _frame_src, scene_frame_prompt(cat, lang, scene=scene),
+                size=gptimage_size(aspect), timeout=settings.video_mufra_timeout, max_retries=0))
+            return fit_to_aspect(framed, tw, th)
+        except Exception as exc:  # noqa: BLE001 — 母帧失败不阻断视频作业,但要让用户看见降级
+            if not any(w.startswith("场景母帧") for w in warnings):   # 去重(per-shot 每段各调一次)
+                warnings.append(
+                    "场景母帧生成失败,已退回原始平铺商品图作首帧——成片的立体感/物理真实度会明显变差"
+                    "(衣物可能像砖块般僵硬)。常见原因:作图 AI 网关繁忙(中转站 503 无可用账号)/ 超时 / 未配 key / 余额不足。"
+                    f"详情:{str(exc)[:160]}")
+            return None
 
     if use_scene:                           # 进入母帧阶段:我的空间显示"母帧合成中…"(长任务不像卡死)
         _set_stage(db, job, _STAGE_MUFRA)
@@ -559,8 +586,9 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             # 多分镜 15s:单段模型最多 10s,故拆 N 段(当前 3×5s)【并行】生成,再首尾拼接=15s。
             from .services.video_concat import concat_videos
             prov = get_video_provider()
-            if per_shot_frames:              # 每镜独立母帧:N 次 gpt-image【串行】逐张调(每张独占网关→降失败率,可慢);失败的那镜降级回共享 imgs
-                frames = [_scene_frame(s) for s in scenes[:n_shots]]
+            if per_shot_frames:              # 每镜独立母帧:N 次 gpt-image【并行】调(中转站实测能并发,_API_GATE=2 自限并发;每镜内部退避重试熬拥塞);失败的那镜降级回共享 imgs
+                with ThreadPoolExecutor(max_workers=n_shots) as ex:
+                    frames = list(ex.map(_scene_frame, scenes[:n_shots]))
                 seg_imgs = [[f] if f is not None else imgs for f in frames]
             else:
                 seg_imgs = [imgs for _ in range(n_shots)]
@@ -696,23 +724,16 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
         if max(src.size) > 1024:
             src = src.copy(); src.thumbnail((1024, 1024), Image.LANCZOS)
         from .ai.openai_image import OpenAIImageClient
-        # 母帧用更长的单次超时(image-edits 经慢中转很慢);【应用层重试 video_mufra_attempts 次】覆盖
-        # SDK 不会重试的"网关未返回图像数据"等快错,仅最后一次失败才降级原图(对齐 CogVideoX 母帧策略)。
-        attempts = max(1, int(settings.video_mufra_attempts))
-        last_exc: Exception | None = None
-        for _attempt in range(attempts):
-            try:
-                framed = OpenAIImageClient().edit(src, scene_frame_prompt(lang, scene=p.get("scene", "")),
-                                                  size=gptimage_size(aspect),
-                                                  timeout=settings.video_mufra_timeout, max_retries=0)
-                first = fit_to_aspect(framed, tw, th)
-                last_exc = None
-                break
-            except Exception as exc:  # noqa: BLE001 — 捕获所有(快错/超时),重试到 attempts 用尽
-                last_exc = exc
-        if last_exc is not None:
+        # 走 _mufra_with_backoff:中转站偶发 503「无可用账号」/超时是瞬时拥塞,指数退避重试熬过它
+        # (受 video_mufra_budget 约束);永久错立即放弃。对齐 CogVideoX 母帧策略。
+        try:
+            framed = _mufra_with_backoff(lambda: OpenAIImageClient().edit(
+                src, scene_frame_prompt(lang, scene=p.get("scene", "")),
+                size=gptimage_size(aspect), timeout=settings.video_mufra_timeout, max_retries=0))
+            first = fit_to_aspect(framed, tw, th)
+        except Exception as exc:  # noqa: BLE001 — 母帧失败不阻断,降级回原图首帧 + 告知
             warnings.append("场景母帧生成失败,已退回原始商品图作首帧——成片少了真人使用场景。"
-                            f"常见:作图 AI 网关超时/未配 key/余额不足。详情:{str(last_exc)[:160]}")
+                            f"常见:作图 AI 网关繁忙(中转站 503 无可用账号)/超时/未配 key/余额不足。详情:{str(exc)[:160]}")
     prompt = compose_vidu_prompt(p.get("prompt", ""), language=lang, seconds=seconds, sound_mode=sound_mode)
     _set_stage(db, job, _STAGE_VIDEO)   # 母帧(若有)完 → 进视频生成
 

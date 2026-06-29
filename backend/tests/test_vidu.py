@@ -102,6 +102,7 @@ def test_vidu_scene_frame_retries_then_succeeds(client, auth_headers, monkeypatc
         if calls["n"] == 1:
             raise RuntimeError("图片网关未返回图像数据")
         return _Img.new("RGB", (64, 96), (10, 20, 30))
+    monkeypatch.setattr("time.sleep", lambda *a, **k: None)   # 退避不真等,测试快
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
     monkeypatch.setattr(settings, "video_mufra_attempts", 2)
     monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _flaky)

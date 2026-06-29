@@ -107,16 +107,15 @@ class Settings(BaseSettings):
     video_size: str = ""                   # 留空=按画幅取高分辨率(ASPECT_SIZE);填则强制(如 3840x2160 上 4K)
     video_timeout: float = 1500.0          # 轮询总超时(秒);视频远比图片慢,给 25min(4K/排队时真要这么久)
     video_poll_interval: float = 5.0
-    # 视频「场景母帧」(gpt-image edit)专用单次超时(秒)。母帧走作图网关/中转,慢中转上 edit 很慢;
-    # 给一次【更长的连续出图窗口】(比通用 openai_timeout 的 250s 更长)。SDK 层 max_retries=0(不在 SDK 翻倍超时);
-    # 重试改由【应用层】可控掌握(见 video_mufra_attempts),覆盖 SDK 不会重试的"网关未返回图像数据"等快错。
-    # 网关很慢时可在 .env 调大(如 POD_VIDEO_MUFRA_TIMEOUT=600);但越大,母帧卡住时整单越久(注意 40min 回收阈值)。
+    # 视频「场景母帧」(gpt-image edit)单次调用超时(秒)。母帧走作图网关/中转,实测同一调用 40s~7min 抖动;
+    # 给一次较长窗口覆盖慢尾(>通用 250s)。SDK 层 max_retries=0(不在 SDK 翻倍);重试由【应用层退避】掌握(见下)。
     video_mufra_timeout: float = 360.0
-    # 母帧应用层尝试次数(总尝试数,非额外重试数):2 = 首次失败后再试 1 次。母帧逐张【串行】生成,
-    # 每张失败(含 5xx/连接重置/"网关未返回图像数据"/超时)就重试,仅最后一次失败才降级原图 + 记 warning。
-    # ⚠ 串行 worst-case ≈ shots × attempts × mufra_timeout,需 < reap 阈值(40min):默认 3×2×360≈36min 封顶
-    # (真实多为快错、远小于此)。网关不稳可调大、要更短整单可调小(POD_VIDEO_MUFRA_ATTEMPTS)。
-    video_mufra_attempts: int = 2
+    # 母帧【退避重试】总预算(秒)+ 最多尝试次数。实证根因:作图中转站偶发 503「无可用账号」/请求超时,是【瞬时拥塞】
+    # (多任务/多客户挤爆中转站账号池)——立即重试只会再撞,故按指数退避(8→16→32→60s)熬过它,受 budget 约束。
+    # 永久错(401/403/余额不足/400)立即放弃不空等。母帧【并行】生成(中转站能并发,_API_GATE 自限),
+    # worst-case 母帧阶段 ≈ budget;叠加视频生成仍 < reaper(50min,见 services/jobs.STUCK_MINUTES)。
+    video_mufra_budget: float = 600.0
+    video_mufra_attempts: int = 5
     # 后期「节奏快切」(services/video_edit.punch_up):按 beat(~2s)切段、每段换景别/机位(多景别循环),
     # 把连续单镜在后期切出【多镜头密度感】——治"信息频率太低=呆板"(GPT 判定的真瓶颈)。
     # 不改时长/音轨/商品像素(一致性零风险);离线已验证(抽帧确认多景别)→ 默认开。

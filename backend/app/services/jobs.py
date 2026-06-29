@@ -23,8 +23,9 @@ def _now() -> datetime:
 
 
 # 作业卡死阈值:超过这么久还 pending/running 视为僵尸(worker 崩了/进程被打断)。
-# 必须 >> 最慢的 AI 作业。图生视频轮询上限 25min(POD_VIDEO_TIMEOUT),叠加排队 → 阈值给 40min,免得误杀在跑的视频。
-STUCK_MINUTES = 40
+# 必须 >> 最慢的 AI 作业。图生视频:母帧退避重试(≤video_mufra_budget,熬中转站拥塞)+ 3 段并行轮询(≤25min)
+# → 阈值给 50min(留足余量),免得误杀正在耐心重试母帧的慢视频(否则整单被回收=更糟)。
+STUCK_MINUTES = 50
 
 # kind → 退点 op(与各 router 的 charge_for/扣点 op 对齐)。未列出的默认 "edit"。
 # 注意:按张多扣的 kind(variants/mockup-replace)退点笔数 = params["n"](见 reap)。

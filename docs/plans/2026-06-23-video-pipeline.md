@@ -60,7 +60,9 @@
 ## 6. 一致性 & 可靠性(已攻克)
 
 - **场景首帧优化**(默认开):gpt-image 把商品合成进场景做视频第一帧,**印花像素级保留** → 开场即场景(治"开场平铺产品图")+ 跨镜头一致。
-- **母帧可靠性(2026-06-29 重构,治"三分镜母帧永远失败")**:per-shot 母帧从**并行**改为**串行逐张**(每张独占作图网关,不再 2 张挤 `_API_GATE`)+ **应用层重试** `video_mufra_attempts`(默认 2 次,覆盖 SDK 不会重试的"网关未返回图像数据"等快错),仅最后一次失败才降级原图。worst-case ≈ shots×attempts×`video_mufra_timeout`,需 < reap 阈值 40min。
+- **母帧可靠性(2026-06-29,治"三分镜母帧总失败")—— 实证根因 = 作图中转站拥塞**:线上抓取失败任务 + 直连探测中转站确认:① 中转站偶发 `503 No available compatible accounts`(全局账号池被多任务/多客户挤爆);② 同一 edit 调用延迟 **40s~7min 剧烈抖动**,慢尾(~424s)超过母帧单次超时(360s)→ `Request timed out`。**两者都是瞬时拥塞,不是本地并发问题**(探测 N=4 并发全成功)——所以调高/调低本地并发都治不了。
+  - **修法 = 退避重试熬过拥塞**(`tasks.py:_mufra_with_backoff`):瞬时错(503/超时/5xx/连接/"网关未返回图像数据")按**指数退避**(8→16→32→60s)重试,受 `video_mufra_budget`(默认 600s)总预算约束;**永久错**(401/403/余额不足/400,`_mufra_permanent`)立即放弃不空等。母帧恢复**并行**(中转站能并发,`_API_GATE=2` 自限),worst-case 母帧阶段 ≈ budget;reaper 阈值 40→**50min** 留余量,免得误杀正在耐心重试的慢视频。
+  - **诚实天花板**:这治【瞬时】拥塞(绝大多数失败);若中转站【持续】高负载超预算,母帧仍会降级原图(不能无限等)。根治需中转站扩容/换更稳的作图通道。
 - **可见阶段**:worker 把"母帧合成中…/视频生成中…"写进 `job.result.stage`(running 态 jobs API 也下发)→ 我的空间卡片实时显示,长任务不像卡死(`tasks.py:_set_stage`,`_work_aivideo`/`_work_viduvideo` 共用)。
 - **provider 三层健壮性**(`ai/video.py` `ZhipuCogVideoProvider`):
   1. **网络层重试**:建任务/轮询/下载各自对 `httpx.TransportError`(WriteTimeout/ConnectTimeout/…)+ 5xx 重试;发图改 **JPEG**(体积小 5~10×,降发图写超时)。
@@ -169,7 +171,8 @@ TikTok 的"活跃感"主要来自 **人物行为(Human Behavior),不是运镜**:
 | `POD_VIDEO_API_KEY` | 空 | cogvideox 必填 |
 | `POD_VIDEO_*`(model/quality/fps/seconds/with_audio/size/timeout/poll_interval) | 见 `.env.example` | 不暴露前端 |
 | `voiceover_enabled` | true | 旁白总开关(运维兜底) |
-| `POD_VIDEO_MUFRA_ATTEMPTS` | `2` | 母帧应用层尝试次数(总数,非额外重试):2=失败再试 1 次。母帧串行逐张,每张失败就重试,仅最后一次失败才降级原图(§6)。worst-case shots×attempts×mufra_timeout 须 < 40min 回收阈值 |
+| `POD_VIDEO_MUFRA_BUDGET` | `600` | 母帧【退避重试】总预算(秒):瞬时拥塞(503/超时)指数退避(8→16→32→60s)重试熬过它,预算内仍失败才降级(§6)。worst-case 母帧阶段≈budget,叠加视频生成须 < reaper(50min) |
+| `POD_VIDEO_MUFRA_ATTEMPTS` | `5` | 退避重试最多尝试次数(配合 budget 双重上限,防病态死循环) |
 | `POD_VIDEO_PUNCHUP` | **true** | 后期节奏快切:多景别循环切镜,加镜头密度(§7.3;离线已验证,默认开) |
 | `POD_VIDEO_MUSIC` | **false** | 背景音乐床(experimental,接线已注释) |
 

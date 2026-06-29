@@ -1019,8 +1019,7 @@ def test_ai_generate_records_warning_when_scene_frame_fails(client, auth_headers
 
 
 def test_scene_frame_retries_then_succeeds(client, auth_headers, monkeypatch, png):
-    # 母帧应用层重试:首次快错(SDK 不会自动重试的"网关未返回图像数据")→ 自动重试 → 第二次成功 →
-    # 不降级、不记 warning(治"三分镜母帧偶发快错就降级失败")。
+    # 母帧退避重试:首次瞬时错("网关未返回图像数据")→ 退避后重试 → 第二次成功 → 不降级、不记 warning。
     from PIL import Image as _Img
 
     from app.ai import openai_image
@@ -1030,8 +1029,9 @@ def test_scene_frame_retries_then_succeeds(client, auth_headers, monkeypatch, pn
     def _flaky_edit(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            raise RuntimeError("图片网关未返回图像数据")   # 首次快错
+            raise RuntimeError("图片网关未返回图像数据")   # 首次瞬时错
         return _Img.new("RGB", (64, 96), (10, 20, 30))
+    monkeypatch.setattr("time.sleep", lambda *a, **k: None)   # 退避不真等,测试快
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
     monkeypatch.setattr(settings, "video_mufra_attempts", 2)
     monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _flaky_edit)
@@ -1041,12 +1041,63 @@ def test_scene_frame_retries_then_succeeds(client, auth_headers, monkeypatch, pn
     assert r.status_code == 200, r.text
     job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
     assert job["status"] == "done", job
-    assert calls["n"] == 2                               # 重试了一次(共 2 次尝试)
+    assert calls["n"] == 2                               # 退避后重试了一次(共 2 次尝试)
     assert not any("场景母帧" in w for w in (job["result"].get("warnings") or []))  # 重试成功 → 不降级
 
 
+def test_scene_frame_503_no_accounts_retries_then_succeeds(client, auth_headers, monkeypatch, png):
+    # 中转站 503「无可用账号」是瞬时拥塞(实证根因)→ 退避后重试 → 成功(治"一撞 503 就降级")。
+    from PIL import Image as _Img
+
+    from app.ai import openai_image
+    from app.config import settings
+    calls = {"n": 0}
+
+    def _flaky_edit(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("Error code: 503 - {'error': {'message': 'No available compatible accounts'}}")
+        return _Img.new("RGB", (64, 96), (10, 20, 30))
+    monkeypatch.setattr("time.sleep", lambda *a, **k: None)
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "video_mufra_attempts", 3)
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _flaky_edit)
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "单镜脚本", "seconds": "10", "scene_frame": "true", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert calls["n"] == 2                               # 503 退避重试后成功
+    assert not any("场景母帧" in w for w in (job["result"].get("warnings") or []))
+
+
+def test_scene_frame_permanent_error_fails_fast_no_retry(client, auth_headers, monkeypatch, png):
+    # 永久错(鉴权/余额)→ 立即放弃、【不空等退避重试】(只调 1 次)→ 降级 + 记 warning。
+    from app.ai import openai_image
+    from app.config import settings
+    calls = {"n": 0}
+    slept = {"n": 0}
+
+    def _boom(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
+        calls["n"] += 1
+        raise RuntimeError("Error code: 401 - invalid_api_key")
+    monkeypatch.setattr("time.sleep", lambda *a, **k: slept.__setitem__("n", slept["n"] + 1))
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(settings, "video_mufra_attempts", 5)
+    monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _boom)
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "单镜脚本", "seconds": "10", "scene_frame": "true", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job
+    assert calls["n"] == 1 and slept["n"] == 0          # 永久错:不重试、不退避空等
+    assert any("场景母帧" in w for w in (job["result"].get("warnings") or []))
+
+
 def test_scene_frame_exhausts_attempts_then_degrades(client, auth_headers, monkeypatch, png):
-    # 重试用尽仍失败 → 降级原图 + 记 warning;尝试次数 = video_mufra_attempts(应用层可控重试,非 SDK)。
+    # 瞬时错重试用尽仍失败 → 降级原图 + 记 warning;尝试次数 = video_mufra_attempts。
     from app.ai import openai_image
     from app.config import settings
     calls = {"n": 0}
@@ -1054,6 +1105,7 @@ def test_scene_frame_exhausts_attempts_then_degrades(client, auth_headers, monke
     def _boom(self, image, prompt, mask=None, size="auto", background="auto", **kwargs):
         calls["n"] += 1
         raise RuntimeError("Error code: 502 bad gateway")
+    monkeypatch.setattr("time.sleep", lambda *a, **k: None)
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
     monkeypatch.setattr(settings, "video_mufra_attempts", 2)
     monkeypatch.setattr(openai_image.OpenAIImageClient, "edit", _boom)
