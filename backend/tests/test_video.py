@@ -315,7 +315,7 @@ def test_wizard_proposals_two_shot_returns_shots(monkeypatch):
     fake = ('[{"title":"出门赴约","angle":"a","model":"无模特","environment":"居家",'
             '"shot1":"【0-5秒】看手机收到消息","shot2":"【0-5秒】拿钥匙推门",'
             '"shot3":"【0-5秒】走在街头","storyboard":"合并脚本"}]')
-    monkeypatch.setattr(video_wizard, "_chat", lambda msgs: fake)
+    monkeypatch.setattr(video_wizard, "_chat", lambda msgs, **kw: fake)
     out = video_wizard.generate_proposals("杯子", "家居", "保温", seconds=15, n=1)
     assert out[0]["shot1"] == "【0-5秒】看手机收到消息"
     assert out[0]["shot2"] == "【0-5秒】拿钥匙推门"
@@ -326,7 +326,7 @@ def test_wizard_proposals_two_shot_returns_shots(monkeypatch):
     assert "合并脚本" not in sb                        # 模型自由发挥的 storyboard 被丢弃,用合成的
     # 单段(10s)不产 shot1/shot2/shot3
     monkeypatch.setattr(video_wizard, "_chat",
-                        lambda msgs: '[{"title":"t","storyboard":"【0-10秒】展示"}]')
+                        lambda msgs, **kw: '[{"title":"t","storyboard":"【0-10秒】展示"}]')
     out10 = video_wizard.generate_proposals("杯子", "家居", "保温", seconds=10, n=1)
     assert "shot1" not in out10[0]
 
@@ -1023,7 +1023,7 @@ def test_wizard_proposals_two_shot_adds_scenes(monkeypatch):
             '"scene1":"卧室镜子前","shot1":"【0-5秒】看手机",'
             '"scene2":"玄关门口","shot2":"【0-5秒】拿钥匙推门",'
             '"scene3":"城市街头","shot3":"【0-5秒】走在街上","storyboard":"合并"}]')
-    monkeypatch.setattr(video_wizard, "_chat", lambda msgs: fake)
+    monkeypatch.setattr(video_wizard, "_chat", lambda msgs, **kw: fake)
     out = video_wizard.generate_proposals("T恤", "年轻人", "潮", seconds=15, n=1, category="T恤")
     assert out[0]["scene1"] == "卧室镜子前" and out[0]["scene2"] == "玄关门口" and out[0]["scene3"] == "城市街头"
     assert out[0]["story"] == "出门赴约"
@@ -1034,8 +1034,44 @@ def test_wizard_proposals_two_shot_scene_fallback(monkeypatch):
     from app.services import video_wizard
     from app.services.video_templates import default_scenes
     monkeypatch.setattr(video_wizard, "_chat",
-                        lambda msgs: '[{"title":"t","shot1":"a","shot2":"b","storyboard":"s"}]')
+                        lambda msgs, **kw: '[{"title":"t","shot1":"a","shot2":"b","storyboard":"s"}]')
     out = video_wizard.generate_proposals("T恤", "", "", seconds=15, n=1, category="T恤")
     d = default_scenes("T恤", 3)
     assert out[0]["scene1"] == d[0] and out[0]["scene2"] == d[1] and out[0]["scene3"] == d[2]
     assert len({d[0], d[1], d[2]}) == 3                   # 三拍场景各不相同(递进)
+
+
+def test_wizard_proposals_prompt_pushes_diversity_and_temperature(monkeypatch):
+    # 治同质化:方案 prompt 显式要求"跨不同生活情境 + 创意",且方案生成用更高 temperature(增多样性、降同质)
+    from app.services import video_wizard
+    seen = {}
+
+    def _cap(msgs, **kw):
+        seen["prompt"] = msgs[0]["content"]
+        seen["temperature"] = kw.get("temperature")
+        return '[{"title":"t","shot1":"a","shot2":"b","shot3":"c"}]'
+    monkeypatch.setattr(video_wizard, "_chat", _cap)
+    video_wizard.generate_proposals("杯子", "家居", "保温", seconds=15, n=3)
+    assert "生活情境" in seen["prompt"]                   # 跨情境多样化指令
+    assert "出门" in seen["prompt"]                        # 明确"别都是出门类"
+    assert "关联性" in seen["prompt"]                      # 差异是【方案之间】,15s 内部三拍连续性不能断
+    assert seen["temperature"] and seen["temperature"] >= 0.8   # 方案用更高温度增多样性
+
+
+def test_wizard_proposals_5s10s_creative_storyboard(monkeypatch):
+    # 5s/10s 也要给【有创意但合理的真实生活小片段】脚本(非单纯产品展示),且享受更高 temperature
+    from app.services import video_wizard
+    seen = {}
+
+    def _cap(msgs, **kw):
+        seen["prompt"] = msgs[0]["content"]
+        seen["temperature"] = kw.get("temperature")
+        return '[{"title":"t","storyboard":"【0-5秒】真人生活片段"}]'
+    monkeypatch.setattr(video_wizard, "_chat", _cap)
+    for secs in (5, 10):
+        seen.clear()
+        out = video_wizard.generate_proposals("杯子", "家居", "保温", seconds=secs, n=3)
+        assert "生活小片段" in seen["prompt"]              # 5/10s 也走创意生活片段(非产品展示页)
+        assert "生活情境" in seen["prompt"]                # 跨方案多样化对 5/10s 同样生效
+        assert seen["temperature"] and seen["temperature"] >= 0.8
+        assert "shot1" not in out[0]                       # 5/10s 仍是单镜,不产三拍

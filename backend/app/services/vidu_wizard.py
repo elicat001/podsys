@@ -44,7 +44,8 @@ def _loads_json(content: str, *, expect_list: bool = False):
         raise
 
 
-def _chat(messages: list) -> str:
+def _chat(messages: list, temperature: float | None = None) -> str:
+    """temperature 留空=网关默认;方案生成传较高值(更发散、增创意/降同质化),简报识别用默认(求准)。"""
     if not settings.openai_api_key:
         raise RuntimeError("未配置 AI key(智能向导需要作图的网关 key)")
     from openai import OpenAI  # 惰性
@@ -52,8 +53,11 @@ def _chat(messages: list) -> str:
     from ..ai.openai_image import _API_GATE
     client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url or None,
                     timeout=settings.openai_timeout)
+    kwargs: dict = {"model": settings.openai_text_model, "messages": messages}
+    if temperature is not None:
+        kwargs["temperature"] = temperature   # 网关不支持时会被忽略,无副作用
     with _API_GATE:
-        resp = client.chat.completions.create(model=settings.openai_text_model, messages=messages)
+        resp = client.chat.completions.create(**kwargs)
     return (resp.choices[0].message.content or "").strip()
 
 
@@ -103,13 +107,17 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
         "硬性要求:\n"
         "① 【看图自适应,绝不套模板】动作必须贴合这件具体商品最自然的真实玩法/用法(解压玩具→按压旋转把玩、捏压回弹;"
         "杯子→端起喝;服饰→穿在身上自然动);不同方案动作/角度要拉开差距;\n"
-        "② 【任务驱动 + 去僵硬】把它当【记录真实生活片段】,人物专注做手上的事、神态鲜活有情绪流动和细微表情变化,"
+        f"② 【创意与差异化 · 治同质化】{n} 个方案要落在【明显不同的生活情境】,别都是同一个桌面/同一种把玩:"
+        "可覆盖 居家独处 / 和朋友家人分享炫耀 / 工作学习间隙 / 户外或旅途 / 睡前或清晨 / 被它治愈的一刻 等不同场景与情绪"
+        "(按商品真实用法挑、品类不限,别照搬词句);鼓励有想象力的小情节、小转折或反差,但别牺牲真实感与可实现性;\n"
+        "③ 【任务驱动 + 去僵硬】把它当【记录真实生活片段】,人物专注做手上的事、神态鲜活有情绪流动和细微表情变化,"
         "不是对镜头僵硬假笑/呆滞摆拍;\n"
-        "③ 动作贴合 AI 视频能力边界:优先简单稳妥、易连贯的动作,手与物体全程接触、符合重力,"
+        "④ 动作贴合 AI 视频能力边界:优先简单稳妥、易连贯的动作,手与物体全程接触、符合重力,"
         "弱化开盖/拆封/穿脱/倾倒等复杂物理变化,绝不出现部件自行开合或物体凭空出现/消失;\n"
-        "④ 商品图案/文字/颜色保持一致不被改样;全部字段用中文。"
+        "⑤ 商品图案/文字/颜色保持一致不被改样;全部字段用中文。"
     )
-    data = _loads_json(_chat([{"role": "user", "content": prompt}]), expect_list=True)
+    # temperature 调高 → 方案更发散、增创意、降同质化(简报识别仍用默认温度求准)
+    data = _loads_json(_chat([{"role": "user", "content": prompt}], temperature=0.9), expect_list=True)
     if isinstance(data, dict):
         data = data.get("proposals") or data.get("方案") or data.get("plans") or []
     if not isinstance(data, list):

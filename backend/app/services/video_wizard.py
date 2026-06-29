@@ -41,8 +41,9 @@ def _loads_json(content: str, *, expect_list: bool = False):
         raise
 
 
-def _chat(messages: list) -> str:
-    """调网关 chat.completions,返回 content 文本。无 key 抛错。"""
+def _chat(messages: list, temperature: float | None = None) -> str:
+    """调网关 chat.completions,返回 content 文本。无 key 抛错。
+    temperature:留空=网关默认;方案生成传较高值(更发散、增创意/降同质化),简报识别用默认(求准)。"""
     if not settings.openai_api_key:
         raise RuntimeError("未配置 AI key(智能向导需要作图的网关 key)")
     from openai import OpenAI  # 惰性
@@ -50,8 +51,11 @@ def _chat(messages: list) -> str:
     from ..ai.openai_image import _API_GATE  # 复用全局网关并发信号量限流
     client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url or None,
                     timeout=settings.openai_timeout)
+    kwargs: dict = {"model": settings.openai_text_model, "messages": messages}
+    if temperature is not None:
+        kwargs["temperature"] = temperature   # 网关不支持时会被忽略,无副作用
     with _API_GATE:
-        resp = client.chat.completions.create(model=settings.openai_text_model, messages=messages)
+        resp = client.chat.completions.create(**kwargs)
     return (resp.choices[0].message.content or "").strip()
 
 
@@ -94,7 +98,8 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
             "  · 因果:因为发生了某事(如 收到消息),人物产生一个目标(去见人),于是开始一连串动作。\n"
             "  · 切点在【动作中途】:把一个连续动作切成 3 段——后一拍从前一拍【未完成动作的延续点】接着演,而不是从一个静止 pose 重新开始。\n"
             "    例:① 看手机、笑了一下、起身伸手去拿钥匙(动作没做完就切)→ ② 钥匙已在手、正推开门往外走(承接①)→ ③ 已走在街上、边走边回头(承接②)。\n"
-            "商品是这条动作链里自然穿着/使用的道具;地点可递进(卧室→门口→街头),但【动作与情绪必须连贯不断】。\n"
+            "    ⚠ 此例【仅示意「连续动作如何中途切开、后拍承接前拍」】,不是要你把方案都写成「出门」——动作链可发生在任何生活情境里。\n"
+            "商品是这条动作链里自然穿着/使用的道具;地点可递进,但【动作与情绪必须连贯不断】。\n"
             "围绕上面这件具体商品及卖点/受众原创,不要套用固定模板。"
         )
         # ⚠ 不再向模型要 storyboard 字段(预览由后端按固定格式从三拍合成,杜绝"有时带 0-x秒、有时一段话"的格式漂移);
@@ -110,10 +115,11 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
             '"shot3":"分镜③脚本(约5s):承接②继续(已走在街上、边走边自然张望),一句连贯动作,把情绪/目标收住"'
         )
     else:
-        time_rule = f"视频时长 {seconds} 秒。"
+        time_rule = f"视频时长 {seconds} 秒(单镜头连续)。"
         shot_fields = (
-            f'"storyboard":"完整分镜脚本,严格按 {seconds} 秒分时间轴(如【0-3秒】【3-7秒】…),自成一体地融入上面的模特与环境,'
-            "描述镜头语言(推拉摇移/特写)+人物动作+产品展示,紧扣核心卖点)\""
+            f'"storyboard":"完整分镜脚本,严格按 {seconds} 秒分时间轴(如【0-3秒】【3-7秒】…):写成【一个有创意但合理的真实生活小片段】'
+            "——人物为一个小目标/小情绪做一连串连贯动作,商品作为这件事里自然用到的道具被带出(不是平铺展示产品);"
+            "可有小转折/小惊喜,手持随手拍质感,紧扣核心卖点但别像硬广)\""
         )
     prompt = (
         f"你是 TikTok 跨境电商短视频【内容导演】。根据下面的商品简报,设计 {n} 个【故事方向彼此明显不同】的带货短视频方案。\n"
@@ -133,13 +139,22 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
         "像活人不是定格照片;不是不能笑,要避免的是僵硬不变的假笑、呆滞死眼神、面瘫、对镜头从头营业到尾;"
         "弱化开盖/拆封/穿脱/倾倒等复杂物理变化,手与物体全程接触、符合重力。\n"
         "【任务驱动的人物行为(最重要)】:每个分镜是【记录一个真实生活片段】,不是「生成一个镜头展示商品」。"
-        "先想清楚:人物此刻为什么在这里、正在做什么任务(收到消息后出门赴约 / 下班回家 / 周末逛街 / 早晨出门前 / 咖啡店歇脚…),"
-        "再用具体的【任务动作】把它演出来(找钥匙、拿起包、推门、走向某处、端起杯子、看手机、整理一下就出门"
-        "——任务动作比「拉衣角/摆 pose/甩头发」这类模特动作更真实)。商品是这件事里自然穿用的道具。"
+        "先想清楚:人物此刻为什么在这里、正在做什么任务,再用具体的【任务动作】把它演出来"
+        "(任务动作比「拉衣角/摆 pose/甩头发」这类模特动作更真实)。商品是这件事里自然穿用的道具。"
         "别为展示商品而僵硬摆拍;口播/种草类可自然对镜头说话。镜头次之:手持随手拍即可,不堆运镜。\n"
-        f"硬性:{n} 个方案的【故事与场景】要拉开差距;三分镜三拍是连续因果的动作链、且为递进的不同场景;全部字段用中文。"
+        f"【创意与差异化(关键 · 治同质化)】这里的「不同」指【{n} 个方案彼此之间】要不同,【不是】把一条视频内部拆开——"
+        "同一个方案(尤其 15s 三分镜)内部仍是【同一件事的连续动作链、关联性绝不能断】(三拍承接同一目标与情绪)。"
+        f"在此前提下,{n} 个方案各自落在【明显不同的生活情境】,绝不能都是「出门/通勤带着商品」这一种。"
+        "按这件商品的真实用法,从下面不同方向各挑一个(或自行想到更贴切的),让每个方案的【时间 + 地点 + 情绪 + 在做的事】都不一样:"
+        "居家独处放松 / 和朋友或家人分享炫耀 / 工作或学习间隙 / 运动健身前后 / 下厨或吃东西 / 睡前或清晨的小仪式 / "
+        "出门通勤或赴约 / 户外旅途野餐 / 收到礼物的惊喜 / 忙碌中被它治愈的一刻……(以上仅为方向、品类不限,别照搬词句)。"
+        "在【贴合商品真实用法】的前提下,鼓励有想象力的小情节、小转折或反差(意外、对比、前后变化、与人互动、情绪起伏),"
+        "别只是「平淡地用一下商品」;但别为创意牺牲真实感与 AI 视频可实现性。\n"
+        f"硬性:{n} 个方案的【生活情境、地点、情绪、主要动作】都要明显不同(不要三个都是出门类);"
+        "三分镜三拍是连续因果的动作链、且为递进的不同场景;全部字段用中文。"
     )
-    data = _loads_json(_chat([{"role": "user", "content": prompt}]), expect_list=True)
+    # temperature 调高 → 方案更发散、增创意、降同质化(简报识别仍用默认温度求准)
+    data = _loads_json(_chat([{"role": "user", "content": prompt}], temperature=0.9), expect_list=True)
     if isinstance(data, dict):                       # 容错:模型把数组裹进 {"proposals":[…]} / {"方案":[…]}
         data = data.get("proposals") or data.get("方案") or data.get("plans") or []
     if not isinstance(data, list):

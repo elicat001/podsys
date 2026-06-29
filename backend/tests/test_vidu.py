@@ -230,7 +230,7 @@ def test_vidu_wizard_proposals_have_scene_and_storyboard(client, auth_headers, m
     from app.services import vidu_wizard
     fake = ('[{"title":"桌面解压","angle":"真人把玩","model":"年轻人","environment":"居家桌前",'
             '"scene":"年轻人坐在桌前正要拨动旋转球","storyboard":"拿起球→按住顶部→拨动→高速旋转→看着笑"}]')
-    monkeypatch.setattr(vidu_wizard, "_chat", lambda msgs: fake)
+    monkeypatch.setattr(vidu_wizard, "_chat", lambda msgs, **kw: fake)
     r = client.post("/api/vidu/wizard/proposals", headers=auth_headers,
                     data={"name": "减压旋转球", "seconds": 10})
     assert r.status_code == 200, r.text
