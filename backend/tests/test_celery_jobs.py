@@ -186,6 +186,27 @@ def test_reaper_marks_stale_running_error_and_refunds(client, auth_headers):
     assert after == before + 2, f"vectorize(process=2)应退回:before={before} after={after}"
 
 
+def test_reaper_running_measures_from_started_at_not_created(client, auth_headers):
+    """running 作业按 started_at 算龄:broker 排队久(created_at 老)但刚开跑(started_at 新)→ 不误杀。
+    治高峰排队时把"刚开跑"的长视频误判卡死(母帧退避重试 + 视频生成本就接近阈值,排队时间不该再算进来)。"""
+    from datetime import datetime, timezone, timedelta
+    from app.db import SessionLocal
+    from app.models_db import Job
+    uid = client.get("/api/auth/me", headers=auth_headers).json()["user_id"]
+    s = SessionLocal()
+    try:
+        s.add(Job(id="queuedjob0001", kind="aivideo", tool_id="videogen", status="running",
+                  params={"n": 3}, result={}, error="", owner_id=uid,
+                  created_at=datetime.now(timezone.utc) - timedelta(hours=2),    # 2h 前入队(broker 排队久)
+                  started_at=datetime.now(timezone.utc)))                         # 刚开跑
+        s.commit()
+    finally:
+        s.close()
+    jobs = client.get("/api/jobs", headers=auth_headers).json()
+    j = next(x for x in jobs if x["id"] == "queuedjob0001")
+    assert j["status"] == "running"   # 按 started_at(刚开跑)→ 不被误判卡死,尽管 created_at 已 2h
+
+
 def test_worker_skips_terminal_job_idempotent(client, auth_headers):
     """幂等护栏:已 error(如被回收器判失败+退点)的作业被 broker 重投时,worker 跳过——
     不重复执行 work、不把 error 覆盖成 done、不二次退点。"""

@@ -45,7 +45,10 @@ def reap_stuck_jobs(db: Session, minutes: int = STUCK_MINUTES) -> int:
     """把超时还 pending/running 的僵尸作业标 error + 退点(从未交付结果=应退)。返回清理条数。
 
     在 `/api/jobs` 列表端点惰性调用——列表自愈,不依赖重启。pending/running 行很少,全量取回
-    Python 侧按 created_at 算龄(避开 DB naive datetime 与 aware 比较的坑)。
+    Python 侧算龄(避开 DB naive datetime 与 aware 比较的坑)。
+    ⚠ running 的从 started_at 算【实际执行时长】——否则 broker 排队久(多用户高峰)会让"刚开跑"的作业
+    被按 created_at 误判卡死(母帧退避重试 + 视频生成本就接近阈值,排队时间不该再算进来)。
+    pending 的(还没开跑)从 created_at 算:久未启动 = broker/worker 真出问题,该判卡死。
     """
     rows = db.execute(
         select(Job).where(Job.status.in_(("pending", "running")))
@@ -53,12 +56,12 @@ def reap_stuck_jobs(db: Session, minutes: int = STUCK_MINUTES) -> int:
     now = _now()
     reaped = 0
     for job in rows:
-        ca = job.created_at
-        if ca is None:
+        ref = job.started_at if (job.status == "running" and job.started_at is not None) else job.created_at
+        if ref is None:
             continue
-        if ca.tzinfo is None:
-            ca = ca.replace(tzinfo=UTC)
-        if (now - ca).total_seconds() < minutes * 60:
+        if ref.tzinfo is None:
+            ref = ref.replace(tzinfo=UTC)
+        if (now - ref).total_seconds() < minutes * 60:
             continue
         job.status = "error"
         job.error = "作业超时或中断,已自动结束(可重试)"

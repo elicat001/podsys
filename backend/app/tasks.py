@@ -586,8 +586,11 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             # 多分镜 15s:单段模型最多 10s,故拆 N 段(当前 3×5s)【并行】生成,再首尾拼接=15s。
             from .services.video_concat import concat_videos
             prov = get_video_provider()
-            if per_shot_frames:              # 每镜独立母帧:N 次 gpt-image【并行】调(中转站实测能并发,_API_GATE=2 自限并发;每镜内部退避重试熬拥塞);失败的那镜降级回共享 imgs
-                with ThreadPoolExecutor(max_workers=n_shots) as ex:
+            if per_shot_frames:              # 每镜独立母帧:gpt-image【并行】调(中转站实测能并发);每镜内部退避重试熬拥塞;失败的那镜降级回共享 imgs
+                # 线程数 = min(镜数, _API_GATE 并发上限):线程不超过信号量槽位 → 第 3 镜不会"占着线程空等信号量、
+                # 同时退避预算却在流逝"(预算只在真正轮到它跑时才开始计)。
+                mufra_workers = max(1, min(n_shots, int(settings.openai_max_concurrency)))
+                with ThreadPoolExecutor(max_workers=mufra_workers) as ex:
                     frames = list(ex.map(_scene_frame, scenes[:n_shots]))
                 seg_imgs = [[f] if f is not None else imgs for f in frames]
             else:
@@ -623,11 +626,15 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             "AI 视频网关繁忙/超时,已用快速兜底版本(本地产品展示)交付,并已退回本次点数。"
             f"详情:{str(exc)[:160]}")
         degraded_fallback = True
-    # 后期节奏快切(opt-in,默认关):按 beat 切段、全景/推近交替,治"呆板"。在旁白/字幕【之前】做 → 不裁字幕。
-    # 不改时长/音轨/商品像素(一致性零风险);失败回退原片。
+    # 后期节奏快切(默认开):按 beat 切段、全景/推近交替,治"呆板"。在旁白/字幕【之前】做 → 不裁字幕。
+    # 不改时长/音轨/商品像素(一致性零风险)。【best-effort:失败必须回退原片,绝不阻断已生成好的视频】
+    # (否则一个后期特效的 bug 会让整单 error+退点、用户白丢已出好的成片)。
     if settings.video_punchup and out.get("ext") == "mp4":
-        from .services.video_edit import punch_up
-        out["bytes"] = punch_up(out["bytes"])
+        try:
+            from .services.video_edit import punch_up
+            out["bytes"] = punch_up(out["bytes"])
+        except Exception as exc:  # noqa: BLE001 — 后期特效失败 → 保留原片,不阻断交付
+            warnings.append(f"节奏快切(后期)失败,已输出未切镜的原片。详情:{str(exc)[:160]}")
     # 旁白配音(best-effort):仅「旁白设置」开 + 真 mp4(非本地兜底 GIF)才做。看图写目标语言口播稿 → edge-tts → 叠回。
     # 失败/无网/无 key 一律保留原视频,绝不阻断视频作业(CogVideoX 只产音效不产语音,语音靠这条补)。
     if p.get("voiceover") and out.get("ext") == "mp4":
@@ -683,7 +690,8 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
             "cover": cover, "engine": meta.get("engine", ""),
             "two_shot": bool(meta.get("two_shot")),
             "degraded": bool(meta.get("degraded")) or degraded_fallback,
-            "warnings": warnings}   # 显式暴露降级原因(母帧/配音失败/provider 兜底等),前端在成片卡片上提示
+            # 并行母帧多线程 append warnings 可能产生重复条目(良性竞态)→ 去重(保序),前端在成片卡片上提示
+            "warnings": list(dict.fromkeys(warnings))}   # 显式暴露降级原因(母帧/配音失败/provider 兜底等)
 
 
 def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:

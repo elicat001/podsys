@@ -1096,6 +1096,33 @@ def test_scene_frame_permanent_error_fails_fast_no_retry(client, auth_headers, m
     assert any("场景母帧" in w for w in (job["result"].get("warnings") or []))
 
 
+def test_punch_up_failure_is_best_effort(client, auth_headers, monkeypatch, png):
+    # 后期节奏快切(punch_up)失败 → 不阻断:仍交付原片(status done + video_url),只记 warning、不退点。
+    # 治"一个后期特效 bug 让整单 error+退点、用户白丢已出好的成片"。
+    from app.ai import video as video_mod
+    from app.config import settings
+    from app.services import video_edit
+
+    class _FakeMp4:
+        name = "cogvideox"
+
+        def image_to_video(self, images, prompt, *, size="1080x1920", seconds=None, with_audio=None):
+            return {"bytes": b"\x00\x00\x00\x18ftypmp42FAKEMP4", "ext": "mp4", "meta": {"engine": "cogvideox"}}
+    monkeypatch.setattr(settings, "video_punchup", True)
+    monkeypatch.setattr(video_mod, "get_video_provider", lambda: _FakeMp4())
+    monkeypatch.setattr(video_edit, "punch_up", lambda b: (_ for _ in ()).throw(RuntimeError("ffmpeg 崩了")))
+    bal0 = client.get("/api/billing/balance", headers=auth_headers).json()["credits"]
+    r = client.post("/api/video/ai-generate", headers=auth_headers,
+                    data={"prompt": "镜头", "seconds": "10", "scene_frame": "false", "aspect": "portrait"},
+                    files={"file": ("a.png", png(), "image/png")})
+    assert r.status_code == 200, r.text
+    job = client.get(f"/api/jobs/{r.json()['job_id']}", headers=auth_headers).json()
+    assert job["status"] == "done", job                       # 后期失败不阻断,仍出片
+    assert job["result"]["video_url"]                         # 原片照常交付
+    assert any("节奏快切" in w for w in (job["result"].get("warnings") or []))
+    assert client.get("/api/billing/balance", headers=auth_headers).json()["credits"] == bal0 - 3  # 不额外退点(正常扣 video=3)
+
+
 def test_scene_frame_exhausts_attempts_then_degrades(client, auth_headers, monkeypatch, png):
     # 瞬时错重试用尽仍失败 → 降级原图 + 记 warning;尝试次数 = video_mufra_attempts。
     from app.ai import openai_image

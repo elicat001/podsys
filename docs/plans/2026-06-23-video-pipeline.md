@@ -63,6 +63,8 @@
 - **母帧可靠性(2026-06-29,治"三分镜母帧总失败")—— 实证根因 = 作图中转站拥塞**:线上抓取失败任务 + 直连探测中转站确认:① 中转站偶发 `503 No available compatible accounts`(全局账号池被多任务/多客户挤爆);② 同一 edit 调用延迟 **40s~7min 剧烈抖动**,慢尾(~424s)超过母帧单次超时(360s)→ `Request timed out`。**两者都是瞬时拥塞,不是本地并发问题**(探测 N=4 并发全成功)——所以调高/调低本地并发都治不了。
   - **修法 = 退避重试熬过拥塞**(`tasks.py:_mufra_with_backoff`):瞬时错(503/超时/5xx/连接/"网关未返回图像数据")按**指数退避**(8→16→32→60s)重试,受 `video_mufra_budget`(默认 600s)总预算约束;**永久错**(401/403/余额不足/400,`_mufra_permanent`)立即放弃不空等。母帧恢复**并行**(中转站能并发,`_API_GATE=2` 自限),worst-case 母帧阶段 ≈ budget;reaper 阈值 40→**50min** 留余量,免得误杀正在耐心重试的慢视频。
   - **诚实天花板**:这治【瞬时】拥塞(绝大多数失败);若中转站【持续】高负载超预算,母帧仍会降级原图(不能无限等)。根治需中转站扩容/换更稳的作图通道。
+  - **预算与 reaper 的协调(2026-06-29 强化,经审计)**:① 母帧线程数 = `min(镜数, openai_max_concurrency)` → 第 3 镜不会"占线程空等信号量、预算却在流逝";② **reaper 改按 `started_at` 算 running 作业的龄**(原按 `created_at` → broker 排队时间被算进工作预算,高峰排队会误杀刚开跑的长视频);pending 仍按 `created_at`。worst-case 工作时长 ≈ 母帧(~10-16min)+ 视频(3 段并行,~25-28min;CogVideoX provider 超时是【视频开始时】才起算、与母帧耗时无关)≈ **38-44min < 50min** reaper。③ 视频 provider 的 `video_timeout` 是 fresh-per-task,母帧再久也不缩短视频自己的预算。
+- **后期特效 best-effort(经审计补强)**:`punch_up`(节奏快切)失败必须**回退原片**(try/except),绝不让一个后期特效 bug 把已生成好的整单判 error+退点。
 - **可见阶段**:worker 把"母帧合成中…/视频生成中…"写进 `job.result.stage`(running 态 jobs API 也下发)→ 我的空间卡片实时显示,长任务不像卡死(`tasks.py:_set_stage`,`_work_aivideo`/`_work_viduvideo` 共用)。
 - **provider 三层健壮性**(`ai/video.py` `ZhipuCogVideoProvider`):
   1. **网络层重试**:建任务/轮询/下载各自对 `httpx.TransportError`(WriteTimeout/ConnectTimeout/…)+ 5xx 重试;发图改 **JPEG**(体积小 5~10×,降发图写超时)。
