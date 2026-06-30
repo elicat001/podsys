@@ -85,6 +85,16 @@ class _AdaptiveLimiter:
         self.report(True)
         return out
 
+    # 上下文管理器协议:`with _API_GATE:` = acquire,块内无异常→report(成功)、有异常→report(失败,带 exc 供容量判定)。
+    # 与 run() 语义一致;chat/vision 等单次调用的 service 层用 with 形式更顺手(裂变/套图/向导/旁白/侵权…)。
+    def __enter__(self) -> _AdaptiveLimiter:
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self.report(exc is None, exc if isinstance(exc, Exception) else None)
+        return False  # 不吞异常
+
     def snapshot(self) -> tuple[int, int]:
         with self._cv:
             return self._limit, self._in_flight

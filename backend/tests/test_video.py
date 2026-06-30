@@ -1080,6 +1080,23 @@ def test_adaptive_limiter_blocks_when_full_then_releases():
     lim.report(True)
 
 
+def test_adaptive_limiter_context_manager_protocol():
+    # 回归:_API_GATE 由 Semaphore 改成 _AdaptiveLimiter 后,service 层(向导/简报/旁白/侵权/vidu)仍用 `with _API_GATE:`。
+    # 必须支持上下文管理器协议(否则 'object does not support the context manager protocol')。语义 == run()。
+    from app.ai.openai_image import _AdaptiveLimiter
+    lim = _AdaptiveLimiter(start=2, max_limit=4)
+    with lim:                                          # __enter__ = acquire(占位)
+        assert lim.snapshot()[1] == 1                 # 块内 in_flight=1
+    assert lim.snapshot() == (3, 0)                   # 正常退出 = report(成功) → limit 爬升、in_flight 归零
+    # 块内抛【容量错】→ report(失败, exc) → limit 回退,且异常照常上抛(不吞)
+    lim2 = _AdaptiveLimiter(start=3, max_limit=6)
+    import pytest as _pytest
+    with _pytest.raises(RuntimeError):
+        with lim2:
+            raise RuntimeError("Error code: 503 - No available compatible accounts")
+    assert lim2.snapshot() == (2, 0)                  # 容量错 → limit 由 3 回退到 2、in_flight 归零
+
+
 def test_scene_frame_retries_then_succeeds(client, auth_headers, monkeypatch, png):
     # 母帧退避重试:首次瞬时错("网关未返回图像数据")→ 退避后重试 → 第二次成功 → 不降级、不记 warning。
     from PIL import Image as _Img
