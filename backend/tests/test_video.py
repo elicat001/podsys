@@ -842,6 +842,25 @@ def test_scene_init_guide_layered_and_wired(monkeypatch):
     assert "第 0 帧" in seen["p"]                           # Scene Init 已接入向导
 
 
+def test_describe_product_grounds_in_observable_not_inference(monkeypatch):
+    # 识别逻辑【通用规则,非特判】:先分『直接可见』vs『经验推断』,推断属性不写成确定事实;POD 印花(可见)作首要卖点。
+    # 治"白底印花随行杯被识别成不锈钢"——靠通用框架,【不靠针对具体材质词的禁止规则堆叠】。
+    from PIL import Image
+
+    from app.services import video_wizard
+    seen = {}
+
+    def _cap(msgs, **kw):
+        seen["p"] = msgs[0]["content"][0]["text"]
+        return '{"name":"圣母印花随行杯","audience":"a","selling_points":"杯身印有圣母图案"}'
+    monkeypatch.setattr(video_wizard, "_chat", _cap)
+    video_wizard.describe_product(Image.new("RGB", (8, 8)))
+    assert "直接可见" in seen["p"] and "经验推断" in seen["p"]   # 通用框架:可见 vs 推断
+    assert "绝不写成确定事实" in seen["p"]                       # 推断属性别写成事实
+    assert "印花" in seen["p"] and "首要卖点" in seen["p"]       # POD 印花(可见)=首要卖点
+    assert "不锈钢" not in seen["p"]                            # 通用规则:不靠针对具体材质词的特判
+
+
 def test_continuity_guide_layered_dynamic_and_protects_motion():
     # 分层连续性策略(单一真相源):4 层都在 + 按风险动态(只对真实风险写)+ 显式保护普通动作自由(不规则堆叠)。
     from app.services.video_continuity import CONTINUITY_GUIDE, CONTINUITY_GUIDE_VIDU
