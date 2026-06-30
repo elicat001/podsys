@@ -109,13 +109,14 @@ class Settings(BaseSettings):
     video_timeout: float = 1500.0          # 轮询总超时(秒);视频远比图片慢,给 25min(4K/排队时真要这么久)
     video_poll_interval: float = 5.0
     # 视频「场景母帧」(gpt-image edit)单次调用超时(秒)。母帧走作图网关/中转,实测同一调用 40s~7min 抖动;
-    # 给一次较长窗口覆盖慢尾(>通用 250s)。SDK 层 max_retries=0(不在 SDK 翻倍);重试由【应用层退避】掌握(见下)。
-    video_mufra_timeout: float = 360.0
+    # ⚠ 必须盖住慢尾(~7min=420s):早期 360s 把"慢但其实会成功"的母帧调用提前掐死、误报 Request timed out → 调到 450s。
+    # SDK 层 max_retries=0(不在 SDK 翻倍);重试由【应用层退避】掌握(见下)。
+    video_mufra_timeout: float = 450.0
     # 母帧【退避重试】总预算(秒)+ 最多尝试次数。实证根因:作图中转站偶发 503「无可用账号」/请求超时,是【瞬时拥塞】
     # (多任务/多客户挤爆中转站账号池)——立即重试只会再撞,故按指数退避(8→16→32→60s)熬过它,受 budget 约束。
-    # 永久错(401/403/余额不足/400)立即放弃不空等。母帧【并行】生成(中转站能并发,_API_GATE 自限),
-    # worst-case 母帧阶段 ≈ budget;叠加视频生成仍 < reaper(50min,见 services/jobs.STUCK_MINUTES)。
-    video_mufra_budget: float = 600.0
+    # 永久错(401/403/余额不足/400)立即放弃不空等。母帧【并行】生成(中转站能并发,_API_GATE 自限)。
+    # 预算 800s:盖一次 450s 慢尾 + 留出一次快失败(503)后的重试空间。worst-case 母帧 ~13min + 视频 ~25min < reaper(50min)。
+    video_mufra_budget: float = 800.0
     video_mufra_attempts: int = 5
     # 注:母帧并发不再单独配置——已并入 gpt-image 全局自适应限流器(openai_max_concurrency/openai_adaptive_max),
     # 母帧与所有作图共用一个队列;_mufra_with_backoff 自己 acquire/report(预算"拿到队列位后"才起算)。
