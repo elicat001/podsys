@@ -99,25 +99,45 @@ def print_colorway_variants(img: Image.Image, n: int = 3) -> list[Image.Image]:
     return out
 
 
-# ---------- 风格转绘:真实滤镜风格化 ----------
-def stylize(img: Image.Image, style: str = "flat") -> Image.Image:
-    s = (style or "").lower()
-    rgb = img.convert("RGB")
-    if any(k in s for k in ("line", "edge", "矢量", "描边", "contour")):
-        g = rgb.convert("L").filter(ImageFilter.CONTOUR)
-        return ImageOps.invert(g).convert("RGB")
-    if any(k in s for k in ("sketch", "铅笔", "素描")):
-        g = rgb.convert("L")
-        edges = g.filter(ImageFilter.FIND_EDGES).filter(ImageFilter.MaxFilter(3))
-        # 白底深色线条的铅笔稿:255 - 边缘强度
-        sketch = ImageChops.subtract(Image.new("L", g.size, 255), edges)
-        return sketch.convert("RGB")
-    if any(k in s for k in ("oil", "油画", "watercolor", "水彩")):
-        return rgb.filter(ImageFilter.MedianFilter(5)).filter(ImageFilter.SMOOTH_MORE)
+# ---------- 风格转绘:真实滤镜风格化(关键词集 → 变换 的注册表,新增风格=加一条,不再 if/elif 堆分支)----------
+def _style_line(rgb: Image.Image) -> Image.Image:
+    g = rgb.convert("L").filter(ImageFilter.CONTOUR)
+    return ImageOps.invert(g).convert("RGB")
+
+
+def _style_sketch(rgb: Image.Image) -> Image.Image:
+    g = rgb.convert("L")
+    edges = g.filter(ImageFilter.FIND_EDGES).filter(ImageFilter.MaxFilter(3))
+    sketch = ImageChops.subtract(Image.new("L", g.size, 255), edges)  # 白底深色线条:255 - 边缘强度
+    return sketch.convert("RGB")
+
+
+def _style_paint(rgb: Image.Image) -> Image.Image:
+    return rgb.filter(ImageFilter.MedianFilter(5)).filter(ImageFilter.SMOOTH_MORE)
+
+
+def _style_flat(rgb: Image.Image) -> Image.Image:
     # 默认 flat / Temu 2D flat:降色阶 + 提饱和 + 边缘干净
     flat = ImageOps.posterize(rgb, 3)
     flat = ImageEnhance.Color(flat).enhance(1.35)
     return flat.filter(ImageFilter.SMOOTH)
+
+
+# 风格注册表:关键词集 → 变换函数。加新风格只在此加一行(数据驱动),不动 stylize 逻辑。
+STYLE_RECIPES: list[tuple[tuple[str, ...], object]] = [
+    (("line", "edge", "矢量", "描边", "contour"), _style_line),
+    (("sketch", "铅笔", "素描"), _style_sketch),
+    (("oil", "油画", "watercolor", "水彩"), _style_paint),
+]
+
+
+def stylize(img: Image.Image, style: str = "flat") -> Image.Image:
+    s = (style or "").lower()
+    rgb = img.convert("RGB")
+    for keys, fn in STYLE_RECIPES:
+        if any(k in s for k in keys):
+            return fn(rgb)
+    return _style_flat(rgb)   # 默认 flat(未命中任何风格关键词)
 
 
 # ---------- 梗图:真实文案叠加 ----------

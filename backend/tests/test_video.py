@@ -1047,22 +1047,16 @@ def test_video_native_sound_and_voiceover_gate(client, auth_headers, monkeypatch
     assert calls["with_audio"][-1] is False and calls["voiceover"] == 1
 
 
-# ---------- 内容策划层:故事模板库 + 每镜独立母帧 ----------
-def test_video_templates_library_structure():
-    from app.services.video_templates import STORY_TEMPLATES, default_scenes, templates_for
-    # 每个模板结构完整:id/name/story + ≥2 拍,每拍含 scene/action
-    for t in STORY_TEMPLATES:
-        assert t["id"] and t["name"] and t["story"]
-        assert len(t["beats"]) >= 2
-        for b in t["beats"][:2]:
-            assert b["scene"] and b["action"]
-    # 命中类目 → 含该类目模板;通用 → 给默认服装故事(ootd)
-    assert any(t["id"] == "ootd" for t in templates_for("T恤"))
-    assert any(t["id"] == "mug_morning" for t in templates_for("马克杯"))
-    assert any(t["id"] == "ootd" for t in templates_for("通用"))
-    # 后台默认中性场景(自动融合 / 向导兜底用):两拍非空且不同,适配任意品类
+# ---------- 内容策划层:中性动作链场景兜底(T3-8:写死故事库 STORY_TEMPLATES 已删,仅留中性兜底)----------
+def test_default_scenes_neutral_chain():
+    from app.services.video_templates import default_scenes
+    # 后台默认中性场景(自动融合 / 向导兜底用):两拍非空且不同,适配任意品类(不写死品类故事)
     s1, s2 = default_scenes("通用")
     assert s1 and s2 and s1 != s2
+    assert len(default_scenes("通用", 3)) == 3       # 可向 3 拍扩展(双分镜 5+5+5 用)
+    # 已删的写死故事库不应再存在(防有人复活「出门/咖啡店」单一文化)
+    import app.services.video_templates as vt
+    assert not hasattr(vt, "STORY_TEMPLATES") and not hasattr(vt, "templates_for")
 
 
 def test_ai_generate_two_shot_per_shot_mufra(client, auth_headers, monkeypatch, png):
