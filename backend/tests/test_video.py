@@ -876,6 +876,32 @@ def test_continuity_guide_layered_dynamic_and_protects_motion():
     assert "按压" in CONTINUITY_GUIDE_VIDU and "旋转" in CONTINUITY_GUIDE_VIDU and "不前移" in CONTINUITY_GUIDE_VIDU
 
 
+def test_capability_registry_and_builder():
+    # N1/N2:连续性【能力层】——注册表 + 组装器,能力可按模型渲染、按 enabled 选择性启用(N3 接口已就位)。
+    from app.services.video_continuity import (
+        CAPABILITIES, CONTINUITY_GUIDE, CONTINUITY_GUIDE_VIDU, build_continuity_guide,
+    )
+    # N1:六族能力齐全(scene_init / complex_state / object_identity / physical_contact / temporal / natural_motion)
+    for key in ("scene_initialization", "complex_state", "object_identity",
+                "physical_contact", "temporal_consistency", "natural_motion"):
+        assert key in CAPABILITIES
+    # N2:默认含全部风险门控能力 + 受保护的 natural_motion 底线
+    g = build_continuity_guide("cogvideox")
+    assert all(x in g for x in ("复杂状态变化", "对象身份", "物理接触", "时序一致"))
+    assert "保持自由" in g
+    # 模型变体:Vidu 渲染保留把玩强项、不前移
+    gv = build_continuity_guide("vidu")
+    assert "按压" in gv and "旋转" in gv and "不前移" in gv
+    # N3 接口:enabled 子集 → 只渲染该启用的能力;natural_motion 受保护、永远附上
+    only_identity = build_continuity_guide("cogvideox", enabled={"object_identity"})
+    assert "对象身份" in only_identity
+    assert "物理接触" not in only_identity and "时序一致" not in only_identity
+    assert "保持自由" in only_identity
+    # 派生常量 == builder 输出(各 builder import 的名字未变 → 行为保持)
+    assert CONTINUITY_GUIDE == build_continuity_guide("cogvideox")
+    assert CONTINUITY_GUIDE_VIDU == build_continuity_guide("vidu")
+
+
 def test_wizard_prompt_wires_continuity_guide(monkeypatch):
     # 接线验证:看图 LLM 生成器把统一的连续性指引接进了 prompt(不是各处散落 if)。
     from app.services import video_wizard
