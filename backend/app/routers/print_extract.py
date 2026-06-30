@@ -16,9 +16,8 @@ from ..config import settings
 from ..db import get_db
 from ..models_db import User
 from ..services.billing import charge_for, refund
-from ..services.jobs import create_job
-from ..tasks import run_print_extract
-from ..web_utils import enqueue_or_refund, read_image_or_refund
+from ..tasks import run_tool
+from ..web_utils import read_image_or_refund, submit_celery
 
 router = APIRouter(prefix="/api/print-extract", tags=["print-extract"])
 
@@ -30,8 +29,8 @@ def print_extract(
     user: User = Depends(charge_for("process")),
     db: Session = Depends(get_db),
 ):
-    """印花提取 → 一律 Celery 后台作业(前端提交即走、任务中心看结果)。engine 决定 worker 用哪个引擎。"""
-    from .. import storage
+    """印花提取 → 一律 Celery 后台作业(前端提交即走、任务中心看结果)。engine 决定 worker 用哪个引擎。
+    T3-13:统一走通用 run_tool / submit_celery(kind=print-extract),不再有独立 run_print_extract 任务。"""
     raw = file.file.read()
     read_image_or_refund(raw, db, user, "process")  # 读图失败 → 400 + 退点
 
@@ -40,8 +39,6 @@ def print_extract(
         raise HTTPException(status_code=502, detail="智能运行需配置 AI key;可改用「快速运行」(本地)")
     # 解析最终引擎:fast=本地;ai=AI;auto=有 key 走 AI 否则本地
     eng = "ai" if (engine == "ai" or (engine == "auto" and settings.print_extract_ai and settings.openai_api_key)) else "fast"
-
-    job = create_job(db, "print-extract", owner_id=user.id, tool_id="extract", params={"engine": eng})
-    storage.upload_path(job.id).write_bytes(raw)
-    enqueue_or_refund(run_print_extract, job, db, user, "process")  # broker 挂了→退点+502
-    return {"job_id": job.id, "status": "pending"}
+    # op 由 tool_specs 按 kind 推导(单一真相源);broker 挂/配额超 → 自动退点
+    return submit_celery(run_tool, db, user, kind="print-extract", tool_id="extract",
+                         raw=raw, params={"engine": eng})

@@ -107,9 +107,8 @@ def _print_extract_work(job_id: str, job: Job, db: Session) -> dict:
     return result
 
 
-@celery_app.task(name="podsys.print_extract")
-def run_print_extract(job_id: str) -> None:
-    run_job_in_worker(job_id, _print_extract_work, refund_op="process")
+# 注:印花提取 `_print_extract_work` 已并入通用注册表 TOOL_WORKS["print-extract"](T3-13),
+# 不再有独立的 run_print_extract 任务——统一走 run_tool 一条 dispatch 路径(reaper 也只需认一种)。
 
 
 # ── 通用工具作业(Phase B)──────────────────────────────────────────────────
@@ -779,6 +778,7 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
 # tasks(正常失败退点)与 jobs.reaper(僵尸回收退点)共读它,杜绝两处漂移(历史上 reaper 漏登记 viduvideo/matting 致静默退错点)。
 # 加新工具:这里注册 work + tool_specs.TOOL_BILLING 加一行(op/笔数只此一处)。
 TOOL_WORKS: dict[str, Work] = {
+    "print-extract": _print_extract_work,   # 印花提取(T3-13:并入注册表,删了独立 run_print_extract 任务)
     "generate": _work_generate,
     "edit": _work_edit,
     "variants": _work_variants,

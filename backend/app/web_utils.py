@@ -43,17 +43,22 @@ def enqueue_or_refund(task, job: Job, db: Session, user: User, op: str, n: int =
         raise HTTPException(status_code=502, detail="后台队列暂时不可用,请稍后重试(点数已退回)") from exc
 
 
-def submit_celery(task, db: Session, user: User, *, kind: str, tool_id: str, op: str,
+def submit_celery(task, db: Session, user: User, *, kind: str, tool_id: str, op: str | None = None,
                   raw: bytes | None = None, params: dict | None = None, n: int = 1,
                   mask_raw: bytes | None = None) -> dict:
     """异步端点的统一收尾:建 Job(存 params)+ 落输入图(若有)+ 入队(broker 挂了退点)。
 
     返回 {job_id, status:"pending"}。闭包不能跨进程,故输入通过 disk(upload_path)+ params 传给 worker。
     超出存储配额(默认 2GB)→ 退回已扣的 n 笔 + 413(不让继续往满的盘里塞)。
+
+    op:失败退点的计费 op;**留空则从单一真相源 tool_specs.TOOL_BILLING 按 kind 推导**(消除 router 各写一份 op 的第 4 份拷贝)。
     """
     from . import storage
     from .services.jobs import create_job
     from .services.quota import usage
+    from .tool_specs import billing_op_for
+    if op is None:
+        op = billing_op_for(kind, params)
     if usage(db, user.id)["over"]:
         for _ in range(n):
             refund(db, user, op)

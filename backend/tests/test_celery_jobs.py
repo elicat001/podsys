@@ -78,12 +78,12 @@ def test_print_extract_celery_failure_refunds(client, auth_headers, monkeypatch,
 def test_enqueue_broker_down_refunds(client, auth_headers, monkeypatch, png):
     """broker 不可用(.delay 抛错)→ 端点退点 + 502 + 作业标记失败(不静默吞点)。"""
     _enable_ai(monkeypatch)
-    import app.routers.print_extract as pr
+    import app.tasks as tasks   # T3-13:print-extract 现走通用 run_tool,patch 它的 delay 模拟 broker 挂
 
     def _boom_delay(jid):
         raise RuntimeError("Error connecting to redis")
 
-    monkeypatch.setattr(pr.run_print_extract, "delay", _boom_delay)
+    monkeypatch.setattr(tasks.run_tool, "delay", _boom_delay)
 
     before = client.get("/api/auth/me", headers=auth_headers).json()["credits"]
     resp = client.post("/api/print-extract", headers=auth_headers,
