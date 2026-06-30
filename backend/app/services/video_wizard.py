@@ -16,7 +16,7 @@ import re
 from PIL import Image
 
 from ..config import settings
-from .video_continuity import CONTINUITY_GUIDE, SCENE_INIT_GUIDE
+from .video_continuity import SCENE_INIT_GUIDE
 
 
 def _data_url(image: Image.Image) -> str:
@@ -61,7 +61,14 @@ def _chat(messages: list, temperature: float | None = None) -> str:
 
 
 def describe_product(image: Image.Image, selling_points: str = "", language: str = "葡萄牙语") -> dict:
-    """Step 1:看商品图 → 结构化简报 {name, audience, selling_points}。卖家手填卖点作补充提示。"""
+    """Step 1:看商品图 → 结构化简报 {name, audience, selling_points, profile}。卖家手填卖点作补充提示。
+
+    profile(Scene Profile · N3)= 同一次 Vision 调用顺带产出(零额外成本):
+      product_type     —— 抽象品类(drinkware/apparel/…,非具体 SKU 词;替代写死的 if 品类表)
+      interaction_risks—— 这件商品做带货视频时由图像可判定的连续性风险(complex_state/object_identity/physical_contact)
+    供后续 Builder 按风险动态启用连续性能力(profile_to_capabilities → build_continuity_guide(enabled=))。
+    """
+    from .video_continuity import PROFILE_RISK_KEYS
     sp = (selling_points or "").strip()[:500]
     hint = f"\n卖家补充的卖点(请融合,但以图为准):{sp}" if sp else ""
     prompt = (
@@ -76,8 +83,12 @@ def describe_product(image: Image.Image, selling_points: str = "", language: str
         "只输出一个 JSON 对象(禁止任何解释、标题、markdown 代码块),字段固定为:\n"
         '{"name":"产品名称(简洁;含关键品类,若有印花带上印花主题/风格)",'
         '"audience":"目标受众(一句话:谁会买、用在什么场景)",'
-        '"selling_points":"核心卖点(3~5 条,用、或换行分隔;若有印花第一条必须是印花/设计本身;其余优先用【直接可见】的点,经验推断的属性别写成确定卖点)"}\n'
-        "紧扣图中这件【具体商品】、中文输出。" + hint
+        '"selling_points":"核心卖点(3~5 条,用、或换行分隔;若有印花第一条必须是印花/设计本身;其余优先用【直接可见】的点,经验推断的属性别写成确定卖点)",'
+        '"product_type":"抽象品类英文小写,从 drinkware/apparel/bag/phone_case/home_decor/stationery/poster/other 选最贴切的一个(不是具体型号)",'
+        '"interaction_risks":"做带货视频时【由这张图可判定】的连续性风险,逗号分隔、没有就留空,只从这三类选:'
+        "complex_state(需开盖/拉链/穿脱/拆封/倾倒等机械动作才能开始用)、physical_contact(需手持/拿取/穿戴)、"
+        'object_identity(商品小/可复制,易被模型复制或凭空增减)\"}\n'
+        "紧扣图中这件【具体商品】、中文输出(product_type/interaction_risks 用上面给定的英文标识)。" + hint
     )
     data = _loads_json(_chat([{"role": "user", "content": [
         {"type": "text", "text": prompt},
@@ -85,10 +96,18 @@ def describe_product(image: Image.Image, selling_points: str = "", language: str
     ]}]))
     if not isinstance(data, dict):
         raise RuntimeError("商品简报解析失败")
+    raw_risks = data.get("interaction_risks") or data.get("风险") or ""
+    if isinstance(raw_risks, str):
+        raw_risks = re.split(r"[,,、\s]+", raw_risks)
+    risks = [r.strip() for r in (raw_risks or []) if isinstance(r, str) and r.strip() in PROFILE_RISK_KEYS]
     return {
         "name": str(data.get("name") or data.get("名称") or "").strip()[:120],
         "audience": str(data.get("audience") or data.get("受众") or "").strip()[:300],
         "selling_points": str(data.get("selling_points") or data.get("卖点") or "").strip()[:1200],
+        "profile": {
+            "product_type": str(data.get("product_type") or data.get("品类") or "other").strip().lower()[:40],
+            "interaction_risks": sorted(set(risks)),   # 去重 + 仅保留合法风险键
+        },
     }
 
 
@@ -106,11 +125,18 @@ def _flatten_storyboard(text: str) -> str:
 
 
 def generate_proposals(name: str, audience: str, selling_points: str, *, seconds: int = 10,
-                       language: str = "葡萄牙语", category: str = "通用", n: int = 3) -> list[dict]:
+                       language: str = "葡萄牙语", category: str = "通用", n: int = 3,
+                       profile: dict | None = None) -> list[dict]:
     """Step 2:据简报 → n 个不同方向的视频方案。每个 {title, angle, model, environment, storyboard}。
 
-    seconds=15 → **三分镜**:每个方案额外含 shot1/shot2/shot3 + scene1/2/3(动作链 per-shot 母帧)。"""
+    seconds=15 → **三分镜**:每个方案额外含 shot1/shot2/shot3 + scene1/2/3(动作链 per-shot 母帧)。
+    profile(Scene Profile · N3,来自 Step1):据其 interaction_risks 按风险【选择性启用】连续性能力——
+    无 profile/无风险 → enabled=None → 含全部自门控能力(= 历史行为,安全默认),不改普通视频。"""
     two_shot = seconds == 15
+    from .video_continuity import build_continuity_guide, profile_to_capabilities
+    _enabled = (profile_to_capabilities((profile or {}).get("interaction_risks"), multi_shot=two_shot)
+                if profile else None)
+    continuity_guide = build_continuity_guide("cogvideox", enabled=_enabled)
     if two_shot:
         time_rule = (
             "本视频为【三分镜 · 共 15 秒】= 分镜①(0-5s)+ 分镜②(5-10s)+ 分镜③(10-15s)。\n"
@@ -169,7 +195,7 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
         "}\n"
         "按这件商品的真实用法大胆设计【有真实运动幅度、有进展】的自然动作(别都缩成走/坐/看手机这类最小动作),让画面有动感;\n"
         + SCENE_INIT_GUIDE + "\n"
-        + CONTINUITY_GUIDE + "\n"
+        + continuity_guide + "\n"   # N3:按 Scene Profile 风险动态选启用的连续性能力(无 profile → 全部=历史行为)
         "【表情要鲜活、去僵硬】人物有真实的情绪流动和细微眼神/表情变化(开心自然地笑、专注、放松随情境,有起伏),"
         "像活人不是定格照片;不是不能笑,要避免的是僵硬不变的假笑、呆滞死眼神、面瘫、对镜头从头营业到尾;"
         "手与物体接触、符合重力。\n"

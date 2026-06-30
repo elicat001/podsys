@@ -111,17 +111,25 @@ def wizard_proposals(
     seconds: int = Form(10),
     language: str = Form("葡萄牙语"),
     category: str = Form("通用"),
+    product_type: str = Form(""),        # Scene Profile(N3,Step1 传回):抽象品类
+    interaction_risks: str = Form(""),   # Scene Profile:逗号分隔的连续性风险键(complex_state/object_identity/physical_contact)
     user: User = Depends(charge_for("title")),
     db: Session = Depends(get_db),
 ):
     """智能向导 Step2:据商品简报 → 3 个不同方向的视频方案。同步,扣 title=1,失败退点。「换一批」=再调一次。
-    15s(三分镜)时每个方案含 shot1/2/3 + scene1/2/3(动作链 per-shot 母帧)。"""
+    15s(三分镜)时每个方案含 shot1/2/3 + scene1/2/3(动作链 per-shot 母帧)。
+    profile(N3):据 Step1 的 Scene Profile 风险【按风险动态启用】连续性能力;留空 → 历史行为(全部能力、安全默认)。"""
     if seconds not in DURATIONS:
         seconds = 10
+    profile = None
+    if product_type or interaction_risks:
+        import re as _re
+        profile = {"product_type": product_type[:40],
+                   "interaction_risks": [r for r in _re.split(r"[,,、\s]+", interaction_risks) if r]}
     try:
         from ..services.video_wizard import generate_proposals
         proposals = generate_proposals(name[:200], audience[:300], selling_points[:600],
-                                       seconds=seconds, language=language, category=category, n=3)
+                                       seconds=seconds, language=language, category=category, n=3, profile=profile)
     except Exception as exc:  # noqa: BLE001
         refund(db, user, "title")
         raise HTTPException(status_code=502, detail=_ai_fail_detail("方案生成失败", exc)) from exc

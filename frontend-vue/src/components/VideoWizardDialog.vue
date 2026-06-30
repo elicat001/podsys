@@ -75,6 +75,7 @@ async function runBrief() {
       name: data.name || '',
       audience: data.audience || '',
       selling_points: data.selling_points || props.sellingPoints || '',
+      profile: data.profile || null,        // Scene Profile(N3):product_type + interaction_risks,透传给 Step2 按风险启用能力
     }
     refresh()
   } catch (e) {
@@ -94,6 +95,11 @@ async function runProposals() {
     fd.append('selling_points', brief.value.selling_points)
     fd.append('seconds', props.seconds || 10)
     fd.append('language', props.language)
+    const prof = brief.value.profile                 // Scene Profile(N3):按风险动态启用连续性能力(留空=历史行为)
+    if (prof) {
+      fd.append('product_type', prof.product_type || '')
+      fd.append('interaction_risks', (prof.interaction_risks || []).join(','))
+    }
     const data = (await api.post('/video/wizard/proposals', fd)).data
     proposals.value = data.proposals || []
     refresh()

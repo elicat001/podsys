@@ -861,6 +861,54 @@ def test_describe_product_grounds_in_observable_not_inference(monkeypatch):
     assert "不锈钢" not in seen["p"]                            # 通用规则:不靠针对具体材质词的特判
 
 
+def test_describe_product_emits_scene_profile(monkeypatch):
+    # N3 foundation:Step1 同一次 Vision 调用顺带产出 Scene Profile(抽象 product_type + interaction_risks)。
+    from PIL import Image
+
+    from app.services import video_wizard
+
+    def _cap(msgs, **kw):
+        return ('{"name":"圣母印花随行杯","audience":"a","selling_points":"印花是圣母图案",'
+                '"product_type":"Drinkware","interaction_risks":"complex_state, physical_contact, bogus"}')
+    monkeypatch.setattr(video_wizard, "_chat", _cap)
+    prof = video_wizard.describe_product(Image.new("RGB", (8, 8)))["profile"]
+    assert prof["product_type"] == "drinkware"                                  # 抽象品类、小写归一
+    assert prof["interaction_risks"] == ["complex_state", "physical_contact"]   # 仅留合法风险键(去 bogus)、去重排序
+    # 缺字段时默认安全(other / 无风险)→ 后续 builder 退回满自由度
+    monkeypatch.setattr(video_wizard, "_chat", lambda m, **k: '{"name":"x","audience":"y","selling_points":"z"}')
+    b2 = video_wizard.describe_product(Image.new("RGB", (8, 8)))["profile"]
+    assert b2["product_type"] == "other" and b2["interaction_risks"] == []
+
+
+def test_profile_to_capabilities_mapping():
+    # N3:Scene Profile 风险 → 该启用的连续性能力集(喂 build_continuity_guide(enabled=))。
+    from app.services.video_continuity import profile_to_capabilities
+    assert profile_to_capabilities(["complex_state", "bogus"], multi_shot=True) == {"complex_state", "temporal_consistency"}
+    assert profile_to_capabilities([], multi_shot=False) == set()               # 无风险 → 空 → 满自由度
+    assert profile_to_capabilities(["physical_contact"]) == {"physical_contact"}
+
+
+def test_generate_proposals_consumes_scene_profile(monkeypatch):
+    # N3 consumption:有 profile → 按风险只启用对应连续性能力(其余不写);无 profile → 全部(历史行为,安全默认)。
+    from app.services import video_wizard
+    seen = {}
+
+    def _cap(msgs, **kw):
+        seen["p"] = msgs[0]["content"]
+        return '[{"title":"t","storyboard":"端起杯子喝一口"}]'
+    monkeypatch.setattr(video_wizard, "_chat", _cap)
+    # 只标 object_identity 风险 → prompt 含对象身份,不含物理接触/时序/复杂状态;natural_motion 底线仍在
+    video_wizard.generate_proposals("杯子", "家居", "保温", seconds=10, n=1,
+                                    profile={"product_type": "drinkware", "interaction_risks": ["object_identity"]})
+    p = seen["p"]
+    assert "对象身份" in p
+    assert "物理接触" not in p and "时序一致" not in p and "复杂状态变化" not in p
+    assert "保持自由" in p
+    # 无 profile → 含全部能力(= 历史行为,安全默认)
+    video_wizard.generate_proposals("杯子", "家居", "保温", seconds=10, n=1)
+    assert all(x in seen["p"] for x in ("对象身份", "物理接触", "时序一致", "复杂状态变化"))
+
+
 def test_continuity_guide_layered_dynamic_and_protects_motion():
     # 分层连续性策略(单一真相源):4 层都在 + 按风险动态(只对真实风险写)+ 显式保护普通动作自由(不规则堆叠)。
     from app.services.video_continuity import CONTINUITY_GUIDE, CONTINUITY_GUIDE_VIDU

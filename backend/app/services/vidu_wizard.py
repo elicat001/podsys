@@ -20,7 +20,7 @@ import re
 from PIL import Image
 
 from ..config import settings
-from .video_continuity import CONTINUITY_GUIDE_VIDU, SCENE_INIT_GUIDE
+from .video_continuity import SCENE_INIT_GUIDE
 
 
 def _data_url(image: Image.Image) -> str:
@@ -88,9 +88,14 @@ def describe_product(image: Image.Image, selling_points: str = "", language: str
 
 
 def generate_proposals(name: str, audience: str, selling_points: str, *, seconds: int = 10,
-                       language: str = "葡萄牙语", n: int = 3) -> list[dict]:
+                       language: str = "葡萄牙语", n: int = 3, profile: dict | None = None) -> list[dict]:
     """Step2:据简报 → n 个方向不同的方案。每个 {title, angle, model, environment, scene, storyboard}。
-    Vidu 单镜:scene=母帧场景(一个),storyboard=一条连续动作链脚本(不拆分镜、不 Match Cut)。"""
+    Vidu 单镜:scene=母帧场景(一个),storyboard=一条连续动作链脚本(不拆分镜、不 Match Cut)。
+    profile(Scene Profile · N3):按风险动态启用连续性能力;Vidu 恒单镜(multi_shot=False);无 profile → 历史行为。"""
+    from .video_continuity import build_continuity_guide, profile_to_capabilities
+    _enabled = (profile_to_capabilities((profile or {}).get("interaction_risks"), multi_shot=False)
+                if profile else None)
+    continuity_guide = build_continuity_guide("vidu", enabled=_enabled)
     prompt = (
         f"你是 TikTok 跨境电商短视频【内容导演】。根据下面的商品简报,设计 {n} 个【方向明显不同】的带货短视频方案。\n"
         f"⚠ 这是用 Vidu 模型生成的【单镜头、约 {seconds} 秒、一气呵成的连续片段】,不是多段拼接 → "
@@ -115,7 +120,7 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
         "不是对镜头僵硬假笑/呆滞摆拍;\n"
         "④ 按商品真实玩法大胆设计【有真实运动幅度】的自然动作,手与物体接触、符合重力,绝不出现部件自行开合或物体凭空出现/消失;\n"
         + SCENE_INIT_GUIDE + "\n"
-        + CONTINUITY_GUIDE_VIDU + "\n"
+        + continuity_guide + "\n"   # N3:按 Scene Profile 风险动态选连续性能力(无 profile → 全部=历史行为)
         "⑤ 商品图案/文字/颜色保持一致不被改样;全部字段用中文。"
     )
     # temperature 调高 → 方案更发散、增创意、降同质化(简报识别仍用默认温度求准)

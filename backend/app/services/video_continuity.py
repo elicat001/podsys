@@ -117,6 +117,24 @@ def build_continuity_guide(model: str = "cogvideox", enabled: set[str] | None = 
     return f"{header}{bullets}\n{floor}"
 
 
+# ── Scene Profile(N3)→ 能力选择 ──────────────────────────────────────────────
+# Scene Profile 的 interaction_risks 取值 = 【由图像可判定的 per-product 连续性风险】(看图 LLM 在 Step1 给出)。
+# 时序风险(temporal_consistency)不由单图判定、而由【是否多分镜】决定,故单列。
+PROFILE_RISK_KEYS = ("complex_state", "object_identity", "physical_contact")
+
+
+def profile_to_capabilities(interaction_risks: list[str] | None, *, multi_shot: bool = False) -> set[str]:
+    """Scene Profile(N3)→ 该启用的连续性能力集,喂给 build_continuity_guide(enabled=)。
+
+    interaction_risks 来自 Vision(Step1 看图判定的 per-product 风险);multi_shot=True 时追加 temporal_consistency。
+    返回空集 = 无风险 → 不写连续性约束、满自由度(natural_motion 底线仍由 builder 永远附上)。
+    """
+    enabled = {k for k in (interaction_risks or []) if k in PROFILE_RISK_KEYS}
+    if multi_shot:
+        enabled.add("temporal_consistency")
+    return enabled
+
+
 # ── 派生导出(各 builder 仍 import 这些名字;现由能力注册表组装,杜绝两变体重复)──
 SCENE_INIT_GUIDE = CAPABILITIES["scene_initialization"].render()
 CONTINUITY_GUIDE = build_continuity_guide("cogvideox")
