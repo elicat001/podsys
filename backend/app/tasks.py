@@ -775,50 +775,49 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
             "warnings": list(dict.fromkeys(warnings))}
 
 
-# kind → (work, refund_op, n_param)。n_param 非空时退点笔数 = job.params[n_param](如裂变按张扣)。
-TOOL_WORKS: dict[str, tuple[Work, str, str | None]] = {
-    "generate": (_work_generate, "generate", "n"),  # 一组打包=4笔generate(20点),单张=1笔;按 n 退点
-    "edit": (_work_edit, "edit", None),
-    "variants": (_work_variants, "edit", "n"),
-    "restyle": (_work_restyle, "edit", None),
-    "meme": (_work_meme, "edit", None),
-    "upscale": (_work_upscale, "process", None),
-    "dewatermark": (_work_gptedit, "edit", None),
-    "imgreplace": (_work_gptedit, "edit", None),   # 图文替换:gpt-image 按需求改图(替换文字语言/改颜色/换元素等)
-    "vectorize": (_work_vectorize, "process", None),
-    "mockup": (_work_mockup, "asset", None),
-    "mockup-replace": (_work_mockup_replace, "asset", "n"),
-    "production": (_work_production, "asset", None),
-    "matting": (_work_matting, "process", None),
-    # 分析类(信息结果,丢任务中心)
-    "title": (_work_title, None, None),       # 退点在 worker 内按 degrade 处理,不走通用退点
-    "ipguard": (_work_ipguard, "process", None),
-    # 采集同步(免费,不扣点 → op=None)
-    "collect_sync": (_work_sync, None, None),
-    # AI 图生视频(智谱 CogVideoX-3 / 本地兜底)。退点笔数=params["n"](单段=1;双分镜 15s=2,价格翻倍)
-    "aivideo": (_work_aivideo, "video", "n"),
-    # AI 图生视频(Vidu viduq3 / 本地兜底)。单次出 15s 多镜头;退点 op=vidu(2 点/笔)、笔数=params["n"]=秒数
-    "viduvideo": (_work_viduvideo, "vidu", "n"),
+# kind → work(worker 函数)。【计费/退点 op 与笔数不在这里】——单一真相源在 app/tool_specs.py:TOOL_BILLING,
+# tasks(正常失败退点)与 jobs.reaper(僵尸回收退点)共读它,杜绝两处漂移(历史上 reaper 漏登记 viduvideo/matting 致静默退错点)。
+# 加新工具:这里注册 work + tool_specs.TOOL_BILLING 加一行(op/笔数只此一处)。
+TOOL_WORKS: dict[str, Work] = {
+    "generate": _work_generate,
+    "edit": _work_edit,
+    "variants": _work_variants,
+    "restyle": _work_restyle,
+    "meme": _work_meme,
+    "upscale": _work_upscale,
+    "dewatermark": _work_gptedit,
+    "imgreplace": _work_gptedit,   # 图文替换:gpt-image 按需求改图(替换文字语言/改颜色/换元素等)
+    "vectorize": _work_vectorize,
+    "mockup": _work_mockup,
+    "mockup-replace": _work_mockup_replace,
+    "production": _work_production,
+    "matting": _work_matting,
+    "title": _work_title,          # 退点在 worker 内按 degrade 处理(tool_specs 标 worker_self_refunds)
+    "ipguard": _work_ipguard,
+    "collect_sync": _work_sync,    # 采集同步:免费(tool_specs op=None)
+    "aivideo": _work_aivideo,      # 智谱 CogVideoX-3 / 本地兜底
+    "viduvideo": _work_viduvideo,  # Vidu / 本地兜底
 }
 
 
 @celery_app.task(name="podsys.run_tool")
 def run_tool(job_id: str) -> None:
-    """通用工具作业:按 job.kind 分派到 TOOL_WORKS 的 work,失败按 refund_op/笔数退点。"""
+    """通用工具作业:按 job.kind 分派到 TOOL_WORKS 的 work,失败按 tool_specs 的 op/笔数退点。"""
+    from .tool_specs import billing_n_for, worker_refund_op_for
     db = SessionLocal()
     try:
         job = db.get(Job, job_id)
         if job is None:
             return
-        spec = TOOL_WORKS.get(job.kind)
-        if spec is None:
+        work = TOOL_WORKS.get(job.kind)
+        if work is None:
             job.status = "error"
             job.error = f"未注册的作业类型: {job.kind}"
             job.finished_at = _now()
             db.commit()
             return
-        work, op, n_field = spec
-        n = int(job.params.get(n_field, 1)) if n_field else 1
+        op = worker_refund_op_for(job.kind, job.params)   # worker_self_refunds 的(title)返回 None,防双退
+        n = billing_n_for(job.kind, job.params)
     finally:
         db.close()
     run_job_in_worker(job_id, work, refund_op=op, refund_n=n)

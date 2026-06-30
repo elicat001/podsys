@@ -207,6 +207,49 @@ def test_reaper_running_measures_from_started_at_not_created(client, auth_header
     assert j["status"] == "running"   # 按 started_at(刚开跑)→ 不被误判卡死,尽管 created_at 已 2h
 
 
+def test_tool_billing_is_single_source_and_covers_all_kinds():
+    """T1-1:计费/退点单一真相源。每个 TOOL_WORKS 的 kind 都必须在 TOOL_BILLING 登记(防 reaper 漏登记静默退错点);
+    且历史漏过的 viduvideo/matting/imgreplace 现在退对 op(不再默认 edit)。"""
+    from app.tasks import TOOL_WORKS
+    from app.tool_specs import TOOL_BILLING, billing_n_for, billing_op_for
+    # 单一真相源:每个 work 的 kind 都在 billing 表里(否则 reaper 会按 edit 兜底 → 静默退错点)
+    missing = [k for k in TOOL_WORKS if k not in TOOL_BILLING]
+    assert not missing, f"这些 kind 漏登记 TOOL_BILLING:{missing}"
+    # 历史 bug 修复:这三个曾不在 reaper 的 _KIND_REFUND_OP 里 → 僵尸作业按 edit 退错
+    assert billing_op_for("viduvideo", {"n": 10}) == "vidu" and billing_n_for("viduvideo", {"n": 10}) == 10
+    assert billing_op_for("matting", {}) == "process"
+    assert billing_op_for("imgreplace", {}) == "edit"
+    # 条件/免费规则集中在单表
+    assert billing_op_for("title", {"engine": "ai"}) == "title"
+    assert billing_op_for("title", {"engine": "fast"}) is None   # 快速免费 → 不退
+    assert billing_op_for("collect_sync", {}) is None            # 采集同步免费
+    assert billing_n_for("variants", {"n": 4}) == 4
+
+
+def test_reaper_refunds_viduvideo_with_correct_op_not_edit(client, auth_headers):
+    """回归:僵尸 viduvideo 作业按 vidu×n 退(历史 reaper 漏登记 → 误按 edit 退错点)。"""
+    from datetime import datetime, timezone, timedelta
+    from app.db import SessionLocal
+    from app.models_db import Job
+    from app.services.billing import COST
+    me = client.get("/api/auth/me", headers=auth_headers).json()
+    uid, before = me["user_id"], me["credits"]
+    s = SessionLocal()
+    try:
+        s.add(Job(id="stalevidu0001", kind="viduvideo", tool_id="viduvideo", status="running",
+                  params={"n": 3}, result={}, error="", owner_id=uid,
+                  created_at=datetime.now(timezone.utc) - timedelta(hours=2),
+                  started_at=datetime.now(timezone.utc) - timedelta(hours=2)))
+        s.commit()
+    finally:
+        s.close()
+    jobs = client.get("/api/jobs", headers=auth_headers).json()
+    j = next(x for x in jobs if x["id"] == "stalevidu0001")
+    assert j["status"] == "error", j
+    after = client.get("/api/auth/me", headers=auth_headers).json()["credits"]
+    assert after == before + 3 * COST["vidu"], f"viduvideo 应退 vidu×3={3 * COST['vidu']}:before={before} after={after}"
+
+
 def test_worker_skips_terminal_job_idempotent(client, auth_headers):
     """幂等护栏:已 error(如被回收器判失败+退点)的作业被 broker 重投时,worker 跳过——
     不重复执行 work、不把 error 覆盖成 done、不二次退点。"""

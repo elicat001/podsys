@@ -27,18 +27,8 @@ def _now() -> datetime:
 # → 阈值给 50min(留足余量),免得误杀正在耐心重试母帧的慢视频(否则整单被回收=更糟)。
 STUCK_MINUTES = 50
 
-# kind → 退点 op(与各 router 的 charge_for/扣点 op 对齐)。未列出的默认 "edit"。
-# 注意:按张多扣的 kind(variants/mockup-replace)退点笔数 = params["n"](见 reap)。
-_KIND_REFUND_OP = {
-    "process": "process", "print-extract": "process", "upscale": "process", "vectorize": "process",
-    "ipguard": "process",
-    "generate": "generate",
-    "edit": "edit", "variants": "edit", "restyle": "edit", "meme": "edit", "dewatermark": "edit",
-    "mockup": "asset", "mockup-replace": "asset", "production": "asset",
-    "title": "title",
-    "aivideo": "video",   # AI 图生视频,僵尸作业退 video 点
-    "collect_sync": None,  # 采集同步免费,僵尸作业不退点(否则白送积分)
-}
+# 退点 op/笔数的【单一真相源】= app/tool_specs.py:TOOL_BILLING(run_tool 正常失败退点也读它)。
+# 历史上这里另维护过一份 _KIND_REFUND_OP,漏登记 viduvideo/matting/imgreplace 致僵尸作业静默退错点 → 已收口到单表。
 
 
 def reap_stuck_jobs(db: Session, minutes: int = STUCK_MINUTES) -> int:
@@ -68,14 +58,12 @@ def reap_stuck_jobs(db: Session, minutes: int = STUCK_MINUTES) -> int:
         job.finished_at = now
         if job.owner_id is not None:
             from ..models_db import User
+            from ..tool_specs import billing_n_for, billing_op_for
             from .billing import refund
             params = job.params or {}
-            op = _KIND_REFUND_OP.get(job.kind, "edit")
-            # 按张多扣的(variants/mockup-replace)退 n 笔,对齐扣点;其余 1 笔。
-            n = int(params.get("n", 1) or 1)
-            # 标题「快速」本就免费(只有「智能/AI」扣点),不退;避免给未扣点的任务白送积分。
-            if job.kind == "title" and params.get("engine") != "ai":
-                op = None
+            # 单一真相源:op(含 title「快速免费/AI 才扣」、collect_sync 免费等规则)+ 笔数(variants/视频按 n)都由 tool_specs 解析。
+            op = billing_op_for(job.kind, params)
+            n = billing_n_for(job.kind, params)
             if op:
                 u = db.get(User, job.owner_id)
                 if u is not None:
