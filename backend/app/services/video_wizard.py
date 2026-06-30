@@ -84,6 +84,19 @@ def describe_product(image: Image.Image, selling_points: str = "", language: str
     }
 
 
+def _flatten_storyboard(text: str) -> str:
+    """5/10s 是单镜【一条连续视频】(CogVideoX 单次生成不分镜),预览必须是【一段连贯描述】。
+    剥掉模型偶尔甩出的分段标签:【0-5s】/【0-3秒】/【分镜①·…】/裸『分镜①』/『0-3秒:』/『(0-3秒)』等,
+    只清【格式标签】、不动【动作内容】,把结果拼成一段连贯文字。"""
+    t = text or ""
+    t = re.sub(r"【[^】]*?(?:分镜[①②③0-9]*|\d+\s*[-~至到]\s*\d+\s*(?:秒|s|S))[^】]*?】", "", t)  # 【分镜①·0-5s】/【0-3秒】
+    t = re.sub(r"分镜[①②③0-9]+\s*[·:：、.\-]?\s*", "", t)                                       # 裸『分镜①』
+    t = re.sub(r"[(（]?\d+\s*[-~至到]\s*\d+\s*(?:秒|s|S)[)）]?\s*[:：]?\s*", "", t)               # 0-3秒: / (0-3秒)
+    t = re.sub(r"[ \t]*\n[ \t]*", " ", t)        # 多行折成一段(连续视频=一段连贯描述)
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    return t[:2000]
+
+
 def generate_proposals(name: str, audience: str, selling_points: str, *, seconds: int = 10,
                        language: str = "葡萄牙语", category: str = "通用", n: int = 3) -> list[dict]:
     """Step 2:据简报 → n 个不同方向的视频方案。每个 {title, angle, model, environment, storyboard}。
@@ -115,24 +128,20 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
             '"shot3":"分镜③脚本(约5s):承接②继续(已走在街上、边走边自然张望),一句连贯动作,把情绪/目标收住"'
         )
     else:
-        # 与 15s 【完全同逻辑】:不向模型要 storyboard(它会写成 0-x秒 时间轴),而是要【每拍一句连贯动作】、
-        # 后端再按固定格式合成 storyboard → 默认必然精简(和 15s 一样)。详细时间轴留给「详细扩展」按需展开。
-        # 10s=2 拍(各~5s)、5s=1 拍。
-        n_beats = 2 if seconds == 10 else 1
-        if n_beats == 2:
-            time_rule = ("本视频约 10 秒 = 分镜①(0-5s)+ 分镜②(5-10s),单镜头一气呵成:一个人为一个目标/情绪做"
-                         "一连串连贯动作,后半承接前半的延续点(不是两件无关的事)。")
-            shot_fields = (
-                '"shot1":"分镜①(约5s):前半/起因动作,写成【一句连贯动作描述】(别写 0-x 秒这类内部时间戳),'
-                '结尾留个未完成动作给②",'
-                '"shot2":"分镜②(约5s):从①的延续点接着演,一句连贯动作,把情绪/目标收住"'
-            )
-        else:
-            time_rule = "本视频约 5 秒,一个一气呵成的连续动作(单镜头)。"
-            shot_fields = (
-                '"shot1":"整段(约5s):写成【一句连贯动作描述】(别写 0-x 秒这类内部时间戳),'
-                '动机 → 动作 → 真实效果/情绪"'
-            )
+        # 5/10s = CogVideoX【单次生成的一条连续视频】(基于母帧首帧持续运动),它【不分镜、不切段、不拼接】。
+        # 所以脚本必须是【一段连贯不断、流水化的动作】——绝不能拆分镜①②、绝不能写 0-x秒 时间戳(那是 15s 多视频拼接才有的)。
+        # 详细分段时间轴留给「详细扩展」按需展开。
+        dur = "约 10 秒" if seconds == 10 else "约 5 秒"
+        time_rule = (
+            f"本视频是【单镜头 · 一条连续视频 · {dur}】:从母帧首帧开始一气呵成地持续运动,"
+            "CogVideoX 单次生成【不分镜、不切段】→ 脚本写成【一段连贯不断、流水化的动作】,"
+            "绝对别拆分镜①②、别写 0-x 秒这类时间戳。"
+        )
+        shot_fields = (
+            '"storyboard":"整段(' + dur + ')写成【一段连贯流水的动作描述】:一个一气呵成的连续过程'
+            "(动机 → 展开 → 收尾的真实效果/情绪),2~3 句、精简口语;"
+            '严禁拆分镜、严禁写 0-x 秒/分镜① 这类分段标签"'
+        )
     prompt = (
         f"你是 TikTok 跨境电商短视频【内容导演】。根据下面的商品简报,设计 {n} 个【故事方向彼此明显不同】的带货短视频方案。\n"
         "目标:做出『一条真人随手发的 TikTok 生活内容』,而不是『商品展示页』——靠真实生活场景和小事件自然带出商品。\n"
@@ -203,14 +212,12 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
             # 且预览忠实反映【实际喂给生成的 shot1/2/3】(三分镜真正按这三段并行出片)。
             item["storyboard"] = f"【分镜①·0-5s】{s1}\n\n【分镜②·5-10s】{s2}\n\n【分镜③·10-15s】{s3}"
         else:
-            # 5/10s 同逻辑:从【每拍一句】合成 storyboard(后端控格式)→ 默认必然精简(同 15s),杜绝模型甩 0-x秒 时间轴。
-            # 单镜返回的 item 不带 shot1(契约:5/10s 只有 storyboard;详细时间轴由「详细扩展」按需展开)。
-            s1 = str(p.get("shot1") or p.get("分镜1") or p.get("分镜①") or item["storyboard"]).strip()[:1500]
-            if seconds == 10:
-                s2 = (str(p.get("shot2") or p.get("分镜2") or p.get("分镜②") or "").strip()[:1500] or s1)
-                item["storyboard"] = f"【分镜①·0-5s】{s1}\n\n【分镜②·5-10s】{s2}"
-            else:
-                item["storyboard"] = s1                      # 5s 单拍:一句连贯动作即可,不加分镜标签
+            # 5/10s = 单镜【一条连续视频】:storyboard 就是一段连贯流水动作,【不加任何分镜/时间标签】。
+            # 模型偶尔仍会甩 0-x秒/分镜① → 后端 _flatten_storyboard 兜底剥掉,保证显示是一段连贯描述。
+            # 契约:item 不带 shot1(5/10s 单镜生成只用 storyboard;详细分段留给「详细扩展」)。
+            raw = str(p.get("storyboard") or p.get("脚本") or p.get("分镜")
+                      or p.get("shot1") or p.get("action") or "").strip()[:2000]
+            item["storyboard"] = _flatten_storyboard(raw)
         out.append(item)
     if not out:
         raise RuntimeError("方案解析为空")

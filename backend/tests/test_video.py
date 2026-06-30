@@ -317,11 +317,15 @@ def test_wizard_proposals_two_shot_returns_shots(monkeypatch):
     sb = out[0]["storyboard"]
     assert sb.startswith("【分镜①·0-5s】") and "【分镜②·5-10s】" in sb and "【分镜③·10-15s】" in sb
     assert "合并脚本" not in sb                        # 模型自由发挥的 storyboard 被丢弃,用合成的
-    # 单段(10s)不产 shot1/shot2/shot3
+    # 5/10s = 单镜【一条连续视频】(CogVideoX 单次生成不分镜):storyboard 是一段连贯描述,不产 shot、不带分镜/时间标签。
+    # 即使模型甩了【0-10秒】这类标签,后端 _flatten_storyboard 也会剥掉 → 显示一段连贯文字。
     monkeypatch.setattr(video_wizard, "_chat",
-                        lambda msgs, **kw: '[{"title":"t","storyboard":"【0-10秒】展示"}]')
+                        lambda msgs, **kw: '[{"title":"t","storyboard":"【0-5秒】走到桌前\\n【5-10秒】端起杯子喝一口"}]')
     out10 = video_wizard.generate_proposals("杯子", "家居", "保温", seconds=10, n=1)
-    assert "shot1" not in out10[0]
+    assert "shot1" not in out10[0]                       # 单镜:不暴露 shot 字段
+    sb10 = out10[0]["storyboard"]
+    assert "分镜" not in sb10 and "秒" not in sb10 and "【" not in sb10   # 无任何分段/时间标签
+    assert "走到桌前" in sb10 and "端起杯子喝一口" in sb10               # 动作内容保留、拼成一段
 
 
 def test_video_delete_goes_to_trash(client, auth_headers):
@@ -508,21 +512,34 @@ def test_wizard_expand_no_key_502_refunds(client, auth_headers):
 
 
 def test_wizard_proposals_5s10s_concise_default(monkeypatch):
-    # 5/10s 默认【精简】:与 15s 完全同逻辑——不向模型要 freeform storyboard(它会甩 0-x秒 时间轴),
-    # 而是要【每拍一句连贯动作】shot1/shot2,后端合成 storyboard → 默认必然精简。详细时间轴留给「详细扩展」。
+    # 5/10s = 单镜【一条连续视频】(CogVideoX 单次生成不分镜):storyboard 必须是一段连贯描述,
+    # 默认精简、【绝不出现分镜①②/0-x秒 标签】(那是 15s 多视频拼接才有的)。
     from app.services import video_wizard
     seen = {}
 
     def _cap(msgs, **kw):
         seen["prompt"] = msgs[0]["content"]
-        return '[{"title":"t","shot1":"端起杯子喝一口","shot2":"放松靠回椅背"}]'
+        # 模拟模型仍偶尔甩分段标签 → 后端必须 flatten 成一段
+        return '[{"title":"t","storyboard":"【0-5秒】端起杯子喝一口\\n【5-10秒】放松靠回椅背"}]'
     monkeypatch.setattr(video_wizard, "_chat", _cap)
     out = video_wizard.generate_proposals("杯子", "家居", "保温", seconds=10, n=1)
-    assert '"shot1"' in seen["prompt"] and '"shot2"' in seen["prompt"]   # 10s 改要每拍一句(非 freeform storyboard)
-    assert "别写 0-x 秒" in seen["prompt"]                               # 同 15s 的去时间戳约束
-    sb = out[0]["storyboard"]                                            # 后端合成的预览:固定分镜格式
-    assert sb.startswith("【分镜①·0-5s】") and "【分镜②·5-10s】" in sb
+    assert "单镜" in seen["prompt"] and "别拆分镜" in seen["prompt"]      # prompt 框定单镜连续、别拆分镜
+    assert "别写 0-x 秒" in seen["prompt"]                               # 去时间戳约束
+    sb = out[0]["storyboard"]
+    assert "分镜" not in sb and "秒" not in sb and "【" not in sb        # 输出无任何分段/时间标签
+    assert "端起杯子喝一口" in sb and "放松靠回椅背" in sb               # 动作内容保留、合成一段连贯
     assert "shot1" not in out[0]                                        # 5/10s 输出契约:只有 storyboard,不暴露 shot
+
+
+def test_flatten_storyboard_strips_segment_and_time_labels():
+    # 5/10s 单镜连续:_flatten_storyboard 剥掉分段/时间标签,只留动作内容、合成一段
+    from app.services.video_wizard import _flatten_storyboard
+    assert _flatten_storyboard("【分镜①·0-5s】走到桌前\n【分镜②·5-10s】端起杯子") == "走到桌前 端起杯子"
+    assert _flatten_storyboard("【0-3秒】镜头推近\n【3-7秒】喝一口") == "镜头推近 喝一口"
+    assert _flatten_storyboard("分镜①:看手机  分镜②:出门") == "看手机 出门"
+    assert _flatten_storyboard("0-3秒:走过去 (3-5秒)坐下") == "走过去 坐下"
+    # 无标签的正常一段话原样保留(不误伤内容)
+    assert _flatten_storyboard("她端起杯子喝一口,放松地靠回椅背") == "她端起杯子喝一口,放松地靠回椅背"
 
 
 def test_wizard_proposals_no_key_502_refunds(client, auth_headers):
@@ -1270,19 +1287,20 @@ def test_wizard_proposals_prompt_pushes_diversity_and_temperature(monkeypatch):
 
 
 def test_wizard_proposals_5s10s_creative_storyboard(monkeypatch):
-    # 5s/10s 也享受跨方案多样化 + 更高 temperature;且与 15s 同逻辑(每拍一句、后端合成,默认精简)
+    # 5s/10s 也享受跨方案多样化 + 更高 temperature;且是单镜【一条连续视频】(storyboard 一段连贯、不分镜)
     from app.services import video_wizard
     seen = {}
 
     def _cap(msgs, **kw):
         seen["prompt"] = msgs[0]["content"]
         seen["temperature"] = kw.get("temperature")
-        return '[{"title":"t","shot1":"真人端起杯子喝一口","shot2":"放松靠回去"}]'
+        return '[{"title":"t","storyboard":"真人端起杯子喝一口,放松靠回去"}]'
     monkeypatch.setattr(video_wizard, "_chat", _cap)
     for secs in (5, 10):
         seen.clear()
         out = video_wizard.generate_proposals("杯子", "家居", "保温", seconds=secs, n=3)
         assert "生活情境" in seen["prompt"]                # 跨方案多样化对 5/10s 同样生效
-        assert "别写 0-x 秒" in seen["prompt"]             # 与 15s 同款去时间戳约束(每拍一句)
+        assert "单镜" in seen["prompt"] and "别拆分镜" in seen["prompt"]   # 框定单镜连续视频(非分镜)
         assert seen["temperature"] and seen["temperature"] >= 0.8
         assert "shot1" not in out[0]                       # 5/10s 输出契约:只有 storyboard,不暴露 shot
+        assert "分镜" not in out[0]["storyboard"]          # 单镜连续:storyboard 无分镜标签

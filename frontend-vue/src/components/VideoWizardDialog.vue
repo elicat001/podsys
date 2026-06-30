@@ -211,7 +211,7 @@ async function expand(p, i) {
           <div class="psb" :class="{ detailed: p._detailed }">{{ p.storyboard }}</div>
           <button class="choose" @click="choose(p)">✅ 用此方案生成视频</button>
           <button class="detail" :disabled="expandingIdx !== -1" @click="expand(p, i)">
-            {{ expandingIdx === i ? '⏳ 扩展中…' : (p._detailed ? '🔁 重新详细扩展(1点)' : '🔍 详细扩展(1点 · 展开成分镜时间轴脚本)') }}
+            {{ expandingIdx === i ? '⏳ 扩展中…' : (p._detailed ? '🔁 重新详细扩展(1点)' : ('🔍 详细扩展(1点 · 展开成' + (seconds === 15 ? '分镜脚本' : '详细时间轴脚本') + ')')) }}
           </button>
         </div>
       </div>
