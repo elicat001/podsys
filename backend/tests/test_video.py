@@ -785,6 +785,34 @@ def test_compose_prompt_keeps_essential_guards():
     assert "重力" in out                                # 物理连贯
 
 
+def test_scene_frame_prompt_offloads_hard_action_conditionally():
+    # 母帧承接难动作:【按需·条件性】把开盖/穿脱等容易画坏的机械状态变化前移到首帧(已就绪),
+    # 商品本体与原图完全一致、绝不重新设计;非强制(默认不锁普通商品)。
+    from app.ai.video import scene_frame_prompt
+    p = scene_frame_prompt(category="水杯", language="葡萄牙语")
+    assert "可直接使用的状态" in p                      # 难动作前移 → 首帧呈现已就绪
+    assert "若需要" in p and "不必刻意改动" in p          # 条件性:不需要的商品走原逻辑、不额外限制
+    assert "与原图完全一致" in p and "绝不重新设计商品" in p  # 只改状态、不重画商品(防 GPT Image 重设计)
+
+
+def test_direction_block_offloads_hard_but_frees_normal_motion():
+    # 视频层:难动作交给首帧(不现场重做),但【除此之外】的普通自然动作显式保持自由、大胆、有运动幅度——
+    # 直接对冲「机器人/小幅度/PPT」副作用,不是全局加约束。
+    from app.ai.video import compose_prompt
+    out = compose_prompt("展示商品", language="无对白")
+    assert "已就绪" in out                              # 难动作已在首帧完成、视频不现场重做
+    assert "大胆做" in out and "运动幅度" in out          # 普通动作显式解放(非压制)
+    assert "缩手缩脚" in out                            # 明确反对为怕变形而僵化
+
+
+def test_vidu_scene_frame_keeps_playful_interaction_live():
+    # Vidu 母帧:只前移真正难的状态变化(开盖/穿脱),按压/旋转/捏压回弹这类把玩互动是 Vidu 强项 → 保留在视频里、不前移。
+    from app.ai.vidu import scene_frame_prompt
+    p = scene_frame_prompt(language="葡萄牙语")
+    assert "可直接使用的状态" in p                       # 难动作前移
+    assert "按压" in p and "旋转" in p and "不要" in p   # 把玩互动保留为强项、明确不前移
+
+
 def test_ai_generate_scene_frame_with_gptimage(client, auth_headers, monkeypatch, png):
     # 配了 key 时「场景首帧」走 gpt-image 编辑首帧,再生视频(本地兜底 GIF);确认流程不崩。
     from PIL import Image as _Img
