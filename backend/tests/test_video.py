@@ -793,6 +793,7 @@ def test_scene_frame_prompt_offloads_hard_action_conditionally():
     assert "可直接使用的状态" in p                      # 难动作前移 → 首帧呈现已就绪
     assert "若需要" in p and "不必刻意改动" in p          # 条件性:不需要的商品走原逻辑、不额外限制
     assert "与原图完全一致" in p and "绝不重新设计商品" in p  # 只改状态、不重画商品(防 GPT Image 重设计)
+    assert "只出现一件" in p and "不悬空" in p            # 首帧身份/物理锚点:单一个体 + 有真实支撑
 
 
 def test_direction_block_offloads_hard_but_frees_normal_motion():
@@ -811,6 +812,35 @@ def test_vidu_scene_frame_keeps_playful_interaction_live():
     p = scene_frame_prompt(language="葡萄牙语")
     assert "可直接使用的状态" in p                       # 难动作前移
     assert "按压" in p and "旋转" in p and "不要" in p   # 把玩互动保留为强项、明确不前移
+    assert "只出现一件" in p                             # 首帧身份锚点:单一个体
+
+
+def test_continuity_guide_layered_dynamic_and_protects_motion():
+    # 分层连续性策略(单一真相源):4 层都在 + 按风险动态(只对真实风险写)+ 显式保护普通动作自由(不规则堆叠)。
+    from app.services.video_continuity import CONTINUITY_GUIDE, CONTINUITY_GUIDE_VIDU
+    # 四层齐全(L0 状态前移 / L1 对象身份 / L2 物理接触 / L3 时序一致)
+    for layer in ("可直接使用", "对象身份", "物理接触", "时序一致"):
+        assert layer in CONTINUITY_GUIDE
+    # 按风险动态 + 默认满自由度(铁律:没风险别写、不是动作限制、普通动作放开)
+    assert "没有就别写" in CONTINUITY_GUIDE
+    assert "不是动作限制" in CONTINUITY_GUIDE and "保持自由" in CONTINUITY_GUIDE
+    # Vidu 变体:同样四层,但保留按压/旋转把玩强项、不前移
+    for layer in ("对象身份", "物理接触", "时序一致"):
+        assert layer in CONTINUITY_GUIDE_VIDU
+    assert "按压" in CONTINUITY_GUIDE_VIDU and "旋转" in CONTINUITY_GUIDE_VIDU and "不前移" in CONTINUITY_GUIDE_VIDU
+
+
+def test_wizard_prompt_wires_continuity_guide(monkeypatch):
+    # 接线验证:看图 LLM 生成器把统一的连续性指引接进了 prompt(不是各处散落 if)。
+    from app.services import video_wizard
+    seen = {}
+
+    def _cap(msgs, **kw):
+        seen["prompt"] = msgs[0]["content"]
+        return '[{"title":"t","storyboard":"端起杯子喝一口"}]'
+    monkeypatch.setattr(video_wizard, "_chat", _cap)
+    video_wizard.generate_proposals("水壶", "运动", "保温", seconds=10, n=1)
+    assert "连续性自检" in seen["prompt"] and "对象身份" in seen["prompt"]   # 统一指引已接入
 
 
 def test_ai_generate_scene_frame_with_gptimage(client, auth_headers, monkeypatch, png):

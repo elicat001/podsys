@@ -16,6 +16,7 @@ import re
 from PIL import Image
 
 from ..config import settings
+from .video_continuity import CONTINUITY_GUIDE
 
 
 def _data_url(image: Image.Image) -> str:
@@ -159,9 +160,8 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
         '"environment":"整体拍摄风格/地区氛围",'
         + shot_fields +
         "}\n"
-        "动作要贴合 AI 视频能力边界:【按需】若这件商品需要一个很容易画坏/穿模的机械动作(开盖/拆封/穿脱/倾倒)才能开始用,"
-        "就默认它在首帧已完成、脚本【从可直接使用的状态写起】(别写『现场拧开瓶盖/拆开包装/把衣服穿上』这类机械过程);"
-        "除此之外按这件商品的真实用法大胆设计【有真实运动幅度、有进展】的自然动作(别都缩成走/坐/看手机这类最小动作),让画面有动感;"
+        "按这件商品的真实用法大胆设计【有真实运动幅度、有进展】的自然动作(别都缩成走/坐/看手机这类最小动作),让画面有动感;\n"
+        + CONTINUITY_GUIDE + "\n"
         "【表情要鲜活、去僵硬】人物有真实的情绪流动和细微眼神/表情变化(开心自然地笑、专注、放松随情境,有起伏),"
         "像活人不是定格照片;不是不能笑,要避免的是僵硬不变的假笑、呆滞死眼神、面瘫、对镜头从头营业到尾;"
         "手与物体接触、符合重力。\n"
