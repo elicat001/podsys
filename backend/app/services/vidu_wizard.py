@@ -20,7 +20,7 @@ import re
 from PIL import Image
 
 from ..config import settings
-from .video_continuity import CONTINUITY_GUIDE_VIDU
+from .video_continuity import CONTINUITY_GUIDE_VIDU, SCENE_INIT_GUIDE
 
 
 def _data_url(image: Image.Image) -> str:
@@ -114,6 +114,7 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
         "③ 【任务驱动 + 去僵硬】把它当【记录真实生活片段】,人物专注做手上的事、神态鲜活有情绪流动和细微表情变化,"
         "不是对镜头僵硬假笑/呆滞摆拍;\n"
         "④ 按商品真实玩法大胆设计【有真实运动幅度】的自然动作,手与物体接触、符合重力,绝不出现部件自行开合或物体凭空出现/消失;\n"
+        + SCENE_INIT_GUIDE + "\n"
         + CONTINUITY_GUIDE_VIDU + "\n"
         "⑤ 商品图案/文字/颜色保持一致不被改样;全部字段用中文。"
     )

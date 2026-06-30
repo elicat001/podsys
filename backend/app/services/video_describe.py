@@ -11,7 +11,7 @@ import io
 from PIL import Image
 
 from ..config import settings
-from .video_continuity import CONTINUITY_GUIDE
+from .video_continuity import CONTINUITY_GUIDE, SCENE_INIT_GUIDE
 
 
 def smart_describe(image: Image.Image, video_type: str = "开箱分享", seconds: int = 10,
@@ -46,6 +46,7 @@ def smart_describe(image: Image.Image, video_type: str = "开箱分享", seconds
         "别为展示商品而僵硬摆拍,口播类可自然对镜头说话;镜头次之,手持随手拍即可;\n"
         "④ 按商品真实用法大胆设计【有真实运动幅度、有进展】的自然动作、让画面有动感而非几乎不动;"
         "让手与物体接触、动作连续且符合重力,绝不出现部件无人触碰却自行开合、或物体凭空出现/消失/移动;\n"
+        + SCENE_INIT_GUIDE + "\n"
         + CONTINUITY_GUIDE + "\n"
         "⑤ 只输出中文脚本正文,不要任何解释、标题、前后缀或 markdown 代码块。"
     )

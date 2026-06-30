@@ -562,15 +562,16 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
         _frame_src = _frame_src.copy()
         _frame_src.thumbnail((1024, 1024), Image.LANCZOS)
 
-    def _scene_frame(scene: str):
+    def _scene_frame(scene: str, action: str = ""):
         """gpt-image 把商品合成进 scene 做母帧并贴合画幅;失败返回 None(调用方降级原图首帧)。
+        action=该镜脚本 → 母帧落在它的【起始瞬间】(Scene Init:母帧=视频第0帧、与脚本开头衔接)。
         走 _mufra_with_backoff:中转站偶发 503「无可用账号」/超时是【瞬时拥塞】,指数退避重试熬过它
         (受 video_mufra_budget 约束);永久错(鉴权/余额)立即放弃。预算内仍失败 → 降级原图 + 记 warning
         (显式降级,不静默——母帧才是 3D 物理的关键)。"""
         from .ai.openai_image import OpenAIImageClient
         try:
             framed = _mufra_with_backoff(lambda: OpenAIImageClient().edit(
-                _frame_src, scene_frame_prompt(cat, lang, scene=scene),
+                _frame_src, scene_frame_prompt(cat, lang, scene=scene, action=action),
                 size=gptimage_size(aspect), timeout=settings.video_mufra_timeout,
                 max_retries=0, use_gate=False))   # 并发由 _MUFRA_GATE 管,别叠 _API_GATE
             return fit_to_aspect(framed, tw, th)
@@ -588,11 +589,11 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     # 首帧优化(img2video)让它动起来——【不出 GIF】(老大:GIF 根本不能用)。母帧失败仍记 warning 诚实告知。
     seg_imgs: list | None = None
     if per_shot_frames:                     # 多分镜每镜独立母帧:并行提交(全局自适应限流器排队+退避熬拥塞);失败的镜退回原图
-        with ThreadPoolExecutor(max_workers=n_shots) as ex:
-            frames = list(ex.map(_scene_frame, scenes[:n_shots]))
+        with ThreadPoolExecutor(max_workers=n_shots) as ex:  # 各镜母帧=该镜脚本(prompts[i])的第0帧 → Scene Init 对齐
+            frames = list(ex.map(_scene_frame, scenes[:n_shots], prompts[:n_shots]))
         seg_imgs = [[f] if f is not None else imgs for f in frames]
-    elif use_scene:                         # 单镜 / 双分镜未给场景:一张共享母帧(类目默认场景)
-        shared = _scene_frame("")
+    elif use_scene:                         # 单镜 / 双分镜未给场景:一张共享母帧(脚本=storyboard 的第0帧)
+        shared = _scene_frame("", prompts[0])
         if shared is not None:
             imgs[0] = shared
     # 视频音效(默认关)= CogVideoX 自带音频(with_audio=true,AI 音效非真人);默认无声;旁白开 = 无声再叠真人 AI 旁白。三者:默认无声 / 音效 / 旁白互斥。
@@ -725,7 +726,7 @@ def _work_viduvideo(job_id: str, job: Job, db: Session) -> dict:
         # 永久错立即放弃。对齐 CogVideoX 母帧策略。
         try:
             framed = _mufra_with_backoff(lambda: OpenAIImageClient().edit(
-                src, scene_frame_prompt(lang, scene=p.get("scene", "")),
+                src, scene_frame_prompt(lang, scene=p.get("scene", ""), action=p.get("prompt", "")),
                 size=gptimage_size(aspect), timeout=settings.video_mufra_timeout,
                 max_retries=0, use_gate=False))   # 并发由 _mufra_with_backoff 的 acquire/report 管,别叠
             first = fit_to_aspect(framed, tw, th)

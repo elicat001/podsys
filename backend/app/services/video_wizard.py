@@ -16,7 +16,7 @@ import re
 from PIL import Image
 
 from ..config import settings
-from .video_continuity import CONTINUITY_GUIDE
+from .video_continuity import CONTINUITY_GUIDE, SCENE_INIT_GUIDE
 
 
 def _data_url(image: Image.Image) -> str:
@@ -161,6 +161,7 @@ def generate_proposals(name: str, audience: str, selling_points: str, *, seconds
         + shot_fields +
         "}\n"
         "按这件商品的真实用法大胆设计【有真实运动幅度、有进展】的自然动作(别都缩成走/坐/看手机这类最小动作),让画面有动感;\n"
+        + SCENE_INIT_GUIDE + "\n"
         + CONTINUITY_GUIDE + "\n"
         "【表情要鲜活、去僵硬】人物有真实的情绪流动和细微眼神/表情变化(开心自然地笑、专注、放松随情境,有起伏),"
         "像活人不是定格照片;不是不能笑,要避免的是僵硬不变的假笑、呆滞死眼神、面瘫、对镜头从头营业到尾;"

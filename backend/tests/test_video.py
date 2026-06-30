@@ -815,6 +815,33 @@ def test_vidu_scene_frame_keeps_playful_interaction_live():
     assert "只出现一件" in p                             # 首帧身份锚点:单一个体
 
 
+def test_scene_frame_prompt_is_video_frame0_aligned_to_action():
+    # Scene Init(最上游):母帧=视频第0帧、与脚本开头衔接(给 action 就落在它的起始瞬间),不是独立成品展示图。
+    from app.ai.video import scene_frame_prompt
+    p = scene_frame_prompt(category="水杯", language="葡萄牙语",
+                           action="她走进厨房,从台面拿起杯子,喝一口,转身切水果")
+    assert "第 0 帧" in p                                  # 母帧=视频第0帧
+    assert "走进厨房" in p and "最开始那一刻" in p          # 据脚本对齐起始瞬间、只画开头
+    assert "成品" in p                                     # 显式:不是独立成品/展示图
+    assert "拥有后的样子" not in p                          # 旧的"卖拥有后的样子"hero-shot 框定已移除
+    assert "第 0 帧" in scene_frame_prompt(category="水杯")  # 不给 action 也仍是第0帧框定(默认行为)
+
+
+def test_scene_init_guide_layered_and_wired(monkeypatch):
+    # SCENE_INIT_GUIDE 单一真相源 + 接进看图 LLM 生成器(最上游层,与脚本开头对齐)。
+    from app.services.video_continuity import SCENE_INIT_GUIDE
+    assert "第 0 帧" in SCENE_INIT_GUIDE and "起始状态" in SCENE_INIT_GUIDE
+    from app.services import video_wizard
+    seen = {}
+
+    def _cap(msgs, **kw):
+        seen["p"] = msgs[0]["content"]
+        return '[{"title":"t","storyboard":"端起杯子喝一口"}]'
+    monkeypatch.setattr(video_wizard, "_chat", _cap)
+    video_wizard.generate_proposals("水壶", "运动", "保温", seconds=10, n=1)
+    assert "第 0 帧" in seen["p"]                           # Scene Init 已接入向导
+
+
 def test_continuity_guide_layered_dynamic_and_protects_motion():
     # 分层连续性策略(单一真相源):4 层都在 + 按风险动态(只对真实风险写)+ 显式保护普通动作自由(不规则堆叠)。
     from app.services.video_continuity import CONTINUITY_GUIDE, CONTINUITY_GUIDE_VIDU
