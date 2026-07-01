@@ -43,3 +43,17 @@ def test_prompt_entropy_live_assets_healthy():
     )
     for asset in (SCENE_INIT_GUIDE, CONTINUITY_GUIDE, CONTINUITY_GUIDE_VIDU):
         assert entropy_issues(asset) == [], entropy_issues(asset)
+
+
+# ---------- T1-3:印花提取材质策略(散落 6 处的 kind=="garment" 常数收敛到一处,数值一字不改)----------
+def test_extract_strategy_constants_unchanged():
+    from app.services.design_extract import _GARMENT, _PRODUCT, _strategy_for
+    assert _strategy_for("garment") is _GARMENT and _strategy_for("product") is _PRODUCT
+    assert _strategy_for("whatever") is _PRODUCT   # 非 garment 一律走 product 策略(= 历史 kind != "garment")
+    # garment 历史值:压平/无 detail / fine_lo=37 / 精细腐蚀=2 / 粗腐蚀=0.03 / 种子=90 / 弱=50
+    assert _GARMENT.flatten_illumination and not _GARMENT.use_detail_mask
+    assert (_GARMENT.fine_lo, _GARMENT.fine_inner_erosion) == (37, 2)
+    assert (_GARMENT.coarse_erosion_frac, _GARMENT.seed_dist, _GARMENT.weak_dist) == (0.03, 90, 50)
+    # product 历史值:不压平/有 detail / fine_lo=12 / 不腐蚀(整块)/ 粗色差阈=16
+    assert not _PRODUCT.flatten_illumination and _PRODUCT.use_detail_mask
+    assert (_PRODUCT.fine_lo, _PRODUCT.fine_inner_erosion, _PRODUCT.product_dist) == (12, 0, 16)

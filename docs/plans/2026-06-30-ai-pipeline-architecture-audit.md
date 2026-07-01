@@ -4,6 +4,26 @@
 > **审计方法**:3 个并行子代理只读通审 `app/ai/`、`app/services/`(视频提示词层)、`app/services/` 非视频 AI + `tasks.py` 编排,按四类反模式分类:① 硬编码 ② 案例驱动修复 ③ 特判逻辑 ④ 规则堆叠。
 > **判定准则(老大定的)**:每条想新增的规则先问——「这是需要抽象的新能力,还是只是一个案例?未来 10 个同类问题会不会变成 10 条规则?」会,就别加规则,找更高层抽象。
 
+## ✅ 推进进度(2026-07-01)
+
+已落地(均独立 commit + 全绿 + 上线):
+- **T1-1** 退点/计费收口 `TOOL_SPECS` 单表 + **修 reaper 静默退错点**(viduvideo/matting 漏登记)。
+- **N1/N2** 连续性升级为**能力层**(`CAPABILITIES` 注册表 + `build_continuity_guide(enabled=)` 风险钩子)。
+- **N3** Scene Profile:Vision 产出抽象品类 + 风险 → 按风险动态启用能力(CogVideoX 全链路;安全默认=历史行为)。
+- **N5** Prompt-Entropy 守门(`prompt_entropy.py` + 测试)。
+- **T3-8/9/13** 删死代码故事库 / stylize 注册表 / 印花并入通用注册表 + submit_celery op 自单表推导。
+- **T1-3** 印花提取材质策略 `_Strategy`:散落 6 处的 `kind=="garment"` 常数/开关收敛到一处,**数值一字不改**(行为保持,extraction 测试验证)。
+
+**N4(视频 Provider 统一)—— 深度统一【暂缓】(YAGNI,应用『别过度工程』原则)**:深挖发现两个 Provider 契约**本就按设计不同**
+(CogVideoX `size/with_audio`+多分镜拼接;Vidu `aspect/resolution/audio_type`+单镜),连 LocalGifProvider 签名都不同。
+「统一 Provider」= 重写核心视频调用链(两个 `_work_*` + 契约),而**成片质量测试覆盖不到** → 真回归风险;收益只在**真接第三家厂商**
+(Runway/Kling)时才兑现。→ **决定:接第三家视频厂商时再统一**(那时收益 > 成本);现在两 Provider 功能正常、测试齐全,
+连续性能力(N1/N2)已跨模型共享。可安全做的仅 4 个相同小 helper 去重(~40 行,价值边际)——也一并暂缓,不为凑指标churn。
+
+**尚未做(中等、不改视频/抠图输出,可按需)**:T2-5(语言表合一,与 N4 同区、随 N4 一起做)、T2-7(异常类型化)、T3-10(ip_guard 走 ai 层)、N3 part-b(母帧 `_SCENE_BY_CAT`→profile,改母帧图像、需验图)。
+
+---
+
 ## 🧭 最高设计原则(优先级高于本文件其余一切建议)
 
 > **任何新的 AI 能力,优先抽象为「Capability(能力)」,其次抽象为「Strategy(策略)」,最后才允许落地为 Prompt 文本。Prompt 应仅作为能力的【载体】,而不是能力本身。不同模型(GPT Image / CogVideo / Vidu / Runway / Kling…)应尽量【共享同一套能力抽象】,而不是各自维护一套越来越长的 Prompt。**
