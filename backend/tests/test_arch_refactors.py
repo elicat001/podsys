@@ -39,7 +39,9 @@ def test_prompt_entropy_live_assets_healthy():
     # 现网核心 prompt 资产应通过熵体检(无同句重复、无超长负向串)——守门未来不让它们退化堆叠。
     from app.services.prompt_entropy import entropy_issues
     from app.services.video_continuity import (
-        CONTINUITY_GUIDE, CONTINUITY_GUIDE_VIDU, SCENE_INIT_GUIDE,
+        CONTINUITY_GUIDE,
+        CONTINUITY_GUIDE_VIDU,
+        SCENE_INIT_GUIDE,
     )
     for asset in (SCENE_INIT_GUIDE, CONTINUITY_GUIDE, CONTINUITY_GUIDE_VIDU):
         assert entropy_issues(asset) == [], entropy_issues(asset)
@@ -57,3 +59,22 @@ def test_extract_strategy_constants_unchanged():
     # product 历史值:不压平/有 detail / fine_lo=12 / 不腐蚀(整块)/ 粗色差阈=16
     assert not _PRODUCT.flatten_illumination and _PRODUCT.use_detail_mask
     assert (_PRODUCT.fine_lo, _PRODUCT.fine_inner_erosion, _PRODUCT.product_dist) == (12, 0, 16)
+
+
+# ---------- N4:CogVideoX 与 Vidu 的 Provider 共用 base.VideoProvider 统一契约 ----------
+def test_video_providers_share_unified_protocol():
+    import inspect
+
+    from app.ai.base import VideoProvider
+    from app.ai.video import LocalGifProvider as CogLocal
+    from app.ai.video import ZhipuCogVideoProvider
+    from app.ai.vidu import LocalGifProvider as ViduLocal
+    from app.ai.vidu import ViduProvider
+    # 四个 Provider 的 image_to_video 都遵循统一契约参数(加第三家厂商=实现它,不再各造一套签名)
+    for cls in (ZhipuCogVideoProvider, CogLocal, ViduProvider, ViduLocal):
+        params = list(inspect.signature(cls.image_to_video).parameters)
+        assert params[:3] == ["self", "images", "prompt"], cls.__name__
+        for kw in ("aspect", "resolution", "seconds", "audio", "audio_type"):
+            assert kw in params, f"{cls.__name__} 缺统一契约参数 {kw}"
+    # runtime_checkable:兜底 local provider 实例满足统一 Protocol(真 provider 需 key,不实例化)
+    assert isinstance(CogLocal(), VideoProvider) and isinstance(ViduLocal(), VideoProvider)

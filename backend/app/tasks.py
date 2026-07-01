@@ -520,7 +520,8 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
     prompt_fn = compose_prompt   # 人物行为/故事路径(镜头脚本 + 地区风格 + 导演层 + 画面底线)
     cat = p.get("category", "通用")
     aspect = p.get("aspect", "portrait")
-    size = aspect_size(aspect, p.get("resolution", "720p"))
+    resolution = p.get("resolution", "720p")
+    size = aspect_size(aspect, resolution)   # 本地图片贴合用;provider 内部据 aspect+resolution 再算(N4 统一契约)
     tw, th = (int(x) for x in size.split("x"))
     raw = [_load_input(job_id)]
     mpath = storage.upload_path(f"{job_id}_mask")   # 复用 mask 槽放第 2 张(尾帧)
@@ -611,7 +612,8 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
 
         def _seg(item: tuple) -> dict:
             shot_imgs, sp, sec = item
-            return prov.image_to_video(shot_imgs, sp, size=size, seconds=sec, with_audio=native_sound)
+            return prov.image_to_video(shot_imgs, sp, aspect=aspect, resolution=resolution,
+                                       seconds=sec, audio=native_sound)
 
         with ThreadPoolExecutor(max_workers=n_shots) as ex:
             segs = list(ex.map(_seg, plan))   # 保序;任一段抛错 → 向上抛 → 整单 error + 退点
@@ -623,8 +625,8 @@ def _work_aivideo(job_id: str, job: Job, db: Session) -> dict:
         total_seconds = sum(MULTI_SHOT_PLAN)
     else:
         prompt = prompt_fn(p.get("prompt", ""), language=lang)
-        out = get_video_provider().image_to_video(imgs, prompt, size=size, seconds=p.get("seconds"),
-                                                  with_audio=native_sound)
+        out = get_video_provider().image_to_video(imgs, prompt, aspect=aspect, resolution=resolution,
+                                                  seconds=p.get("seconds"), audio=native_sound)
         total_seconds = int(p.get("seconds") or settings.video_seconds)
     # 后期节奏快切(默认开):按 beat 切段、全景/推近交替,治"呆板"。在旁白/字幕【之前】做 → 不裁字幕。
     # 不改时长/音轨/商品像素(一致性零风险)。【best-effort:失败必须回退原片,绝不阻断已生成好的视频】

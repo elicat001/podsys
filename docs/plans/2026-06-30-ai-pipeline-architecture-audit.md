@@ -14,11 +14,12 @@
 - **T3-8/9/13** 删死代码故事库 / stylize 注册表 / 印花并入通用注册表 + submit_celery op 自单表推导。
 - **T1-3** 印花提取材质策略 `_Strategy`:散落 6 处的 `kind=="garment"` 常数/开关收敛到一处,**数值一字不改**(行为保持,extraction 测试验证)。
 
-**N4(视频 Provider 统一)—— 深度统一【暂缓】(YAGNI,应用『别过度工程』原则)**:深挖发现两个 Provider 契约**本就按设计不同**
-(CogVideoX `size/with_audio`+多分镜拼接;Vidu `aspect/resolution/audio_type`+单镜),连 LocalGifProvider 签名都不同。
-「统一 Provider」= 重写核心视频调用链(两个 `_work_*` + 契约),而**成片质量测试覆盖不到** → 真回归风险;收益只在**真接第三家厂商**
-(Runway/Kling)时才兑现。→ **决定:接第三家视频厂商时再统一**(那时收益 > 成本);现在两 Provider 功能正常、测试齐全,
-连续性能力(N1/N2)已跨模型共享。可安全做的仅 4 个相同小 helper 去重(~40 行,价值边际)——也一并暂缓,不为凑指标churn。
+**N4(视频 Provider 统一)—— 已做(老大拍板,持我 YAGNI 保留意见)**:`base.py` 新增统一 `VideoProvider` Protocol
+(`image_to_video(images, prompt, *, aspect, resolution, seconds, audio, audio_type)`);CogVideoX 对齐该契约
+(内部据 aspect+resolution 算 size、audio→with_audio、忽略 audio_type),Vidu 本就是该签名;两个本地 Protocol 删除、
+`get_video_provider`/`get_vidu_provider` 均返回统一 `VideoProvider`;`_work_aivideo` 两处调用点改传 aspect/resolution/audio。
+116 个 video+vidu 测试全绿(调用契约+编排有测试覆盖);⚠ 成片【画面质量】无单测 → 需真链路验片。加第三家厂商(Runway/Kling)
+现在只需实现同一 Protocol。(注:两个 `_work_*` 编排本身仍分开——多分镜拼接 vs 单镜,属各自合理逻辑,未强并成一个函数。)
 
 **尚未做(中等、不改视频/抠图输出,可按需)**:T2-5(语言表合一,与 N4 同区、随 N4 一起做)、T2-7(异常类型化)、T3-10(ip_guard 走 ai 层)、N3 part-b(母帧 `_SCENE_BY_CAT`→profile,改母帧图像、需验图)。
 

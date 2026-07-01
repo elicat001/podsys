@@ -14,11 +14,11 @@ from __future__ import annotations
 import base64
 import io
 import time
-from typing import Protocol, runtime_checkable
 
 from PIL import Image
 
 from ..config import settings
+from .base import VideoProvider  # N4:图生视频统一契约(CogVideoX/Vidu/未来厂商共用)
 
 # ── 画幅(宽:高 比例)。key 与前端画幅按钮一一对应;顺序=竖→方→横 ──────────
 ASPECT_RATIOS: dict[str, tuple[int, int]] = {
@@ -222,24 +222,6 @@ def fit_to_aspect(im: Image.Image, target_w: int, target_h: int) -> Image.Image:
     return bg
 
 
-@runtime_checkable
-class VideoProvider(Protocol):
-    name: str
-
-    def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920",
-                       seconds: int | None = None, with_audio: bool | None = None) -> dict:
-        """images: 1~2 张(2 张=首尾帧),已按 size 画幅处理好。返回 {bytes, url, ext('mp4'|'gif'), meta}。"""
-        ...
-
-
-def _parse_size(s: str) -> tuple[int, int]:
-    try:
-        w, h = s.lower().split("x")
-        return int(w), int(h)
-    except Exception:  # noqa: BLE001
-        return 1080, 1920
-
-
 def _encode_data_uri(im: Image.Image) -> str:
     # 用 JPEG(而非 PNG)编码:体积小 5~10×,上传快得多 → 大幅降低发图时的网络写超时(WriteTimeout)。
     # 商品图首帧 q90 质量足够;已 convert RGB(去 alpha,JPEG 不支持透明)。
@@ -252,11 +234,10 @@ class LocalGifProvider:
     """离线兜底:不调 AI,用现有运镜/轮播出 GIF(降级,非真 AI 视频)。无 key/未配置时用它。"""
     name = "local"
 
-    def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920",
-                       seconds: int | None = None, with_audio: bool | None = None) -> dict:
+    def image_to_video(self, images: list[Image.Image], prompt: str, *, aspect: str = "portrait",
+                       resolution: str = "720p", seconds: int | None = None,
+                       audio: bool | None = None, audio_type: str = "") -> dict:
         from ..services.video import make_showcase
-        w, h = _parse_size(size)
-        aspect = "portrait" if w < h else ("landscape" if w > h else "square")
         style = "slideshow" if len(images) > 1 else "kenburns"
         out = make_showcase(images[:2], style=style, aspect=aspect, fps=12,
                             seconds=int(seconds or settings.video_seconds))
@@ -348,14 +329,15 @@ class ZhipuCogVideoProvider:
                 raise _TaskFailed(str(err.get("message") or err or str(d))[:160])
         raise TimeoutError("视频生成超时(可调 POD_VIDEO_TIMEOUT)")
 
-    def image_to_video(self, images: list[Image.Image], prompt: str, *, size: str = "1080x1920",
-                       seconds: int | None = None, with_audio: bool | None = None) -> dict:
+    def image_to_video(self, images: list[Image.Image], prompt: str, *, aspect: str = "portrait",
+                       resolution: str = "720p", seconds: int | None = None,
+                       audio: bool | None = None, audio_type: str = "") -> dict:
         import httpx  # 惰性
         if not images:
             raise RuntimeError("图生视频至少需要 1 张图")
         encoded = [_encode_data_uri(im) for im in images[:2]]
         image_url = encoded if len(encoded) > 1 else encoded[0]   # 数组=首尾帧
-        size = settings.video_size or size                        # .env 强制 size 优先
+        size = settings.video_size or aspect_size(aspect, resolution)   # N4:据画幅+分辨率算尺寸(.env 强制优先);audio_type 对 CogVideoX 无效、忽略
         body: dict = {
             "model": self.model,
             "prompt": prompt or "",
@@ -364,7 +346,7 @@ class ZhipuCogVideoProvider:
             "size": size,
             "fps": int(settings.video_fps or 30),
             # 有声/无声按请求决定(人声 on→true 自带音效;旁白 on→false 出无声,再叠 AI 旁白)。未传则回退配置。
-            "with_audio": bool(settings.video_with_audio if with_audio is None else with_audio),
+            "with_audio": bool(settings.video_with_audio if audio is None else audio),
         }
         dur = int(seconds or settings.video_seconds or 0)
         if dur:

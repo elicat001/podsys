@@ -187,7 +187,7 @@ def test_two_shot_generates_two_segments_and_total_seconds(client, auth_headers,
     calls = {"seconds": [], "vo_seconds": []}
 
     class _FakeProvider:
-        def image_to_video(self, images, prompt, size=None, seconds=None, with_audio=None):
+        def image_to_video(self, images, prompt, *, seconds=None, **kwargs):
             calls["seconds"].append(seconds)
             return {"bytes": b"FAKEMP4" * 16, "ext": "mp4", "meta": {"engine": "fake"}}
 
@@ -216,7 +216,7 @@ def test_two_shot_native_sound_keeps_audio_in_concat(client, auth_headers, monke
     seen = {}
 
     class _FakeProvider:
-        def image_to_video(self, images, prompt, size=None, seconds=None, with_audio=None):
+        def image_to_video(self, images, prompt, *, seconds=None, **kwargs):
             return {"bytes": b"FAKEMP4" * 8, "ext": "mp4", "meta": {"engine": "fake"}}
 
     monkeypatch.setattr(video_mod, "get_video_provider", lambda: _FakeProvider())
@@ -1063,8 +1063,8 @@ def test_video_native_sound_and_voiceover_gate(client, auth_headers, monkeypatch
     calls = {"with_audio": [], "voiceover": 0}
 
     class _FakeProvider:
-        def image_to_video(self, images, prompt, size=None, seconds=None, with_audio=None):
-            calls["with_audio"].append(with_audio)
+        def image_to_video(self, images, prompt, *, audio=None, **kwargs):   # N4 统一契约:原生音效走 audio=
+            calls["with_audio"].append(audio)
             return {"bytes": b"FAKEMP4" * 16, "ext": "mp4", "meta": {"engine": "fake"}}
 
     def _fake_add_voiceover(video_bytes, image, description, language, seconds, subtitle=False):
@@ -1375,7 +1375,7 @@ def test_punch_up_failure_is_best_effort(client, auth_headers, monkeypatch, png)
     class _FakeMp4:
         name = "cogvideox"
 
-        def image_to_video(self, images, prompt, *, size="1080x1920", seconds=None, with_audio=None):
+        def image_to_video(self, images, prompt, *, seconds=None, **kwargs):
             return {"bytes": b"\x00\x00\x00\x18ftypmp42FAKEMP4", "ext": "mp4", "meta": {"engine": "cogvideox"}}
     monkeypatch.setattr(settings, "video_punchup", True)
     monkeypatch.setattr(video_mod, "get_video_provider", lambda: _FakeMp4())

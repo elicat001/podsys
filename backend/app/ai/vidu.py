@@ -20,11 +20,11 @@ from __future__ import annotations
 import base64
 import io
 import time
-from typing import Protocol, runtime_checkable
 
 from PIL import Image
 
 from ..config import settings
+from .base import VideoProvider  # N4:图生视频统一契约(与 CogVideoX 共用)
 
 # ── 画幅(与前端按钮一一对应)。Vidu 用 "9:16" 字符串;另给像素比例用于 fit_to_aspect 防拉伸。──
 ASPECT_RATIOS: dict[str, tuple[int, int]] = {
@@ -161,16 +161,6 @@ def compose_vidu_prompt(motion: str = "", language: str = "葡萄牙语", second
     if sound_mode == "sfx":
         parts.append("音频:只有贴合画面的真实环境音效与动作音(如旋转/按压/摩擦声),无人声对白。")
     return " ".join(parts)
-
-
-@runtime_checkable
-class ViduVideoProvider(Protocol):
-    name: str
-
-    def image_to_video(self, images: list[Image.Image], prompt: str, *, aspect: str = "portrait",
-                       resolution: str = "720p", seconds: int = 5, audio: bool = False,
-                       audio_type: str = "") -> dict:
-        ...
 
 
 def _encode_data_uri(im: Image.Image) -> str:
@@ -328,7 +318,7 @@ class ViduProvider:
         raise RuntimeError(f"Vidu 视频任务多次失败(已重试 3 次): {last}")
 
 
-def get_vidu_provider() -> ViduVideoProvider:
+def get_vidu_provider() -> VideoProvider:
     """按 POD_VIDU_PROVIDER 取 Provider。默认 local(兜底 GIF);vidu=真 Vidu。"""
     p = (settings.vidu_provider or "local").lower()
     if p in ("vidu", "viduq2", "viduq3", "shengshu"):
