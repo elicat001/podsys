@@ -167,25 +167,12 @@ def _vision_identify(image: Image.Image, title: str | None = None) -> dict:
         'Respond JSON ONLY: {"ip":"<specific name, empty if none>","owner":"<rights holder, empty if none>",'
         '"risk":"high|medium|low","reason":"<short reason in Chinese>"}. If risk is low, ip MUST be empty.'
     )
-    from openai import OpenAI  # 惰性
-    client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url or None,
-                    timeout=settings.openai_timeout)
     msgs = [{"role": "user", "content": [
         {"type": "text", "text": prompt},
         {"type": "image_url", "image_url": {"url": data_url}},
     ]}]
-    from ..ai.openai_image import _API_GATE  # 复用全局网关并发信号量限流
-    with _API_GATE:
-        if settings.openai_text_stream:
-            content = ""
-            stream = client.chat.completions.create(model=settings.openai_text_model, messages=msgs, stream=True)
-            for ch in stream:
-                if ch.choices and ch.choices[0].delta:
-                    content += ch.choices[0].delta.content or ""
-        else:
-            resp = client.chat.completions.create(model=settings.openai_text_model, messages=msgs)
-            content = resp.choices[0].message.content or ""
-    content = content.strip()
+    from ..ai.gateway import chat  # 经 ai 层网关(不在 service 直接 import openai;并发限流内置)
+    content = chat(msgs)
     if content.startswith("```"):              # 容错剥 ```json 围栏
         content = content.strip("`")
         if content.lstrip().lower().startswith("json"):

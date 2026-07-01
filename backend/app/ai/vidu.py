@@ -25,6 +25,7 @@ from PIL import Image
 
 from ..config import settings
 from .base import VideoProvider  # N4:图生视频统一契约(与 CogVideoX 共用)
+from .video_common import LANGUAGE_REGION  # T2-5:语言→地区 单一真相源
 
 # ── 画幅(与前端按钮一一对应)。Vidu 用 "9:16" 字符串;另给像素比例用于 fit_to_aspect 防拉伸。──
 ASPECT_RATIOS: dict[str, tuple[int, int]] = {
@@ -57,7 +58,7 @@ _REGION_HINT: dict[str, str] = {
     "西班牙语": "拉美年轻人热情生活感、自然光、随手拍质感",
     "中文": "本地年轻人生活化日常、自然光、随手拍质感",
 }
-_REGION_PERSON: dict[str, str] = {"葡萄牙语": "巴西", "英语": "欧美", "西班牙语": "拉美/西语区", "中文": "中国"}
+_REGION_PERSON = LANGUAGE_REGION   # T2-5:与 video._REGION_HINT 同源(值本就相同,收成单一真相源)
 
 
 def vidu_aspect(aspect: str) -> str:

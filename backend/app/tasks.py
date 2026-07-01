@@ -149,8 +149,15 @@ def _set_stage(db: Session, job: Job, text: str) -> None:
 
 def _mufra_permanent(exc: Exception) -> bool:
     """母帧错误是否【永久/重试无用】:鉴权/额度/坏请求 → True(立即放弃,别空等退避);
-    其余(503「无可用账号」/超时/连接/5xx/网关抖动)→ False(瞬时拥塞,退避重试熬过它)。"""
-    s = str(exc).lower()
+    其余(503「无可用账号」/超时/连接/5xx/网关抖动)→ False(瞬时拥塞,退避重试熬过它)。
+
+    T2-7:优先看【结构化 HTTP 状态码】(稳、抗措辞漂移);拿不到 code(网关把错误塞进消息)才退回字符串嗅探。"""
+    code = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+    if code in (400, 401, 402, 403):     # 坏请求/鉴权/余额/无权限 → 永久
+        return True
+    if code is not None:                  # 其它 HTTP(429 限流 / 5xx 网关抖动)→ 瞬时,退避重试
+        return False
+    s = str(exc).lower()                  # 无结构 code → 退回字符串嗅探(最后兜底)
     return any(k in s for k in (
         "invalid_api_key", "incorrect api key", "unauthorized", "permission",
         "余额", "insufficient", "quota", " 401", " 403", "code: 400", "400 -", "未配置",

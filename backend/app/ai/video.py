@@ -19,6 +19,7 @@ from PIL import Image
 
 from ..config import settings
 from .base import VideoProvider  # N4:图生视频统一契约(CogVideoX/Vidu/未来厂商共用)
+from .video_common import LANGUAGE_REGION  # T2-5:语言→地区 单一真相源(video/vidu 共用)
 
 # ── 画幅(宽:高 比例)。key 与前端画幅按钮一一对应;顺序=竖→方→横 ──────────
 ASPECT_RATIOS: dict[str, tuple[int, int]] = {
@@ -165,8 +166,8 @@ def gptimage_size(aspect: str = "portrait") -> str:
     return "1024x1024"       # 方
 
 
-# 语言 → 地区(场景首帧的本地风格也跟着语言变,别写死巴西)
-_REGION_HINT: dict[str, str] = {"葡萄牙语": "巴西", "英语": "欧美", "西班牙语": "拉美/西语区", "中文": "中国"}
+# 语言 → 地区(场景首帧的本地风格也跟着语言变,别写死巴西)。T2-5:单一真相源(video/vidu 共用),不再各写一份。
+_REGION_HINT = LANGUAGE_REGION
 
 
 def scene_frame_prompt(category: str = "通用", language: str = "葡萄牙语", scene: str = "", action: str = "") -> str:

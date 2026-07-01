@@ -21,7 +21,12 @@
 116 个 video+vidu 测试全绿(调用契约+编排有测试覆盖);⚠ 成片【画面质量】无单测 → 需真链路验片。加第三家厂商(Runway/Kling)
 现在只需实现同一 Protocol。(注:两个 `_work_*` 编排本身仍分开——多分镜拼接 vs 单镜,属各自合理逻辑,未强并成一个函数。)
 
-**尚未做(中等、不改视频/抠图输出,可按需)**:T2-5(语言表合一,与 N4 同区、随 N4 一起做)、T2-7(异常类型化)、T3-10(ip_guard 走 ai 层)、N3 part-b(母帧 `_SCENE_BY_CAT`→profile,改母帧图像、需验图)。
+**已补完(中等,不改视频/抠图输出)**:**T2-5** 语言→地区单一真相源(`ai/video_common.LANGUAGE_REGION`,video/vidu 共用);
+**T3-10** ip_guard 视觉调用改走 `ai/gateway.chat`(service 不再直接 import openai,红线归位;新增可复用网关入口);
+**T2-7** 母帧错误分类 `_mufra_permanent` 优先看 HTTP 状态码、字符串仅兜底(`_is_capacity_error` 本就如此)。
+
+**仅剩(需你验图,故留手动)**:N3 part-b(母帧 `_SCENE_BY_CAT`→profile.product_type,改母帧【图像】)。
+**可选后续(非本轮 audit 硬项)**:把 video_wizard/vidu 的 `_chat` 也统一走 `ai/gateway.chat`(与 ip_guard 同源,进一步消除 service 直连 openai)。
 
 ---
 

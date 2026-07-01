@@ -78,3 +78,45 @@ def test_video_providers_share_unified_protocol():
             assert kw in params, f"{cls.__name__} 缺统一契约参数 {kw}"
     # runtime_checkable:兜底 local provider 实例满足统一 Protocol(真 provider 需 key,不实例化)
     assert isinstance(CogLocal(), VideoProvider) and isinstance(ViduLocal(), VideoProvider)
+
+
+# ---------- T2-5:语言→地区 单一真相源(video/vidu 共用,不再各写一份漂移)----------
+def test_language_region_single_source():
+    from app.ai.video import _REGION_HINT
+    from app.ai.video_common import LANGUAGE_REGION
+    from app.ai.vidu import _REGION_PERSON
+    assert _REGION_HINT is LANGUAGE_REGION and _REGION_PERSON is LANGUAGE_REGION   # 同一对象=单源
+    assert LANGUAGE_REGION["葡萄牙语"] == "巴西"
+
+
+# ---------- T3-10:ip_guard 视觉调用走 ai/gateway(service 不再直接 import openai,可插拔红线)----------
+def test_gateway_chat_no_key_raises_and_ip_guard_routes(monkeypatch):
+    import pytest
+    from PIL import Image
+
+    from app.ai import gateway
+    from app.config import settings
+    from app.services import ip_guard
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    with pytest.raises(RuntimeError):                       # 无 key → 抛错(调用方降级)
+        gateway.chat([{"role": "user", "content": "hi"}])
+    # ip_guard 视觉识别经 gateway.chat(而非自己建 openai client)
+    monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr("app.ai.gateway.chat",
+                        lambda msgs, **kw: '{"ip":"Pikachu","owner":"Nintendo","risk":"high","reason":"x"}')
+    out = ip_guard._vision_identify(Image.new("RGB", (8, 8)))
+    assert out["ip"] == "Pikachu" and out["risk"] == "high"
+
+
+# ---------- T2-7:母帧错误分类优先看 HTTP 状态码,字符串仅兜底 ----------
+def test_mufra_permanent_prefers_status_code():
+    from app.tasks import _mufra_permanent
+
+    class _E(Exception):
+        def __init__(self, code):
+            self.status_code = code
+    assert _mufra_permanent(_E(401)) is True and _mufra_permanent(_E(400)) is True   # 鉴权/坏请求 → 永久
+    assert _mufra_permanent(_E(503)) is False and _mufra_permanent(_E(429)) is False  # 容量/限流 → 瞬时
+    # 无结构 code → 退回字符串嗅探
+    assert _mufra_permanent(RuntimeError("余额不足")) is True
+    assert _mufra_permanent(RuntimeError("Request timed out")) is False
